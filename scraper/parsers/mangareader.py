@@ -58,16 +58,16 @@ class MangaReaderMangaParser(BaseMangaParser):
         image_urls = [(int(x["p"]), "https:" + x["u"]) for x in page_metadata["im"]]
         return image_urls
 
-    def all_volume_numbers(self) -> Iterable[int]:
+    def all_volume_numbers(self) -> Iterable[str]:
         """
         All volume numbers for a manga
         """
         try:
             url = f"{self.base_url}/{self.name}"
             manga_html = get_html_from_url(url)
-            volume_tags = manga_html.find("div", id="chapterlist").find_all("a")
+            volume_tags = manga_html.find("table", {"class": "d48"}).find_all("a")
             volume_numbers = [
-                int(vol.get("href").split("/")[-1]) for vol in volume_tags
+                vol.get("href").split("/")[-1] for vol in volume_tags
             ]
             return volume_numbers
         except requests.exceptions.HTTPError as e:
@@ -125,9 +125,12 @@ class MangaReader(BaseSiteParser):
     """
 
     def __init__(self, manga_name: Optional[str] = None) -> None:
+        #logger.debug(f"[MangaReader] manga_name={manga_name}")
         super().__init__(
             manga_name=manga_name,
             base_url="http://mangareader.net",
             manga_parser=MangaReaderMangaParser,
             search_parser=MangaReaderSearch,
         )
+        # if manga_name:
+        #     logger.debug(f"[MangaReader] self.manga.name={self.manga.name}")

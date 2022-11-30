@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import dropbox
 from dropbox.files import FileMetadata
-from mega import Mega
+# from mega.mega import Mega
 from pcloud import PyCloud
 
 from scraper.manga import Manga, Volume
@@ -46,49 +46,49 @@ class DropboxUploader(BaseUploader):
             return response
 
 
-class MegaUploader(BaseUploader):
-    """
-    Uploads manga volumes to Mega
-    """
+# class MegaUploader(BaseUploader):
+#     """
+#     Uploads manga volumes to Mega
+#     """
 
-    def __init__(self) -> None:
-        super().__init__(service="mega")
-        self.dirname: str = None
+#     def __init__(self) -> None:
+#         super().__init__(service="mega")
+#         self.dirname: str = None
 
-    def _get_api_object(self) -> Mega:
-        mega = Mega()
-        return mega.login(self.config["email"], self.config["password"])
+#     def _get_api_object(self) -> Mega:
+#         mega = Mega()
+#         return mega.login(self.config["email"], self.config["password"])
 
-    def set_dirname(self, manga: Manga) -> None:
-        """
-        Sets the directory key. The name you give a directory is not
-        how Mega store it, its a bunch of random letters instead.
-        """
-        dirname = manga.volumes[0].upload_path.parent
-        dir_metadata = self.api.find(dirname)
-        if not dir_metadata:
-            self.adapter.info(f"Creating directory {dirname}")
-            response = self.api.create_folder(dirname)
-            self.dirname = list(response.values())[-1]
-        else:
-            self.dirname = dir_metadata[0]
+#     def set_dirname(self, manga: Manga) -> None:
+#         """
+#         Sets the directory key. The name you give a directory is not
+#         how Mega store it, its a bunch of random letters instead.
+#         """
+#         dirname = manga.volumes[0].upload_path.parent
+#         dir_metadata = self.api.find(dirname)
+#         if not dir_metadata:
+#             self.adapter.info(f"Creating directory {dirname}")
+#             response = self.api.create_folder(dirname)
+#             self.dirname = list(response.values())[-1]
+#         else:
+#             self.dirname = dir_metadata[0]
 
-    def upload_volume(self, volume: Volume) -> Optional[Dict[str, Any]]:
-        if self.api.find(volume.file_path.name):
-            self.adapter.warning(f"Volume {volume.number} already exists in Mega")
-            return None
-        response = self.api.upload(
-            filename=volume.file_path,
-            dest=self.dirname,
-            dest_filename=volume.file_path.name,
-        )
-        self.adapter.info(f"Volume {volume.number} uploaded to {volume.upload_path}")
-        return response
+#     def upload_volume(self, volume: Volume) -> Optional[Dict[str, Any]]:
+#         if self.api.find(volume.file_path.name):
+#             self.adapter.warning(f"Volume {volume.number} already exists in Mega")
+#             return None
+#         response = self.api.upload(
+#             filename=volume.file_path,
+#             dest=self.dirname,
+#             dest_filename=volume.file_path.name,
+#         )
+#         self.adapter.info(f"Volume {volume.number} uploaded to {volume.upload_path}")
+#         return response
 
-    def upload(self, manga: Manga) -> List[Optional[Dict[str, Any]]]:
-        self._setup_adapter(manga)
-        self.set_dirname(manga)
-        return super().upload(manga)
+#     def upload(self, manga: Manga) -> List[Optional[Dict[str, Any]]]:
+#         self._setup_adapter(manga)
+#         self.set_dirname(manga)
+#         return super().upload(manga)
 
 
 class PcloudUploader(BaseUploader):

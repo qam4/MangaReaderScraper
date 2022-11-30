@@ -11,6 +11,10 @@ class MangaDoesNotExist(Exception):
     pass
 
 
+class PageDoesNotExist(Exception):
+    pass
+
+
 class PageAlreadyPresent(Exception):
     pass
 

@@ -17,7 +17,7 @@ with open("VERSION", "r") as version_file:
     version = version_file.read().strip()
 
 with open("requirements.txt", "r") as req:
-    requirments = req.read().strip().split("\n")
+    requirements = req.read().strip().split("\n")
 
 setuptools.setup(
     name="MangaReaderScraper",
@@ -37,5 +37,5 @@ setuptools.setup(
         "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     ],
     entry_points={"console_scripts": ["manga-scraper = scraper.__main__:cli_entry"]},
-    install_requires=requirments,
+    install_requires=requirements,
 )

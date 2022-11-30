@@ -18,7 +18,7 @@ class MangaFastMangaParser(BaseMangaParser):
     def __init__(self, manga_name: str, base_url: str = "http://mangafast.net") -> None:
         super().__init__(manga_name, base_url)
 
-    def _scrape_volume(self, volume: int) -> BeautifulSoup:
+    def _scrape_volume(self, volume: str) -> BeautifulSoup:
         highest_volume = self.all_volume_numbers()[0]
         if volume > highest_volume:
             raise VolumeDoesntExist(f"Manga volume {volume} does not exist")
@@ -34,7 +34,7 @@ class MangaFastMangaParser(BaseMangaParser):
                 )
             raise e
 
-    def page_urls(self, volume: int) -> List[Tuple[int, str]]:
+    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         volume_html = self._scrape_volume(volume)
         img_tags = volume_html.find("div", id="Read").find_all("img")
         img_urls: List[Tuple[int, str]] = []
@@ -45,14 +45,14 @@ class MangaFastMangaParser(BaseMangaParser):
             img_urls.append((page_num, url))
         return img_urls
 
-    def all_volume_numbers(self) -> List[int]:
+    def all_volume_numbers(self) -> List[str]:
         try:
             url = f"{self.base_url}/{self.name}?order=old#table"
             manga_html = get_html_from_url(url)
             volume_tags = manga_html.find("table", id="table").find_all("a")
             volume_tags = [tag for tag in volume_tags if tag.text != "PDF"]
             volume_numbers = [
-                int(re.sub(r"\D", "", x.text.strip())) for x in volume_tags
+                re.sub(r"\D", "", x.text.strip()) for x in volume_tags
             ]
             highest_volume = volume_numbers[0]
             return [vol for vol in volume_numbers if vol <= highest_volume]

@@ -29,7 +29,10 @@ class Menu:
         """
         try:
             print(self.choices)
-            choice = menu_input()
+            msg = (
+                "Select the index of the manga of your choice"
+            )
+            choice = menu_input(msg)
             item = self.options[choice]
             return item
         except KeyError:
@@ -86,16 +89,17 @@ class SearchMenu(Menu):
         return search_results
 
     def table(self) -> str:
-        columns = ["", "Title", "Volumes", "Source"]
+        columns = ["", "Title", "url", "Volumes", "Source"]
         data: List[List[str]] = []
         for number, metadata in self.search_results.items():
-            title, chapters, source = (
+            title, url, chapters, source = (
                 metadata["title"],
+                metadata["manga_url"],
                 metadata["chapters"],
                 metadata["source"],
             )
             title = title if len(title) < 70 else f"{title[:70]}..."
-            data.append([number, title, chapters, source])
+            data.append([number, title, url, chapters, source])
 
         table = tabulate(data, headers=columns, tablefmt="psql")
         return table
@@ -104,4 +108,4 @@ class SearchMenu(Menu):
         """
         Take number and url from search object
         """
-        return {k: v["manga_url"] for k, v in self.search_results.items()}
+        return {k: v["title"]+'|'+v["manga_url"] for k, v in self.search_results.items()}
