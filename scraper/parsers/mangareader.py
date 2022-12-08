@@ -7,9 +7,10 @@ import logging
 import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import requests
+import requests  # type: ignore
 from bs4 import BeautifulSoup
 from bs4.element import Tag
+
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
@@ -24,18 +25,20 @@ class MangaReaderMangaParser(BaseMangaParser):
     """
 
     def __init__(
-        self, manga_name: str, base_url: str = "http://mangareader.net"
+        self, manga_url: str, base_url: str = "http://mangareader.net"
     ) -> None:
-        super().__init__(manga_name, base_url)
+        super().__init__(manga_url, base_url)
 
-    def _scrape_volume(self, volume: int) -> BeautifulSoup:
+    def _scrape_volume(self, volume: str) -> BeautifulSoup:
         """
         Retrieve HTML for a given manga volume number
         """
         try:
-            volume_html = get_html_from_url(f"{self.base_url}/{self.name}/{volume}")
+            volume_html = get_html_from_url(
+                f"{self.base_url}/{self.manga_url}/{volume}"
+            )
             if not volume_html.text:
-                raise MangaDoesNotExist(self.name)
+                raise MangaDoesNotExist(self.manga_url)
             string = re.compile(".*not released yet.*")
             matches = volume_html.find_all(string=string, recursive=True)
             if matches:
@@ -43,10 +46,10 @@ class MangaReaderMangaParser(BaseMangaParser):
             return volume_html
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
-                raise MangaDoesNotExist(f"Manga {self.name} does not exist")
+                raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
             raise e
 
-    def page_urls(self, volume: int) -> List[Tuple[int, str]]:
+    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         """
         Return a list of urls for every page in a given volume
         """
@@ -63,16 +66,15 @@ class MangaReaderMangaParser(BaseMangaParser):
         All volume numbers for a manga
         """
         try:
-            url = f"{self.base_url}/{self.name}"
+            url = f"{self.base_url}/{self.manga_url}"
             manga_html = get_html_from_url(url)
-            volume_tags = manga_html.find("table", {"class": "d48"}).find_all("a")
-            volume_numbers = [
-                vol.get("href").split("/")[-1] for vol in volume_tags
-            ]
+            # [latest]  volume_tags = manga_html.find("table", {"class": "d48"}).find_all("a")
+            volume_tags = manga_html.find("div", id="chapterlist").find_all("a")
+            volume_numbers = [vol.get("href").split("/")[-1] for vol in volume_tags]
             return volume_numbers
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
-                raise MangaDoesNotExist(f"Manga {self.name} does not exist")
+                raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
             raise e
 
 
@@ -124,13 +126,13 @@ class MangaReader(BaseSiteParser):
     Scraper & parser for mangareader.net
     """
 
-    def __init__(self, manga_name: Optional[str] = None) -> None:
-        #logger.debug(f"[MangaReader] manga_name={manga_name}")
+    def __init__(self, manga_url: Optional[str] = None) -> None:
+        # logger.debug(f"[MangaReader] manga_url={manga_url}")
         super().__init__(
-            manga_name=manga_name,
+            manga_url=manga_url,
             base_url="http://mangareader.net",
             manga_parser=MangaReaderMangaParser,
             search_parser=MangaReaderSearch,
         )
-        # if manga_name:
-        #     logger.debug(f"[MangaReader] self.manga.name={self.manga.name}")
+        # if manga_url:
+        #     logger.debug(f"[MangaReader] self.manga.manga_url={self.manga.manga_url}")

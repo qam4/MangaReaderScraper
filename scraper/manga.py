@@ -3,19 +3,23 @@ Manga building blocks & factories
 """
 
 import logging
+import re
+import tempfile
+import zipfile
 from dataclasses import dataclass, field
+from io import BytesIO
 from multiprocessing import Lock
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from types import prepare_class
-from typing import Callable, Dict, Generator, List, Optional
-import zipfile
-import tempfile
-import tqdm
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
+import tqdm  # type: ignore
+from PIL import Image
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 from scraper.exceptions import (
     PageAlreadyPresent,
-    PageDoesNotExist,
+    # PageDoesNotExist,
     VolumeAlreadyExists,
     VolumeAlreadyPresent,
     VolumeDoesntExist,
@@ -25,9 +29,31 @@ from scraper.parsers.types import SiteParser
 from scraper.utils import get_adapter, settings
 
 
-
 logger = logging.getLogger(__name__)
 LOCK = Lock()
+
+
+def natural_sort(_list, key=lambda s: s) -> List[Any]:
+    """
+    Sort the list into natural alphanumeric order.
+    """
+
+    def convert_text(text: str):
+        return int(text) if text.isdigit() else text.lower()
+
+    def get_alphanum_key_func(key):
+        return lambda s: [convert_text(c) for c in re.split("([0-9]+)", key(s))]
+
+    sort_key = get_alphanum_key_func(key)
+    return sorted(_list, key=sort_key)
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Convert a string to a safe filename
+    """
+    keepcharacters = (" ", ".", "_", "-")
+    return "".join(c for c in filename if c.isalnum() or c in keepcharacters).rstrip()
 
 
 @dataclass(frozen=True, repr=False)
@@ -78,7 +104,7 @@ class Volume:
             yield page
 
     def _str(self) -> str:
-        return f"Volume(number={self.number}, pages={len(self.pages)})"
+        return f"Volume(number={self.number}, file_path={self.file_path}, upload_path={self.upload_path}, pages={len(self.pages)})"
 
     @property
     def page(self) -> Dict[int, Page]:
@@ -133,8 +159,7 @@ class Manga:
         return f"Manga(name={self.name}, volumes={len(self.volumes)})"
 
     def _volume_path(self, volume_number: str) -> Path:
-        '''Create volume path
-        '''
+        """Create volume path"""
         manga_dir = settings()["config"]["manga_directory"]
         return Path(
             f"{manga_dir}/{self.name}/{self.name}"
@@ -142,19 +167,18 @@ class Manga:
         )
 
     def _volume_upload_path(self, volume_number: str) -> Path:
-        '''Create upload volume path
-        '''
+        """Create upload volume path"""
         root = Path(settings()["config"]["upload_root"])
         return root / f"{self.name}/{self.name}_volume_{volume_number}.{self.filetype}"
 
     @property
-    def volume(self) -> Dict[str, Volume]:
+    def volumes_dict(self) -> Dict[str, Volume]:
         return self._volumes
 
     @property
     def volumes(self) -> List[Volume]:
         volumes = self._volumes.values()
-        sorted_volumes = sorted(volumes, key=lambda x: x.number)
+        sorted_volumes = natural_sort(volumes, key=lambda x: x.number)
         return sorted_volumes
 
     @volumes.setter
@@ -164,12 +188,12 @@ class Manga:
             self.add_volume(volume)
 
     def add_volume(self, volume_number: str, complete=True) -> None:
-        if self.volume.get(volume_number):
+        if self.volumes_dict.get(volume_number):
             raise VolumeAlreadyPresent(f"Volume {volume_number} is already present")
 
         vol_str = volume_number
         if not complete:
-            vol_str += '-incomplete'
+            vol_str += "-incomplete"
         vol_path = self._volume_path(vol_str)
         vol_upload_path = self._volume_upload_path(vol_str)
         volume = Volume(
@@ -179,8 +203,7 @@ class Manga:
         if vol_path.exists():
             logger.info(f"Volume {volume_number} already saved to disk")
 
-
-    def volume_exists(self, volume_number: str) -> None:
+    def volume_exists(self, volume_number: str) -> bool:
         vol_path = self._volume_path(volume_number)
         if vol_path.exists():
             logger.info(f"Volume {volume_number} already exists in {vol_path}")
@@ -194,29 +217,29 @@ class MangaBuilder:
     Creates Manga objects
     """
 
-    def __init__(self, parser: SiteParser, filetype=None) -> None:
+    def __init__(self, parser: SiteParser, filetype="pdf") -> None:
         self.parser: SiteParser = parser
-        self.adapter = get_adapter(logger, self.parser.manga.name)
-        self.type = filetype
-        self.manga = None
+        self.adapter = get_adapter(logger, self.parser.manga.manga_url)
+        self.type: str = filetype
+        self.manga: Optional[Manga] = None
 
-    def _get_volume_data(self, volume_number: str) -> VolumeData:
+    def _get_volume_data(
+        self, volume_number: str
+    ) -> Optional[Tuple[str, Optional[VolumeData]]]:
         """
         Download pages of a volume, and save them to disk (in pdf or cbz)
         Returns volume number & each pages raw data
         """
-        assert(self.manga)
-
         # On windows, sub-process do not inherit logLevel
         logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s %(process)s %(levelname)s %(message)s',
+            level=logging.WARN,
+            format="%(asctime)s %(process)s %(levelname)s %(message)s",
         )
 
         self.adapter.info(f"Downloading volume {volume_number}")
         try:
             urls = self.parser.manga.page_urls(volume_number)
-            #self.adapter.info(f"urls={[url for url in urls]}")
+            # self.adapter.debug(f"urls={[url for url in urls]}")
         except VolumeDoesntExist as e:
             self.adapter.error(e)
             return (volume_number, None)
@@ -225,6 +248,8 @@ class MangaBuilder:
                 # Download the data from urls
                 # i.e download the volume images in parallel threads
                 pages_data = pool.map(self.parser.manga.page_data, urls)
+            # no multi-thread version:
+            # pages_data = list(map(self.parser.manga.page_data, urls))
 
             if not pages_data:
                 self.adapter.error(f"No data for volume {volume_number}")
@@ -233,7 +258,13 @@ class MangaBuilder:
             # check if any page is missing
             volume_complete = True
             if any([not page[1] for page in pages_data]):
-                self.adapter.error(f"Volume {volume_number} is missing pages {','.join([str(page[0]) for page in pages_data if not page[1]])}")
+                self.adapter.error(
+                    f"Volume {volume_number} is missing pages \
+                      {','.join([str(page[0]) for page in pages_data if not page[1]])}"
+                )
+                # remove those missing pages from the volume
+                # TODO: replace with "Missing page" jpg
+                pages_data = [page for page in pages_data if page[1]]
                 volume_complete = False
 
             # Save the volume to disk
@@ -243,32 +274,40 @@ class MangaBuilder:
                 self.manga.add_volume(volume_number, volume_complete)
                 # properties cause an error in mypy when getter/setters input
                 # differ, mypy thinks they should be the same
-                self.manga.volume[volume_number].pages = pages_data  # type: ignore
+                self.manga.volumes_dict[volume_number].pages = pages_data  # type: ignore
                 LOCK.release()
             except (VolumeAlreadyExists, VolumeAlreadyPresent) as e:
                 self.adapter.error(e)
             self._create_manga_dir(self.manga.name)
 
             save_method = self._get_save_method(self.type)
-            save_method(self.manga.volume[volume_number])
+            if save_method:
+                save_method(self.manga.volumes_dict[volume_number])
             self.adapter.info(f"Volume {volume_number} done")
 
             return (volume_number, None)
         return None
 
-    def _get_volumes_data(
-        self, vol_nums: List[str] = []
-    ) -> List[VolumeData]:
+    def _get_volumes_data(self, vol_nums: Iterable[str] = []) -> List[VolumeData]:
         """
         Download a list of volumes
         Each volume is processed in parallel processes
         Returns list of raw volume data
         """
-        self.adapter.info(f"Downloading volumes data...")
-        # self.adapter.info(f"[MangaBuilder:_get_volumes_data] self.manga.name={self.manga.name}")
+        self.adapter.info("Downloading volumes data...")
+        self.adapter.debug(
+            f"[MangaBuilder:_get_volumes_data] self.manga.name={self.manga.name}"
+        )
         with Pool() as pool:
-            return list(tqdm.tqdm(pool.imap(self._get_volume_data, vol_nums), total=len(vol_nums)))
-
+            return list(
+                tqdm.tqdm(
+                    pool.imap(self._get_volume_data, vol_nums),
+                    total=len(list(vol_nums)),
+                    unit="volumes",
+                )
+            )
+        # no multi-process version:
+        # return list(tqdm.tqdm(map(self._get_volume_data, vol_nums), total=len(vol_nums)))
 
     def _create_manga_dir(self, manga_name: str) -> None:
         """
@@ -328,23 +367,31 @@ class MangaBuilder:
 
     def get_manga_volumes(
         self,
-        vol_nums: Optional[List[str]] = None,
-        filetype: str = "cbz",
+        vol_nums: Optional[Iterable[str]] = None,
+        title: Optional[str] = None,
         preferred_name: Optional[str] = None,
     ) -> Manga:
         """
         Returns a Manga object containing the requested volumes
         """
-        preferred_name = preferred_name if preferred_name else self.parser.manga.name
-        preferred_name = preferred_name.replace(':', '')
-        self.adapter.info(f"[MangaBuilder:get_manga_volumes] manga_name={self.parser.manga.name}, preferred_name={preferred_name}")
+        preferred_name = (
+            preferred_name
+            if preferred_name
+            else title
+            if title
+            else self.parser.manga.manga_url
+        )
+        preferred_name = sanitize_filename(preferred_name)
+        self.adapter.debug(
+            f"[MangaBuilder:get_manga_volumes] title={title}, manga_url={self.parser.manga.manga_url}, preferred_name={preferred_name}"
+        )
         # Create a Manga instance
-        self.manga = Manga(preferred_name, filetype)
+        self.manga = Manga(preferred_name, self.type)
         # Find the list of volumes for that manga
         vol_nums = self.parser.manga.all_volume_numbers() if not vol_nums else vol_nums
         # Filter out volumes already saved to disk
-        vol_nums = [vol for vol in vol_nums if not self.manga.volume_exists(vol)]
-        self.adapter.info(f'vol_nums={vol_nums}')
+        # vol_nums = [vol for vol in vol_nums if not self.manga.volume_exists(vol)]
+        self.adapter.debug(f"vol_nums={vol_nums}")
 
         # Download the volumes
         self._get_volumes_data(vol_nums)

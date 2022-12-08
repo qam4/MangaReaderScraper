@@ -12,7 +12,7 @@ from tests.helpers import MockedSiteParser
 @pytest.mark.parametrize("filetype,file_signature", [("pdf", "%PDF-"), ("cbz", "PK")])
 def test_download_manga(filetype, file_signature):
     downloader = Download("dragon-ball", filetype, MockedSiteParser)
-    downloader.download_volumes([1])
+    downloader.download_volumes(["1"])
     expected_path = f"/tmp/dragon-ball/dragon-ball_volume_1.{filetype}"
     assert os.path.exists(expected_path)
     # check file for PDF/CBZ signature
@@ -23,8 +23,9 @@ def test_download_manga(filetype, file_signature):
 
 def test_download_manga_helper_function(parser):
     download_manga(
-        manga_name="dragon-ball",
-        volumes=[1, 2],
+        manga_url="dragon-ball",
+        manga_title="",
+        volumes=["1", "2"],
         filetype="pdf",
         parser=MockedSiteParser,
         preferred_name="cool_mo_deep",
@@ -35,8 +36,8 @@ def test_download_manga_helper_function(parser):
     assert os.path.exists(expected_path2)
 
 
-def test_download_manga_helper_function_preffered_name(parser):
-    download_manga("dragon-ball", [1, 2], "pdf", MockedSiteParser)
+def test_download_manga_helper_function_preferred_name(parser):
+    download_manga("dragon-ball", "", ["1", "2"], "pdf", MockedSiteParser)
     expected_path = "/tmp/dragon-ball/dragon-ball_volume_1.pdf"
     expected_path2 = "/tmp/dragon-ball/dragon-ball_volume_2.pdf"
     assert os.path.exists(expected_path)

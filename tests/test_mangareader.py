@@ -16,14 +16,14 @@ def test_all_volume_numbers(mangareader_manga_title_page_html):
         mocked_func.return_value = mangareader_manga_title_page_html
         parser = MangaReaderMangaParser("dragon-ball")
         all_vols = parser.all_volume_numbers()
-        assert all_vols == [1, 2, 3]
+        assert all_vols == ["1", "2", "3"]
 
 
 def test_page_urls(mangareader_volume_html):
     with mock.patch("scraper.parsers.mangareader.get_html_from_url") as mocked_func:
         mocked_func.return_value = mangareader_volume_html
         parser = MangaReaderMangaParser("dragon-ball")
-        page_urls = parser.page_urls(1)
+        page_urls = parser.page_urls("1")
         expected = [
             (
                 1,
@@ -114,7 +114,7 @@ def test_invalid_volume_parser(mangareader_invalid_volume_html):
         mocked_func.return_value = mangareader_invalid_volume_html
         parser = MangaReaderMangaParser("dragon-ball")
         with pytest.raises(VolumeDoesntExist):
-            parser.page_urls(2000)
+            parser.page_urls("2000")
 
 
 @mock.patch("scraper.parsers.mangareader.requests.get")

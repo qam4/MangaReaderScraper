@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Type
 
-from tabulate import tabulate
+from tabulate import tabulate  # type: ignore
 
 from scraper.exceptions import InvalidOption
 from scraper.new_types import SearchResults
@@ -15,12 +15,12 @@ class Menu:
 
     def __init__(
         self,
-        options: Dict[str, str],
+        options: Dict[str, Dict[str, str]],
         choices: Optional[str] = None,
         parent: Optional["Menu"] = None,
     ) -> None:
         self.parent: Menu = parent
-        self.options: Dict[str, str] = self._add_parent_to_options(options)
+        self.options: Dict[str, Dict[str, str]] = self._add_parent_to_options(options)
         self.choices: str = self._add_back_to_choices(choices)
 
     def handle_options(self) -> Any:
@@ -29,9 +29,7 @@ class Menu:
         """
         try:
             print(self.choices)
-            msg = (
-                "Select the index of the manga of your choice"
-            )
+            msg = "Select the index of the manga of your choice"
             choice = menu_input(msg)
             item = self.options[choice]
             return item
@@ -41,7 +39,9 @@ class Menu:
                 f"{', '.join(self.options.keys())}"
             )
 
-    def _add_parent_to_options(self, options: Dict[str, Any]) -> Dict[str, str]:
+    def _add_parent_to_options(
+        self, options: Dict[str, Any]
+    ) -> Dict[str, Dict[str, str]]:
         """
         Modify options to include parent menu
         """
@@ -63,14 +63,14 @@ class Menu:
         else:
             return f"{num}. Back"
 
-    @classmethod
-    def from_list(cls, l: List[str]) -> "Menu":
-        """
-        Constructs self._options and self.choices from a list.
-        """
-        options = {str(k + 1): i for k, i in enumerate(l)}
-        choices = "\n".join("{}. {}".format(k, i) for k, i in sorted(options.items()))
-        return cls(options, choices)
+    # @classmethod
+    # def from_list(cls, l: List[str]) -> "Menu":
+    #     """
+    #     Constructs self._options and self.choices from a list.
+    #     """
+    #     options = {str(k + 1): i for k, i in enumerate(l)}
+    #     choices = "\n".join("{}. {}".format(k, i) for k, i in sorted(options.items()))
+    #     return cls(options, choices)
 
 
 class SearchMenu(Menu):
@@ -78,7 +78,7 @@ class SearchMenu(Menu):
         self.parser: SiteParser = parser()
         self.search_results: SearchResults = self._search(query)
         choices: str = self.table()
-        options: Dict[str, str] = self._create_options()
+        options: Dict[str, Dict[str, str]] = self._create_options()
         Menu.__init__(self, options, choices)
 
     def _search(self, query: List[str]) -> SearchResults:
@@ -89,23 +89,22 @@ class SearchMenu(Menu):
         return search_results
 
     def table(self) -> str:
-        columns = ["", "Title", "url", "Volumes", "Source"]
+        columns = ["", "Title", "Latest Volume", "Source"]
         data: List[List[str]] = []
         for number, metadata in self.search_results.items():
-            title, url, chapters, source = (
+            title, chapters, source = (
                 metadata["title"],
-                metadata["manga_url"],
                 metadata["chapters"],
                 metadata["source"],
             )
             title = title if len(title) < 70 else f"{title[:70]}..."
-            data.append([number, title, url, chapters, source])
+            data.append([number, title, chapters, source])
 
         table = tabulate(data, headers=columns, tablefmt="psql")
         return table
 
-    def _create_options(self) -> Dict[str, str]:
+    def _create_options(self) -> Dict[str, Dict[str, str]]:
         """
         Take number and url from search object
         """
-        return {k: v["title"]+'|'+v["manga_url"] for k, v in self.search_results.items()}
+        return self.search_results

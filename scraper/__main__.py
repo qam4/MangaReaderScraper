@@ -7,10 +7,10 @@ from scraper.download import Download
 from scraper.exceptions import MangaDoesNotExist
 from scraper.manga import Manga
 from scraper.menu import SearchMenu
-from scraper.parsers.mangareader import MangaReader
 from scraper.parsers.mangafast import MangaFast
 from scraper.parsers.mangakaka import MangaKaka
 from scraper.parsers.manganelo import Manganelo
+from scraper.parsers.mangareader import MangaReader
 from scraper.parsers.types import SiteParserClass
 from scraper.uploaders.types import Uploader
 from scraper.uploaders.uploaders import DropboxUploader, PcloudUploader
@@ -19,8 +19,8 @@ from scraper.utils import menu_input, settings
 CONFIG = settings()["config"]
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(process)s %(levelname)s %(message)s',
+    level=logging.WARN,
+    format="%(asctime)s %(process)s %(levelname)s %(message)s",
 )
 
 
@@ -37,22 +37,24 @@ def get_volume_values(volume: str) -> List[str]:
     return [x for x in volume.split(",")]
 
 
-def manga_search(query: List[str], parser: SiteParserClass) -> Tuple[str, str, List[str]]:
+def manga_search(
+    query: List[str], parser: SiteParserClass
+) -> Tuple[str, str, List[str]]:
     """
     Search for a manga and return the manga name and volumes
     selected by user input
     """
     menu = SearchMenu(query, parser)
-    manga = menu.handle_options().strip()
-    logger.info(f"[manga_search] manga={manga}")
-    title=manga.split('|')[0]
-    url=manga.split('|')[1]
+    manga = menu.handle_options()
+    logger.debug(f"[manga_search] manga={manga}")
+    title = manga["title"]
+    url = manga["manga_url"]
     msg = (
         "Which volume(s) do you want to download "
         "(Enter alone to download all volumes)?"
     )
     volumes = menu_input(msg)
-    logger.info(f"[manga_search] volumes={volumes}")
+    logger.debug(f"[manga_search] volumes={volumes}")
     return (title, url, volumes.split())
 
 
@@ -73,15 +75,16 @@ def get_manga_parser(source: str) -> SiteParserClass:
 
 
 def download_manga(
-    manga_name: str,
-    volumes: Optional[str],
+    manga_url: str,
+    manga_title: str,
+    volumes: Optional[List[str]],
     filetype: str,
     parser: SiteParserClass,
     preferred_name: Optional[str] = None,
 ) -> Manga:
-    '''Download a manga'''
-    downloader = Download(manga_name, filetype, parser)
-    manga = downloader.download_volumes(volumes, preferred_name)
+    """Download a manga"""
+    downloader = Download(manga_url, filetype, parser)
+    manga = downloader.download_volumes(volumes, manga_title, preferred_name)
     return manga
 
 
@@ -96,48 +99,50 @@ def upload(manga: Manga, service: str) -> Uploader:
 
 
 def cli(arguments: List[str]) -> dict:
-    # logger.info(f"arguments={arguments}")
+    # logger.debug(f"arguments={arguments}")
     parser = get_parser()
     args = vars(parser.parse_args(arguments))
-    # logger.info(f"args={args}")
+    # logger.debug(f"args={args}")
     manga_parser = get_manga_parser(args["source"])
+    title = None
 
     if args["remove"] and not args["upload"]:
         raise IOError("Cannot use --remove without --upload")
 
     if args["search"]:
-            title, args["manga"], args["volumes"] = manga_search(args["search"], manga_parser)
+        title, args["manga"], args["volumes"] = manga_search(
+            args["search"], manga_parser
+        )
 
-            if not args["override_name"]:
-                args["override_name"] = title
     elif args["manga"]:
         args["manga"] = " ".join(args["manga"])
     else:
         raise IOError("Missing argument --manga or --search")
 
     if args["volumes"]:
-        volumes: List[int] = []
+        volumes: List[str] = []
         for vol in args["volumes"]:
             volumes += get_volume_values(vol)
         args["volumes"] = volumes
     else:
         args["volumes"] = None
 
-    logger.info(f"args={args}")
+    logger.debug(f"args={args}")
     try:
         manga = download_manga(
-            manga_name=args["manga"],
+            manga_url=args["manga"],
+            manga_title=title,
             volumes=args["volumes"],
             filetype=args["filetype"],
             parser=manga_parser,
             preferred_name=args["override_name"],
         )
     except MangaDoesNotExist:
-        logging.info(
+        logging.warning(
             f"No manga found for {args['manga']}. Searching for closest match."
         )
         updated_args = change_args_to_search(args)
-        # logger.info(f"updated_args={updated_args}")
+        # logger.debug(f"updated_args={updated_args}")
         return cli(updated_args)
 
     if args["upload"]:
@@ -155,7 +160,9 @@ def change_args_to_search(args: Dict[str, Optional[str]]) -> List[Optional[str]]
     Alters arguments to use --search
     """
     updated_args = []
-    args.update({"manga": None, "volumes": None, "search": args["manga"], "volumes": None})
+    args.update(
+        {"manga": None, "volumes": None, "search": args["manga"], "volumes": None}
+    )
 
     flags = ["remove"]
 

@@ -1,10 +1,12 @@
 -r requirements.txt
-autoflake==1.3.1
-black==19.10b0
-isort[pyproject]==4.3.21
-mypy==0.750
-mypy-extensions==0.4.3
-pyflakes>=2.2.0
-pytest>=5.3.1
-pytest-cov>=2.8.1
-tox>=3.14.3
+autoflake
+black
+isort[pyproject]
+mypy
+mypy-extensions
+pyflakes
+pytest
+pytest-cov
+tox<=4.0.0b1 # 4.0.0b2 messes up colors
+click
+flake8>=5.0

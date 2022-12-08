@@ -13,67 +13,67 @@ def test_all_volume_numbers(mangafast_manga_title_page_html):
         parser = MangaFastMangaParser("dragon-ball-super")
         all_vols = parser.all_volume_numbers()
         expected = [
-            62,
-            61,
-            60,
-            59,
-            58,
-            57,
-            56,
-            55,
-            54,
-            53,
-            52,
-            51,
-            50,
-            49,
-            48,
-            47,
-            46,
-            45,
-            44,
-            43,
-            42,
-            41,
-            40,
-            39,
-            38,
-            37,
-            36,
-            35,
-            34,
-            33,
-            32,
-            31,
-            30,
-            29,
-            28,
-            27,
-            26,
-            25,
-            24,
-            23,
-            22,
-            21,
-            20,
-            19,
-            18,
-            17,
-            16,
-            15,
-            14,
-            13,
-            12,
-            11,
-            10,
-            9,
-            8,
-            7,
-            6,
-            5,
-            4,
-            2,
-            1,
+            "62",
+            "61",
+            "60",
+            "59",
+            "58",
+            "57",
+            "56",
+            "55",
+            "54",
+            "53",
+            "52",
+            "51",
+            "50",
+            "49",
+            "48",
+            "47",
+            "46",
+            "45",
+            "44",
+            "43",
+            "42",
+            "41",
+            "40",
+            "39",
+            "38",
+            "37",
+            "36",
+            "35",
+            "34",
+            "33",
+            "32",
+            "31",
+            "30",
+            "29",
+            "28",
+            "27",
+            "26",
+            "25",
+            "24",
+            "23",
+            "22",
+            "21",
+            "20",
+            "19",
+            "18",
+            "17",
+            "16",
+            "15",
+            "14",
+            "13",
+            "12",
+            "11",
+            "10",
+            # "9",
+            # "8",
+            # "7",
+            "6",
+            "5",
+            "4",
+            "2",
+            "1",
         ]
         assert all_vols == expected
 
@@ -86,10 +86,10 @@ def test_page_urls(mangafast_volume_html):
         mocked_func.return_value = mangafast_volume_html
 
         with mock.patch(method) as mocked_method:
-            mocked_method.return_value = [62, 61, 2, 1]
+            mocked_method.return_value = ["62", "61", "2", "1"]
 
             parser = MangaFastMangaParser("dragon-ball-super")
-            page_urls = parser.page_urls(1)
+            page_urls = parser.page_urls("1")
             expected = [
                 (
                     1,
@@ -167,11 +167,11 @@ def test_invalid_volume_parser(mangafast_volume_html):
         mocked_func.return_value = mangafast_volume_html
 
         with mock.patch(method) as mocked_method:
-            mocked_method.return_value = [62, 61, 2, 1]
+            mocked_method.return_value = ["62", "61", "2", "1"]
 
             parser = MangaFastMangaParser("dragon-ball-super")
             with pytest.raises(VolumeDoesntExist):
-                parser.page_urls(2000)
+                parser.page_urls("2000")
 
 
 @mock.patch("scraper.parsers.mangareader.requests.get")

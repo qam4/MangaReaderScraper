@@ -1,8 +1,8 @@
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
-import requests
+import requests  # type: ignore
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
@@ -15,22 +15,22 @@ logger = logging.getLogger(__name__)
 
 
 class MangaFastMangaParser(BaseMangaParser):
-    def __init__(self, manga_name: str, base_url: str = "http://mangafast.net") -> None:
-        super().__init__(manga_name, base_url)
+    def __init__(self, manga_url: str, base_url: str = "http://mangafast.net") -> None:
+        super().__init__(manga_url, base_url)
 
     def _scrape_volume(self, volume: str) -> BeautifulSoup:
-        highest_volume = self.all_volume_numbers()[0]
-        if volume > highest_volume:
+        highest_volume = next(iter(self.all_volume_numbers()))
+        if int(volume) > int(highest_volume):
             raise VolumeDoesntExist(f"Manga volume {volume} does not exist")
         try:
             volume_html = get_html_from_url(
-                f"{self.base_url}/{self.name}-chapter-{volume}"
+                f"{self.base_url}/{self.manga_url}-chapter-{volume}"
             )
             return volume_html
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 raise MangaDoesNotExist(
-                    f"Manga {self.name} or volume {volume} does not exist"
+                    f"Manga {self.manga_url} or volume {volume} does not exist"
                 )
             raise e
 
@@ -45,20 +45,18 @@ class MangaFastMangaParser(BaseMangaParser):
             img_urls.append((page_num, url))
         return img_urls
 
-    def all_volume_numbers(self) -> List[str]:
+    def all_volume_numbers(self) -> Iterable[str]:
         try:
-            url = f"{self.base_url}/{self.name}?order=old#table"
+            url = f"{self.base_url}/{self.manga_url}?order=old#table"
             manga_html = get_html_from_url(url)
             volume_tags = manga_html.find("table", id="table").find_all("a")
             volume_tags = [tag for tag in volume_tags if tag.text != "PDF"]
-            volume_numbers = [
-                re.sub(r"\D", "", x.text.strip()) for x in volume_tags
-            ]
+            volume_numbers = [re.sub(r"\D", "", x.text.strip()) for x in volume_tags]
             highest_volume = volume_numbers[0]
             return [vol for vol in volume_numbers if vol <= highest_volume]
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
-                raise MangaDoesNotExist(f"Manga {self.name} does not exist")
+                raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
             raise e
 
 
@@ -95,9 +93,9 @@ class MangaFast(BaseSiteParser):
     Scraper & parser for mangareader.net
     """
 
-    def __init__(self, manga_name: Optional[str] = None) -> None:
+    def __init__(self, manga_url: Optional[str] = None) -> None:
         super().__init__(
-            manga_name=manga_name,
+            manga_url=manga_url,
             base_url="http://mangafast.net",
             manga_parser=MangaFastMangaParser,
             search_parser=MangaFastSearch,

@@ -1,7 +1,7 @@
 import pytest
 
 from scraper.exceptions import InvalidOption
-from scraper.menu import Menu, SearchMenu
+from scraper.menu import SearchMenu
 from tests.helpers import TABLE, MockedSearch
 
 
@@ -15,12 +15,42 @@ def test_searchmenu_attributes(mangareader_search_html):
     search_menu = SearchMenu("dragon-ball", MockedSearch)
 
     exepected_options = {
-        "1": "dragon-ball-episode-of-bardock",
-        "2": "dragon-ball-sd",
-        "3": "dragonball-next-gen",
-        "4": "dragon-ball",
-        "5": "dragon-ball-z-rebirth-of-f",
-        "6": "dragon-ball-super",
+        "1": {
+            "chapters": "3",
+            "manga_url": "dragon-ball-episode-of-bardock",
+            "source": "mangareader",
+            "title": "Dragon Ball: Episode of Bardock",
+        },
+        "2": {
+            "chapters": "35",
+            "manga_url": "dragon-ball-sd",
+            "source": "mangareader",
+            "title": "Dragon Ball SD",
+        },
+        "3": {
+            "chapters": "4",
+            "manga_url": "dragonball-next-gen",
+            "source": "mangareader",
+            "title": "DragonBall Next Gen",
+        },
+        "4": {
+            "chapters": "520",
+            "manga_url": "dragon-ball",
+            "source": "mangareader",
+            "title": "Dragon Ball",
+        },
+        "5": {
+            "chapters": "3",
+            "manga_url": "dragon-ball-z-rebirth-of-f",
+            "source": "mangareader",
+            "title": "Dragon Ball Z - Rebirth of F",
+        },
+        "6": {
+            "chapters": "62",
+            "manga_url": "dragon-ball-super",
+            "source": "mangareader",
+            "title": "Dragon Ball Super",
+        },
     }
     assert search_menu.choices == TABLE
     assert search_menu.options == exepected_options
@@ -48,10 +78,10 @@ def test_parent_menu(monkeypatch, menu):
     assert requested == menu.parent
 
 
-def test_init_from_list():
-    menu = Menu.from_list(["a", "b", "c"])
-    assert menu.options == {"1": "a", "2": "b", "3": "c"}
-    assert menu.choices == "1. a\n2. b\n3. c"
+# def test_init_from_list():
+#     menu = Menu.from_list(["a", "b", "c"])
+#     assert menu.options == {"1": "a", "2": "b", "3": "c"}
+#     assert menu.choices == "1. a\n2. b\n3. c"
 
 
 def test_back_button(menu_no_choices):

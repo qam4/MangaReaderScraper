@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
 
 import bs4
-import requests
-from requests.adapters import HTTPAdapter
+import requests  # type: ignore
+from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry
 
 from scraper.exceptions import CannotExtractChapter
@@ -35,7 +35,7 @@ class CustomAdapter(LoggerAdapter):
 
 
 def get_adapter(
-    logger: Logger, manga: str, volume: Optional[Union[str, int]] = None
+    logger: Logger, manga: str, volume: Optional[Union[str, int]] = None  # noqa: E251
 ) -> CustomAdapter:
     if volume:
         extra = {"manga": manga, "volume": volume}

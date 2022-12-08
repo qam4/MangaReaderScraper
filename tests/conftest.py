@@ -15,6 +15,19 @@ from tests.helpers import MockedMangaReaderParser, get_bs4_tree, get_images
 
 
 @pytest.fixture(scope="session", autouse=True)
+def mocked_pool_imap():
+    """
+    Mock Pool.imap to a not multi-process version
+    """
+
+    def pool_imap(self, func, iterable):
+        return map(func, iterable)
+
+    with mock.patch("scraper.manga.Pool.imap", pool_imap) as mocked_func:
+        yield mocked_func
+
+
+@pytest.fixture(scope="session", autouse=True)
 def mocked_manga_settings():
     """
     Mock settings config in manga module to point to /tmp/ dir
@@ -33,15 +46,6 @@ def mocked_manga_settings():
     )
     with mock.patch("scraper.manga.settings", mock_config) as mocked_config:
         yield mocked_config
-
-
-@pytest.fixture(scope="session", autouse=True)
-def mocked_download_settings():
-    mocked_settings = mock.MagicMock(
-        return_value={"config": {"manga_directory": "/tmp/"}}
-    )
-    with mock.patch("scraper.download.settings", mocked_settings) as mocked_dir:
-        yield mocked_dir
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -148,21 +152,21 @@ def mangareader_page_html() -> BeautifulSoup:
 
 @pytest.fixture
 def mangareader_manga_title_page_html() -> BeautifulSoup:
-    html_path = f"tests/test_files/mangareader/dragonball_bardock_page.html"
+    html_path = "tests/test_files/mangareader/dragonball_bardock_page.html"
     html = get_bs4_tree(html_path)
     return html
 
 
 @pytest.fixture
 def mangakaka_manga_title_page_html() -> BeautifulSoup:
-    html_path = f"tests/test_files/mangakaka/dragonball_super_page.html"
+    html_path = "tests/test_files/mangakaka/dragonball_super_page.html"
     html = get_bs4_tree(html_path)
     return html
 
 
 @pytest.fixture
 def mangafast_manga_title_page_html() -> BeautifulSoup:
-    html_path = f"tests/test_files/mangafast/dragonball_super_page.html"
+    html_path = "tests/test_files/mangafast/dragonball_super_page.html"
     html = get_bs4_tree(html_path)
     return html
 
@@ -226,7 +230,7 @@ def page():
 def volume():
     img1, img2 = get_images()
     page_data = [(1, img1), (2, img2)]
-    volume = Volume(1, Path("/Some/path"), Path("/some/path"))
+    volume = Volume("1", Path("/Some/path"), Path("/some/path"))
     volume.pages = page_data
     return volume
 
@@ -234,9 +238,9 @@ def volume():
 @pytest.fixture
 def manga():
     manga = Manga("dragon-ball", "pdf")
-    manga.volumes = [1, 2]
-    manga.volume[1].pages = [(1, b"here"), (2, b"bye")]
-    manga.volume[2].pages = [(1, b"hello"), (2, b"jimmy")]
+    manga.volumes = ["1", "2"]
+    manga.volumes_dict["1"].pages = [(1, b"here"), (2, b"bye")]
+    manga.volumes_dict["2"].pages = [(1, b"hello"), (2, b"jimmy")]
     return manga
 
 

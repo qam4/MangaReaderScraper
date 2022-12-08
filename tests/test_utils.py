@@ -69,7 +69,7 @@ def test_settings():
     with mock.patch("scraper.utils.Path.home", lambda: Path("/tmp")):
         create_base_config()
         config = settings()
-        assert config["config"]["manga_directory"] == "/tmp/Downloads"
+        assert config["config"]["manga_directory"] == str(Path("/tmp/Downloads"))
         assert config["config"]["source"] == "mangareader"
         assert config["config"]["filetype"] == "pdf"
 

@@ -11,7 +11,10 @@ from typing import List, Optional
 def execute_subprocess(cmd: List[str]) -> subprocess.CompletedProcess:
     try:
         process = subprocess.run(
-            cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         return process
     except subprocess.CalledProcessError as e:

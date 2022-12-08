@@ -56,16 +56,16 @@ METADATA = {
 
 
 TABLE = (
-    "+----+---------------------------------+-----------+-------------+\n"
-    "|    | Title                           |   Volumes | Source      |\n"
-    "|----+---------------------------------+-----------+-------------|\n"
-    "|  1 | Dragon Ball: Episode of Bardock |         3 | mangareader |\n"
-    "|  2 | Dragon Ball SD                  |        35 | mangareader |\n"
-    "|  3 | DragonBall Next Gen             |         4 | mangareader |\n"
-    "|  4 | Dragon Ball                     |       520 | mangareader |\n"
-    "|  5 | Dragon Ball Z - Rebirth of F    |         3 | mangareader |\n"
-    "|  6 | Dragon Ball Super               |        62 | mangareader |\n"
-    "+----+---------------------------------+-----------+-------------+"
+    "+----+---------------------------------+-----------------+-------------+\n"
+    "|    | Title                           |   Latest Volume | Source      |\n"
+    "|----+---------------------------------+-----------------+-------------|\n"
+    "|  1 | Dragon Ball: Episode of Bardock |               3 | mangareader |\n"
+    "|  2 | Dragon Ball SD                  |              35 | mangareader |\n"
+    "|  3 | DragonBall Next Gen             |               4 | mangareader |\n"
+    "|  4 | Dragon Ball                     |             520 | mangareader |\n"
+    "|  5 | Dragon Ball Z - Rebirth of F    |               3 | mangareader |\n"
+    "|  6 | Dragon Ball Super               |              62 | mangareader |\n"
+    "+----+---------------------------------+-----------------+-------------+"
 )
 
 
@@ -77,6 +77,7 @@ class MockedImgResponse:
     def __init__(self):
         with open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb") as f:
             self.content = f.read()
+            self.status_code = 200
 
 
 class MockedMangaReaderParser:
@@ -87,12 +88,12 @@ class MockedMangaReaderParser:
     multiprocessig, hence the need for this hack.
     """
 
-    def __init__(self, manga_name, base_url="www.nothing.com"):
-        self.name = manga_name
+    def __init__(self, manga_url, base_url="www.nothing.com"):
+        self.manga_url = manga_url
         self.base_url = base_url
 
     def all_volume_numbers(self):
-        return [1, 2, 3]
+        return ["1", "2", "3"]
 
     def page_urls(self, volume):
         return [
@@ -125,9 +126,9 @@ class MockedSiteParser(BaseSiteParser):
     A poor mock of the MangaReaderSiteParser
     """
 
-    def __init__(self, manga_name="dragon-ball"):
+    def __init__(self, manga_url="dragon-ball"):
         super().__init__(
-            manga_name=manga_name,
+            manga_url=manga_url,
             base_url="www.nothing.com",
             manga_parser=MockedMangaReaderParser,
             search_parser=MockedSearch,
@@ -221,7 +222,7 @@ def setup_uploader(uploader):
 
 
 def get_bs4_tree(filepath):
-    html_string = Path(filepath).read_text()
+    html_string = Path(filepath).read_text(encoding="utf-8")
     html = BeautifulSoup(html_string, features="lxml")
     return html
 

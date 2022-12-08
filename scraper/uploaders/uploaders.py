@@ -4,10 +4,11 @@ from typing import Any, Dict, List, Optional
 
 import dropbox
 from dropbox.files import FileMetadata
+
 # from mega.mega import Mega
 from pcloud import PyCloud
 
-from scraper.manga import Manga, Volume
+from scraper.manga import Volume
 from scraper.uploaders.base import BaseUploader
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,8 @@ class DropboxUploader(BaseUploader):
     def volume_exists(self, volume: Volume) -> bool:
         try:
             volume_search = self.api.files_search(
-                path=str(volume.upload_path.parent), query=str(volume.upload_path.name),
+                path=str(volume.upload_path.parent),
+                query=str(volume.upload_path.name),
             )
             return True if volume_search.matches else False
         except dropbox.exceptions.ApiError as e:

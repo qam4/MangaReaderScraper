@@ -6,7 +6,7 @@ from scraper.__main__ import cli, get_manga_parser
 from scraper.exceptions import MangaDoesNotExist
 from tests.helpers import MockedSiteParser
 
-PATAMETERS = [
+PARAMETERS = [
     (
         ["--manga", "dragonball"],
         {
@@ -29,7 +29,7 @@ PATAMETERS = [
             "output": "/tmp",
             "search": None,
             "source": "mangareader",
-            "volumes": [1, 2],
+            "volumes": ["1", "2"],
             "upload": None,
             "override_name": None,
             "remove": False,
@@ -43,7 +43,7 @@ PATAMETERS = [
             "output": "/tmp",
             "search": None,
             "source": "mangareader",
-            "volumes": [231],
+            "volumes": ["231"],
             "upload": None,
             "override_name": None,
             "remove": False,
@@ -79,7 +79,7 @@ PATAMETERS = [
             "output": "/tmp",
             "search": None,
             "source": "mangareader",
-            "volumes": [1, 2, 3, 4, 5, 40],
+            "volumes": ["1", "2", "3", "4", "5", "40"],
             "upload": None,
             "override_name": "dragon_kin",
             "remove": False,
@@ -93,7 +93,7 @@ PATAMETERS = [
             "output": "/tmp",
             "search": None,
             "source": "mangareader",
-            "volumes": [1, 2, 3, 4, 5, 40],
+            "volumes": ["1", "2", "3", "4", "5", "40"],
             "upload": None,
             "override_name": None,
             "remove": False,
@@ -109,7 +109,7 @@ SEARCH_PARAMETERS = [
             "manga": "dragon-ball-episode-of-bardock",
             "search": ["dragon", "ball"],
             "source": "mangareader",
-            "volumes": [5],
+            "volumes": ["5"],
             "output": "/tmp",
             "filetype": "pdf",
             "upload": None,
@@ -124,7 +124,7 @@ SEARCH_PARAMETERS = [
             "manga": "dragon-ball-super",
             "search": ["dragonball"],
             "source": "mangareader",
-            "volumes": [8, 9],
+            "volumes": ["8", "9"],
             "output": "/tmp",
             "filetype": "pdf",
             "override_name": None,
@@ -139,7 +139,7 @@ SEARCH_PARAMETERS = [
             "manga": "dragon-ball-sd",
             "search": ["dragonball"],
             "source": "mangareader",
-            "volumes": [6, 7, 8, 9, 10],
+            "volumes": ["6", "7", "8", "9", "10"],
             "output": "/tmp",
             "filetype": "pdf",
             "upload": None,
@@ -169,7 +169,7 @@ SEARCH_PARAMETERS = [
             "manga": "dragon-ball-sd",
             "search": ["dragonball"],
             "source": "mangareader",
-            "volumes": [6, 7, 8, 9, 10, 12],
+            "volumes": ["6", "7", "8", "9", "10", "12"],
             "output": "/tmp",
             "filetype": "pdf",
             "upload": None,
@@ -188,7 +188,7 @@ def test_ioerror_remove_upload_args():
         cli(["--search", "x", "--remove"])
 
 
-@pytest.mark.parametrize("arguments,expected", PATAMETERS)
+@pytest.mark.parametrize("arguments,expected", PARAMETERS)
 @mock.patch("scraper.__main__.download_manga", mock.Mock(return_value=1))
 def test_download_via_cli(arguments, expected):
     args = cli(arguments)
@@ -222,24 +222,24 @@ def test_search_if_failed_manga_match(monkeypatch, mangareader_search_html):
         This will help confirm whether the manga_search function was
         called upon a MangaDoesNotExist error.
         """
-        if "search activated" in args or "search activated" in kwargs["manga_name"]:
+        if "search activated" in args or "search activated" in kwargs["manga_url"]:
             return True
-        raise MangaDoesNotExist("name")
+        raise MangaDoesNotExist("manga_url")
 
     with mock.patch("scraper.__main__.download_manga", fake_downloader):
         with mock.patch("scraper.__main__.manga_search") as mocked_func:
             # mock manga_search to return values that signifies it was triggered
-            mocked_func.return_value = ("search activated", "2")
+            mocked_func.return_value = ("manga title", "search activated", "2")
             args = cli(["--manga", "dragonballzz"])
             expected = {
                 "manga": "search activated",
                 "search": ["dragonballzz"],
                 "source": "mangareader",
-                "volumes": [2],
+                "volumes": ["2"],
                 "output": "/tmp",
                 "filetype": "pdf",
                 "upload": None,
-                "override_name": "None",
+                "override_name": None,
                 "remove": False,
             }
             assert args == expected

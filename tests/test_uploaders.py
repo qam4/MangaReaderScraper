@@ -4,20 +4,20 @@ from unittest import mock
 import pytest
 
 from scraper.manga import Manga
-from scraper.uploaders.uploaders import DropboxUploader, MegaUploader, PcloudUploader
+from scraper.uploaders.uploaders import DropboxUploader, PcloudUploader
 from tests.helpers import (
     MockedDropbox,
     MockedDropboxRealFile,
-    MockedMega,
-    MockedMegaNotFound,
+    # MockedMega,
+    # MockedMegaNotFound,
     MockedPyCloud,
     MockedPyCloudFail,
     setup_uploader,
 )
 
 
-@pytest.mark.parametrize("uploader", [DropboxUploader, MegaUploader])
-@mock.patch("scraper.uploaders.uploaders.Mega", MockedMega)
+@pytest.mark.parametrize("uploader", [DropboxUploader])
+# @mock.patch("scraper.uploaders.uploaders.Mega", MockedMega)
 @mock.patch("scraper.uploaders.uploaders.dropbox.Dropbox", MockedDropbox)
 def test_upload_fails(caplog, volume, uploader):
     uploader = setup_uploader(uploader)
@@ -34,29 +34,29 @@ def test_dropbox_upload(caplog, volume):
     assert response.text == "success"
 
 
-@mock.patch("scraper.uploaders.uploaders.Mega", MockedMegaNotFound)
-def test_mega_upload(volume):
-    mega = setup_uploader(MegaUploader)
-    response = mega.upload_volume(volume)
-    assert response == {"status": "success"}
+# @mock.patch("scraper.uploaders.uploaders.Mega", MockedMegaNotFound)
+# def test_mega_upload(volume):
+#     mega = setup_uploader(MegaUploader)
+#     response = mega.upload_volume(volume)
+#     assert response == {"status": "success"}
 
 
-@mock.patch("scraper.uploaders.uploaders.Mega", MockedMega)
-def test_mega_set_dirname():
-    manga = Manga("dragon-ball", "pdf")
-    manga.add_volume(1)
-    mega = setup_uploader(MegaUploader)
-    mega.set_dirname(manga)
-    assert mega.dirname == "start"
+# @mock.patch("scraper.uploaders.uploaders.Mega", MockedMega)
+# def test_mega_set_dirname():
+#     manga = Manga("dragon-ball", "pdf")
+#     manga.add_volume("1")
+#     mega = setup_uploader(MegaUploader)
+#     mega.set_dirname(manga)
+#     assert mega.dirname == "start"
 
 
-@mock.patch("scraper.uploaders.uploaders.Mega", MockedMegaNotFound)
-def test_mega_set_dirname_if_dir_not_in_cloud():
-    manga = Manga("dragon-ball", "pdf")
-    manga.add_volume(1)
-    mega = setup_uploader(MegaUploader)
-    mega.set_dirname(manga)
-    assert mega.dirname == "two"
+# @mock.patch("scraper.uploaders.uploaders.Mega", MockedMegaNotFound)
+# def test_mega_set_dirname_if_dir_not_in_cloud():
+#     manga = Manga("dragon-ball", "pdf")
+#     manga.add_volume("1")
+#     mega = setup_uploader(MegaUploader)
+#     mega.set_dirname(manga)
+#     assert mega.dirname == "two"
 
 
 @mock.patch("scraper.uploaders.uploaders.PyCloud", MockedPyCloud)
@@ -113,16 +113,20 @@ def test_pycloud_upload_upload_failure(volume):
     "to_mock,mock_obj,uploader",
     [
         ("PyCloud", MockedPyCloud, PcloudUploader),
-        ("Mega", MockedMegaNotFound, MegaUploader),
+        # ("Mega", MockedMegaNotFound, MegaUploader),
     ],
 )
 def test_upload_calls(to_mock, mock_obj, uploader):
     with mock.patch(f"scraper.uploaders.uploaders.{to_mock}", mock_obj):
         manga = Manga("dragon-ball", "pdf")
-        manga.add_volume(1)
-        manga.add_volume(2)
-        manga.volume[1].file_path = Path("tests/test_files/jpgs/test-manga_1_1.jpg")
-        manga.volume[2].file_path = Path("tests/test_files/jpgs/test-manga_1_2.jpg")
+        manga.add_volume("1")
+        manga.add_volume("2")
+        manga.volumes_dict["1"].file_path = Path(
+            "tests/test_files/jpgs/test-manga_1_1.jpg"
+        )
+        manga.volumes_dict["2"].file_path = Path(
+            "tests/test_files/jpgs/test-manga_1_2.jpg"
+        )
         uploader = setup_uploader(uploader)
         responses = uploader(manga)
         assert len(responses) == 2
