@@ -13,6 +13,7 @@ from scraper.parsers.manganelo import Manganelo
 from scraper.parsers.mangareader import MangaReader
 from scraper.parsers.types import SiteParserClass
 from scraper.uploaders.types import Uploader
+from scraper.bundle import Bundle
 from scraper.uploaders.uploaders import DropboxUploader, PcloudUploader
 from scraper.utils import menu_input, settings
 
@@ -98,6 +99,11 @@ def upload(manga: Manga, service: str) -> Uploader:
     return uploader(manga)
 
 
+def bundle(manga: Manga, chapter_per_volume: int):
+    bundle = Bundle(manga, chapter_per_volume)
+    return bundle.bundle()
+
+
 def cli(arguments: List[str]) -> dict:
     # logger.debug(f"arguments={arguments}")
     parser = get_parser()
@@ -151,6 +157,9 @@ def cli(arguments: List[str]) -> dict:
     if args["remove"]:
         for volume in manga.volumes:
             volume.file_path.unlink()
+
+    if args["bundle"]:
+        bundle(manga, args["bundle"])
 
     return args
 
@@ -239,6 +248,11 @@ def get_parser() -> argparse.ArgumentParser:
         action="version",
         version="v0.50",
         help="display the installed version number of the application",
+    )
+    parser.add_argument(
+        "--bundle",
+        type=int,
+        help="Specify the number of chapters per volume in the output manga",
     )
     return parser
 

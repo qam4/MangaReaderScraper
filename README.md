@@ -23,6 +23,33 @@ git clone https://github.com/superDross/MangaReaderScraper
 pip install -r MangaReaderScraper/dev_requirements.txt
 export PYTHONPATH=$PYTHONPATH:/path/to/MangaReaderScraper/
 ```
+## usage
+$ manga-scraper --help
+usage: manga-scraper [-h] [--manga [MANGA [MANGA ...]]] [--search [SEARCH [SEARCH ...]]] [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT] [--filetype {pdf,cbz}] [--source {manganelo,mangareader,mangafast,mangakaka}]
+                     [--upload {mega,dropbox,pcloud}] [--override_name OVERRIDE_NAME] [--remove] [--version] [--bundle BUNDLE]
+
+downloads and converts manga volumes to pdf or cbz format
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --manga [MANGA [MANGA ...]], -m [MANGA [MANGA ...]]
+                        manga series name
+  --search [SEARCH [SEARCH ...]], -s [SEARCH [SEARCH ...]]
+                        search manga reader
+  --volumes VOLUMES [VOLUMES ...], -q VOLUMES [VOLUMES ...]
+                        manga volume to download
+  --output OUTPUT, -o OUTPUT
+  --filetype {pdf,cbz}, -f {pdf,cbz}
+                        format to store manga as
+  --source {manganelo,mangareader,mangafast,mangakaka}, -z {manganelo,mangareader,mangafast,mangakaka}
+                        website to scrape data from
+  --upload {mega,dropbox,pcloud}, -u {mega,dropbox,pcloud}
+                        upload manga to a cloud storage service
+  --override_name OVERRIDE_NAME, -n OVERRIDE_NAME
+                        change manga name for all saved/uploaded files
+  --remove, -r          delete downloaded volumes aftering uploading to a cloud service
+  --version, -v         display the installed version number of the application
+  --bundle BUNDLE       Specify the number of chapters per volume in the output manga
 
 ## Options
 
@@ -45,6 +72,9 @@ The default config file lives in `$HOME/.config/mangascraper.ini` and is as belo
 
 # directory to save downloaded files to
 manga_directory = /home/dir/Download
+
+# directory to save bundled files to
+manga_bundle_directory = /home/dir/Manga
 
 # default website to download from
 source = mangareader

@@ -8,7 +8,6 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from io import BytesIO
-from multiprocessing import Lock
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
@@ -30,7 +29,6 @@ from scraper.utils import get_adapter, settings
 
 
 logger = logging.getLogger(__name__)
-LOCK = Lock()
 
 
 def natural_sort(_list, key=lambda s: s) -> List[Any]:
@@ -163,13 +161,13 @@ class Manga:
         manga_dir = settings()["config"]["manga_directory"]
         return Path(
             f"{manga_dir}/{self.name}/{self.name}"
-            f"_volume_{volume_number}.{self.filetype}"
+            f"_chapter_{volume_number}.{self.filetype}"
         )
 
     def _volume_upload_path(self, volume_number: str) -> Path:
         """Create upload volume path"""
         root = Path(settings()["config"]["upload_root"])
-        return root / f"{self.name}/{self.name}_volume_{volume_number}.{self.filetype}"
+        return root / f"{self.name}/{self.name}_chapter_{volume_number}.{self.filetype}"
 
     @property
     def volumes_dict(self) -> Dict[str, Volume]:
@@ -192,8 +190,8 @@ class Manga:
             raise VolumeAlreadyPresent(f"Volume {volume_number} is already present")
 
         vol_str = volume_number
-        if not complete:
-            vol_str += "-incomplete"
+        # if not complete:
+        #     vol_str += "-incomplete"
         vol_path = self._volume_path(vol_str)
         vol_upload_path = self._volume_upload_path(vol_str)
         volume = Volume(
@@ -236,10 +234,12 @@ class MangaBuilder:
             format="%(asctime)s %(process)s %(levelname)s %(message)s",
         )
 
+        if self.manga.volume_exists(volume_number):
+            return None
+
         self.adapter.info(f"Downloading volume {volume_number}")
         try:
             urls = self.parser.manga.page_urls(volume_number)
-            # self.adapter.debug(f"urls={[url for url in urls]}")
         except VolumeDoesntExist as e:
             self.adapter.error(e)
             return (volume_number, None)
@@ -259,25 +259,26 @@ class MangaBuilder:
             volume_complete = True
             if any([not page[1] for page in pages_data]):
                 self.adapter.error(
-                    f"Volume {volume_number} is missing pages \
-                      {','.join([str(page[0]) for page in pages_data if not page[1]])}"
+                    f"Volume {volume_number} is missing pages {','.join([str(page[0]) for page in pages_data if not page[1]])}"
                 )
                 # remove those missing pages from the volume
                 # TODO: replace with "Missing page" jpg
                 pages_data = [page for page in pages_data if page[1]]
                 volume_complete = False
 
-            # Save the volume to disk
-            self.adapter.info(f"Saving volume {volume_number}")
+            # Add the volume to the manga
+            # note: each volume is created in its own process,
+            # so self.manga of the parent process is not changed
             try:
-                LOCK.acquire()
                 self.manga.add_volume(volume_number, volume_complete)
                 # properties cause an error in mypy when getter/setters input
                 # differ, mypy thinks they should be the same
                 self.manga.volumes_dict[volume_number].pages = pages_data  # type: ignore
-                LOCK.release()
             except (VolumeAlreadyExists, VolumeAlreadyPresent) as e:
                 self.adapter.error(e)
+
+            # Save the volume to disk
+            self.adapter.info(f"Saving volume {volume_number}")
             self._create_manga_dir(self.manga.name)
 
             save_method = self._get_save_method(self.type)
@@ -299,13 +300,14 @@ class MangaBuilder:
             f"[MangaBuilder:_get_volumes_data] self.manga.name={self.manga.name}"
         )
         with Pool() as pool:
-            return list(
+            volumes_data = list(
                 tqdm.tqdm(
                     pool.imap(self._get_volume_data, vol_nums),
                     total=len(list(vol_nums)),
                     unit="volumes",
                 )
             )
+            return volumes_data
         # no multi-process version:
         # return list(tqdm.tqdm(map(self._get_volume_data, vol_nums), total=len(vol_nums)))
 
@@ -394,6 +396,11 @@ class MangaBuilder:
         self.adapter.debug(f"vol_nums={vol_nums}")
 
         # Download the volumes
-        self._get_volumes_data(vol_nums)
+        _ = self._get_volumes_data(vol_nums)
+
+        # Add volumes to manga
+        for volume in vol_nums:
+            if not self.manga.volumes_dict.get(volume):
+                self.manga.add_volume(volume)
 
         return self.manga

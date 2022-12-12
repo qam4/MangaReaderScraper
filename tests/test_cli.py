@@ -19,6 +19,7 @@ PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -33,6 +34,7 @@ PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -47,6 +49,7 @@ PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -61,6 +64,7 @@ PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -83,6 +87,7 @@ PARAMETERS = [
             "upload": None,
             "override_name": "dragon_kin",
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -97,6 +102,7 @@ PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
 ]
@@ -115,6 +121,7 @@ SEARCH_PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -129,6 +136,7 @@ SEARCH_PARAMETERS = [
             "filetype": "pdf",
             "override_name": None,
             "remove": False,
+            "bundle": None,
             "upload": None,
         },
     ),
@@ -145,6 +153,7 @@ SEARCH_PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -160,6 +169,7 @@ SEARCH_PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
     (
@@ -175,6 +185,7 @@ SEARCH_PARAMETERS = [
             "upload": None,
             "override_name": None,
             "remove": False,
+            "bundle": None,
         },
     ),
 ]
@@ -241,5 +252,6 @@ def test_search_if_failed_manga_match(monkeypatch, mangareader_search_html):
                 "upload": None,
                 "override_name": None,
                 "remove": False,
+                "bundle": None,
             }
             assert args == expected

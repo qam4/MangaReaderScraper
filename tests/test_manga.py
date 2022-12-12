@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import shutil
 
 from scraper.exceptions import PageAlreadyPresent, VolumeAlreadyPresent
 from scraper.manga import Manga, MangaBuilder, Page, Volume
@@ -77,14 +78,14 @@ def test_pages_property_in_volume_returns_a_sorted_list(volume):
 def test_manga_get_volume_path():
     manga = Manga("dragon-ball", "pdf")
     volume_path = manga._volume_path("1")
-    expected = "/tmp/dragon-ball/dragon-ball_volume_1.pdf"
+    expected = "/tmp/dragon-ball/dragon-ball_chapter_1.pdf"
     assert Path(volume_path) == Path(expected)
 
 
 def test_manga_get_volume_path_cbz():
     manga = Manga("dragon-ball", "cbz")
     volume_path = manga._volume_path("1")
-    expected = "/tmp/dragon-ball/dragon-ball_volume_1.cbz"
+    expected = "/tmp/dragon-ball/dragon-ball_chapter_1.cbz"
     assert Path(volume_path) == Path(expected)
 
 
@@ -93,8 +94,8 @@ def test_manga_add_volume():
     manga.add_volume("1")
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     assert manga.volumes_dict == {"1": v1}
     assert manga.volumes_dict["1"] == v1
@@ -105,13 +106,13 @@ def test_add_multiple_volumes_to_manga():
     manga.volumes = ["1", "2"]
     assert manga.volumes_dict["1"] == Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     assert manga.volumes_dict["2"] == Volume(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_2.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_2.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
     )
     assert len(manga.volumes_dict) == 2
 
@@ -126,23 +127,23 @@ def test_volumes_property_in_manga_returns_a_sorted_list(manga):
     manga.add_volume("4")
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     v2 = Volume(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_2.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_2.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
     )
     v3 = Volume(
         number="4",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_4.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_4.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_4.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_4.pdf"),
     )
     v4 = Volume(
         number="12",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_12.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_12.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_12.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_12.pdf"),
     )
     v1.pages = [(1, b"here"), (2, b"bye")]
     v2.pages = [(1, b"hello"), (2, b"jimmy")]
@@ -182,18 +183,18 @@ def test_mangabuilder_get_all_volumes(inval):
     manga = builder.get_manga_volumes(vol_nums=inval)
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     v2 = Volume(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_2.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_2.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
     )
     v3 = Volume(
         number="3",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_3.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_3.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_3.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_3.pdf"),
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -213,8 +214,8 @@ def test_mangabuilder_get_single_volumes(parser):
     manga = builder.get_manga_volumes(vol_nums=["1"])
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_volume_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_volume_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -231,11 +232,24 @@ def test_manga_builder_preferred_name(parser):
     manga = builder.get_manga_volumes(vol_nums=["1"], preferred_name="smelly_pancakes")
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_volume_1.pdf"),
-        upload_path=Path("/smelly_pancakes/smelly_pancakes_volume_1.pdf"),
+        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
+        upload_path=Path("/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
     pages = [(1, img1.read()), (2, img2.read())]
     v1.pages = pages
     assert manga.volumes_dict["1"] == v1
+
+
+def teardown_function():
+    """
+    Remove directories after every test, if present
+
+    Fixtures only work before a test is executed, hence
+    the need for this module teardown.
+    """
+    directories = ["/tmp/smelly_pancakes/", "/tmp/dragon-ball/"]
+    for directory in directories:
+        if Path(directory).exists():
+            shutil.rmtree(directory)

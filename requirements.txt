@@ -8,3 +8,4 @@ reportlab
 requests
 tabulate
 tqdm
+KindleComicConverter

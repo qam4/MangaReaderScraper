@@ -62,8 +62,7 @@ class BaseMangaParser:
             img.load()
         except Exception as err:
             logger.error(
-                f"Image file page {page_num} at {img_url} corrupted."
-                + f" Error: {str(err)}"
+                f"Image file page {page_num} at {img_url} corrupted. Error: {str(err)}"
             )
             return (int(page_num), b"")
 
