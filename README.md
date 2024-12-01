@@ -25,7 +25,7 @@ export PYTHONPATH=$PYTHONPATH:/path/to/MangaReaderScraper/
 ```
 ## usage
 $ manga-scraper --help
-usage: manga-scraper [-h] [--manga [MANGA [MANGA ...]]] [--search [SEARCH [SEARCH ...]]] [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT] [--filetype {pdf,cbz}] [--source {manganelo,mangareader,mangafast,mangakaka}]
+usage: manga-scraper [-h] [--manga [MANGA [MANGA ...]]] [--search [SEARCH [SEARCH ...]]] [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT] [--filetype {pdf,cbz}] [--source {manganelo,mangareader,mangafast,mangakaka,manganato}]
                      [--upload {mega,dropbox,pcloud}] [--override_name OVERRIDE_NAME] [--remove] [--version] [--bundle BUNDLE]
 
 downloads and converts manga volumes to pdf or cbz format
@@ -41,7 +41,7 @@ optional arguments:
   --output OUTPUT, -o OUTPUT
   --filetype {pdf,cbz}, -f {pdf,cbz}
                         format to store manga as
-  --source {manganelo,mangareader,mangafast,mangakaka}, -z {manganelo,mangareader,mangafast,mangakaka}
+  --source {manganelo,mangareader,mangafast,mangakaka}, -z {manganelo,mangareader,mangafast,mangakaka,manganato}
                         website to scrape data from
   --upload {mega,dropbox,pcloud}, -u {mega,dropbox,pcloud}
                         upload manga to a cloud storage service

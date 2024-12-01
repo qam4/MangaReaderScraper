@@ -10,6 +10,7 @@ from scraper.menu import SearchMenu
 from scraper.parsers.mangafast import MangaFast
 from scraper.parsers.mangakaka import MangaKaka
 from scraper.parsers.manganelo import Manganelo
+from scraper.parsers.manganato import Manganato
 from scraper.parsers.mangareader import MangaReader
 from scraper.parsers.types import SiteParserClass
 from scraper.uploaders.types import Uploader
@@ -19,13 +20,13 @@ from scraper.utils import menu_input, settings
 
 CONFIG = settings()["config"]
 
-logging.basicConfig(
-    level=logging.WARN,
-    format="%(asctime)s %(process)s %(levelname)s %(message)s",
-)
-
-
 logger = logging.getLogger(__name__)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(funcName)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 def get_volume_values(volume: str) -> List[str]:
@@ -68,6 +69,7 @@ def get_manga_parser(source: str) -> SiteParserClass:
         "mangafast": MangaFast,
         "mangakaka": MangaKaka,
         "manganelo": Manganelo,
+        "manganato": Manganato,
     }
     parser = sources.get(source)
     if not parser:
@@ -105,10 +107,10 @@ def bundle(manga: Manga, chapter_per_volume: int):
 
 
 def cli(arguments: List[str]) -> dict:
-    # logger.debug(f"arguments={arguments}")
+    logger.debug(f"arguments={arguments}")
     parser = get_parser()
     args = vars(parser.parse_args(arguments))
-    # logger.debug(f"args={args}")
+    logger.debug(f"args={args}")
     manga_parser = get_manga_parser(args["source"])
     title = None
 
@@ -133,7 +135,7 @@ def cli(arguments: List[str]) -> dict:
     else:
         args["volumes"] = None
 
-    logger.debug(f"args={args}")
+    logger.debug(f"[download_manga] args={args}")
     try:
         manga = download_manga(
             manga_url=args["manga"],
@@ -219,7 +221,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--source",
         "-z",
         type=str,
-        choices={"mangareader", "mangafast", "mangakaka", "manganelo"},
+        choices={"mangareader", "mangafast", "mangakaka", "manganelo", "manganato"},
         default=CONFIG["source"],
         help="website to scrape data from",
     )

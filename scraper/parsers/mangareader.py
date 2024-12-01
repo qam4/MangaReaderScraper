@@ -49,6 +49,9 @@ class MangaReaderMangaParser(BaseMangaParser):
                 raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
             raise e
 
+    def volume_url(self, volume: str) -> str:
+        return f"{self.base_url}/{self.manga_url}-chapter-{volume}"
+
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         """
         Return a list of urls for every page in a given volume

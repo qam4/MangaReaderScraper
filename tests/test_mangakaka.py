@@ -243,7 +243,7 @@ def test_page_data(mocked_get, mangakaka_volume_html):
                 "chapter_1_the_god_of_destructions_prophetic_dream/16.jpg",
             ),
         )
-        page_num, img_data = page_data
+        page_num, img_data, _ = page_data
         assert page_num == 16
         # ensure it is an JPEG
         assert "JFIF" in str(img_data[:15])

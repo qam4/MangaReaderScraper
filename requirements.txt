@@ -1,7 +1,6 @@
 beautifulsoup4
 dropbox
 lxml
-#mega.py==1.0.5
 pcloud
 Pillow
 reportlab

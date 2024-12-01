@@ -23,9 +23,7 @@ class MangaFastMangaParser(BaseMangaParser):
         if int(volume) > int(highest_volume):
             raise VolumeDoesntExist(f"Manga volume {volume} does not exist")
         try:
-            volume_html = get_html_from_url(
-                f"{self.base_url}/{self.manga_url}-chapter-{volume}"
-            )
+            volume_html = get_html_from_url(self.volume_url(volume))
             return volume_html
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -33,6 +31,9 @@ class MangaFastMangaParser(BaseMangaParser):
                     f"Manga {self.manga_url} or volume {volume} does not exist"
                 )
             raise e
+
+    def volume_url(self, volume: str) -> str:
+        return f"{self.base_url}/{self.manga_url}-chapter-{volume}"
 
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         volume_html = self._scrape_volume(volume)

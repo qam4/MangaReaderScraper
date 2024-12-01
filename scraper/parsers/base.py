@@ -4,7 +4,7 @@ Abstract base classes for all parsers
 import abc
 import io
 import logging
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import sys
 from functools import lru_cache
 from typing import Iterable, List, Optional, Tuple, Type
@@ -24,9 +24,16 @@ class BaseMangaParser:
     Parses data associated with a given manga
     """
 
-    def __init__(self, manga_url: str, base_url: str) -> None:
+    def __init__(self, manga_url: str, base_url: str = "") -> None:
         self.manga_url = manga_url
         self.base_url = base_url
+
+    @abc.abstractmethod
+    def volume_url(self, volume: str) -> str:
+        """
+        Return the url of a volume
+        """
+        pass
 
     @abc.abstractmethod
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
@@ -35,23 +42,28 @@ class BaseMangaParser:
         """
         pass
 
-    def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes]:
+    def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
         """
         Extracts a manga pages data
         """
         # Try 5 times to get the page image
         attempt = 0
+        MAX_TRIES = 1
         page_num, img_url = page_url
-        while attempt < 5:
+        while attempt < MAX_TRIES:
             req = requests.get(img_url)
             if req.status_code == 200:
                 break
             attempt += 1
 
-        if attempt == 5:
+        if attempt == MAX_TRIES:
             logger.error(f"Download FAILED page {page_num} at {img_url}")
             # raise PageDoesNotExist(f"Page {page_num} at {img_url} does not exist")
-            return (int(page_num), b"")
+            return (
+                int(page_num),
+                self.create_page(f"Page {page_num} missing\n{img_url}"),
+                "missing",
+            )
         img_data = req.content
 
         # check image
@@ -64,9 +76,31 @@ class BaseMangaParser:
             logger.error(
                 f"Image file page {page_num} at {img_url} corrupted. Error: {str(err)}"
             )
-            return (int(page_num), b"")
+            return (
+                int(page_num),
+                self.create_page(f"Page {page_num} corrupted.\n{str(err)}\n{img_url}"),
+                "corrupted",
+            )
 
-        return (int(page_num), img_data)
+        return (int(page_num), img_data, "success")
+
+    def create_page(self, text: str) -> bytes:
+        # Create a new image
+        image = Image.new("RGB", (1000, 1500), color=(73, 109, 137))
+
+        # Create a drawing object
+        draw = ImageDraw.Draw(image)
+
+        # Choose a font
+        font = ImageFont.truetype("arial.ttf", 20)
+
+        # Add text to the image
+        draw.text((50, 70), text, font=font, fill=(255, 255, 255))
+
+        # Save the image as a JPG file
+        stream = io.BytesIO()
+        image.save(stream, "JPEG")
+        return stream.getvalue()
 
     @abc.abstractmethod
     def all_volume_numbers(self) -> Iterable[str]:
@@ -81,7 +115,7 @@ class BaseSearchParser:
     Parse search queries & returns the results
     """
 
-    def __init__(self, query: str, base_url: str) -> None:
+    def __init__(self, query: str, base_url: str = "") -> None:
         self.query: str = query
         self.base_url: str = base_url
 
@@ -121,12 +155,12 @@ class BaseSiteParser:
         search_parser: Type[BaseSearchParser],
         manga_url: Optional[str],
     ):
-        logger.debug(f"[BaseSiteParser] manga_url={manga_url}")
+        logger.debug(f"[BaseSiteParser] base_url={base_url}, manga_url={manga_url}")
         self.base_url = base_url
         self._manga_parser = manga_parser
         self._search_parser = search_parser
         self._manga: Optional[BaseMangaParser] = (
-            None if not manga_url else self._manga_parser(manga_url, base_url)
+            None if not manga_url else self._manga_parser(manga_url)
         )
 
     def __new__(cls, *args, **kwargs) -> "BaseSiteParser":
@@ -142,9 +176,9 @@ class BaseSiteParser:
 
     @manga.setter
     def manga(self, manga_url: str) -> None:
-        self._manga = self._manga_parser(manga_url, self.base_url)
+        self._manga = self._manga_parser(manga_url)
 
     @lru_cache()
     def search(self, query: str) -> SearchResults:
-        search_parser = self._search_parser(query, self.base_url)
+        search_parser = self._search_parser(query)
         return search_parser.search()

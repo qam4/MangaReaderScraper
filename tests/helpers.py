@@ -95,6 +95,9 @@ class MockedMangaReaderParser:
     def all_volume_numbers(self):
         return ["1", "2", "3"]
 
+    def volume_url(self, volume):
+        return f"http://mangareader.net/dragon-ball-episode-of-bardock/{volume}"
+
     def page_urls(self, volume):
         return [
             f"http://mangareader.net/dragon-ball-episode-of-bardock/{volume}",
@@ -106,7 +109,7 @@ class MockedMangaReaderParser:
         if not volume_num.isdigit():
             page_num = "1"
         img = open(f"tests/test_files/jpgs/test-manga_1_{page_num}.jpg", "rb").read()
-        return (int(page_num), img)
+        return (int(page_num), img, "success")
 
 
 class MockedSearch:

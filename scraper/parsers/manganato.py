@@ -15,16 +15,16 @@ from scraper.utils import get_html_from_url
 logger = logging.getLogger(__name__)
 
 
-class MangaKakaMangaParser(BaseMangaParser):
+class ManganatoMangaParser(BaseMangaParser):
     """
-    Scrapes & parses a specific manga page on mangakakalot.com
+    Scrapes & parses a specific manga page on chapmanganato.to
 
     WARNING: this no longer works due to mangakakalot integrating
              cloudflare blocking
     """
 
     def __init__(
-        self, manga_url: str, base_url: str = "https://mangakakalot.com"
+        self, manga_url: str, base_url: str = "https://chapmanganato.to"
     ) -> None:
         super().__init__(manga_url, base_url)
 
@@ -52,7 +52,7 @@ class MangaKakaMangaParser(BaseMangaParser):
                 # return None
 
     def volume_url(self, volume: str) -> str:
-        return f"{self.base_url}/chapter/{self.manga_url}/chapter_{volume}"
+        return f"{self.base_url}/manga-{self.manga_url}/chapter-{volume}"
 
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         """
@@ -64,7 +64,6 @@ class MangaKakaMangaParser(BaseMangaParser):
             all_img_tags = container.find_all("img")
             logger.debug(f"all_img_tags[0]={all_img_tags[0]}")
             all_page_urls = [img.get("src") for img in all_img_tags]
-            # [manganato.com]all_page_urls = [img.get("src") for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
         return None
 
@@ -72,7 +71,7 @@ class MangaKakaMangaParser(BaseMangaParser):
         """
         Sanitises a number from scraped chapter tag
         """
-        vol_text = vol_tag.split("_")[-1]
+        vol_text = vol_tag.split("-")[-1]
         return vol_text
 
     def all_volume_numbers(self) -> Iterable[str]:
@@ -80,7 +79,7 @@ class MangaKakaMangaParser(BaseMangaParser):
         Get the list of all volume numbers for a manga
         """
         try:
-            url = f"{self.base_url}/manga/{self.manga_url}"
+            url = f"{self.base_url}/manga-{self.manga_url}"
             logger.debug(f"Manga url={url}")
             manga_html = get_html_from_url(url)
             logger.debug(f"manga_html={manga_html}")
@@ -90,7 +89,7 @@ class MangaKakaMangaParser(BaseMangaParser):
             volume_numbers = set(
                 self._extract_number(vol.find("a").get("href")) for vol in volume_tags
             )
-            logger.debug(f"volume_numbers={volume_numbers}")
+            logger.debug(f'volume_numbers={volume_numbers}')
             return volume_numbers
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -99,12 +98,12 @@ class MangaKakaMangaParser(BaseMangaParser):
             raise e
 
 
-class MangaKakaSearch(BaseSearchParser):
+class ManganatoSearch(BaseSearchParser):
     """
-    Parses search queries from mangakakalot
+    Parses search queries
     """
 
-    def __init__(self, query: str, base_url: str = "https://mangakakalot.com") -> None:
+    def __init__(self, query: str, base_url: str = "https://manganato.com") -> None:
         super().__init__(query, base_url)
 
     def _extract_text(self, result: Tag) -> Dict[str, str]:
@@ -115,24 +114,28 @@ class MangaKakaSearch(BaseSearchParser):
         logger.debug(f"manga_title={manga_title}")
         manga_url = result.find("a").get("href")
         logger.debug(f"manga_url={manga_url}")
-        last_chapter = result.find("em", {"class": "story_chapter"}).find("a")
+        manga_url_short = Path(manga_url).stem.split("-")[-1]
+        last_chapter = result.find("a", {"class": "item-chapter a-h text-nowrap"})
         logger.debug(f"last_chapter={last_chapter}")
-        chapters = last_chapter.get("href").split("_")[-1]
+        if last_chapter:
+            chapters = last_chapter.get("href").split("-")[-1]
+        else:
+            chapters = 0
         logger.debug(f"chapters={chapters}")
         return {
             "title": manga_title,
-            "manga_url": Path(manga_url).stem,
+            "manga_url": manga_url_short,
             "chapters": chapters,
-            "source": "mangakaka",
+            "source": "manganato",
         }
 
     def search(self, start: int = 1) -> SearchResults:
         """
         Extract each mangas metadata from the search results
         """
-        search_url = f"{self.base_url}/search/story/{self.query.replace(' ', '_')}"
-        logger.debug(f"search_url={search_url}")
-        results = self._scrape_results(search_url, div_class="story_item")
+        url = f"{self.base_url}/search/story/{self.query.replace(' ', '_')}"
+        logger.debug(f"search_url={url}")
+        results = self._scrape_results(url, div_class="search-story-item")
         metadata = {}
         for key, result in enumerate(results, start=start):
             manga_metadata = self._extract_text(result)
@@ -140,17 +143,17 @@ class MangaKakaSearch(BaseSearchParser):
         return metadata
 
 
-class MangaKaka(BaseSiteParser):
+class Manganato(BaseSiteParser):
     """
-    Seems to be the same as manganelo.com
+    Seems to be the same as manganato.com
 
-    Can probably use this class for manganelo too
+    Can probably use this class for manganato too
     """
 
     def __init__(self, manga_url: Optional[str] = None) -> None:
         super().__init__(
             manga_url=manga_url,
-            base_url="https://mangakakalot.com",
-            manga_parser=MangaKakaMangaParser,
-            search_parser=MangaKakaSearch,
+            base_url="https://manganato.com",
+            manga_parser=ManganatoMangaParser,
+            search_parser=ManganatoSearch,
         )

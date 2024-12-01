@@ -26,7 +26,7 @@ def test_volume_add_page():
 
 
 def test_add_multiple_pages_to_volume():
-    page_data = [(1, b"here"), (2, b"bye")]
+    page_data = [(1, b"here", "success"), (2, b"bye", "success")]
     volume = Volume("1", Path("/Some/path"), Path("/some/path"))
     volume.pages = page_data
     assert volume.page[1] == Page(number=1, img=b"here")
@@ -145,8 +145,8 @@ def test_volumes_property_in_manga_returns_a_sorted_list(manga):
         file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_12.pdf"),
         upload_path=Path("/dragon-ball/dragon-ball_chapter_12.pdf"),
     )
-    v1.pages = [(1, b"here"), (2, b"bye")]
-    v2.pages = [(1, b"hello"), (2, b"jimmy")]
+    v1.pages = [(1, b"here", "success"), (2, b"bye", "success")]
+    v2.pages = [(1, b"hello", "success"), (2, b"jimmy", "success")]
     expected = [
         v1,
         v2,
@@ -198,7 +198,7 @@ def test_mangabuilder_get_all_volumes(inval):
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
-    pages = [(1, img1.read()), (2, img2.read())]
+    pages = [(1, img1.read(), "success"), (2, img2.read(), "success")]
     v1.pages = pages
     v2.pages = pages
     v3.pages = pages
@@ -219,7 +219,7 @@ def test_mangabuilder_get_single_volumes(parser):
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
-    pages = [(1, img1.read()), (2, img2.read())]
+    pages = [(1, img1.read(), "success"), (2, img2.read(), "success")]
     v1.pages = pages
     assert manga.volumes == [v1]
     assert manga.volumes_dict["1"] == v1
@@ -237,7 +237,7 @@ def test_manga_builder_preferred_name(parser):
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
-    pages = [(1, img1.read()), (2, img2.read())]
+    pages = [(1, img1.read(), "success"), (2, img2.read(), "success")]
     v1.pages = pages
     assert manga.volumes_dict["1"] == v1
 

@@ -16,8 +16,6 @@ from urllib3.util.retry import Retry
 
 from scraper.exceptions import CannotExtractChapter
 
-logger = logging.getLogger(__name__)
-
 
 class CustomAdapter(LoggerAdapter):
     """

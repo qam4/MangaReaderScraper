@@ -185,7 +185,7 @@ def test_page_data(mocked_get, mangareader_page_html):
             "https://i4.imggur.net/dragon-ball-episode-of-bardock/1/dragon-ball-episode-of-bardock-2552963.jpg",
         )
         page_data = parser.page_data(page_url)
-        page_num, img_data = page_data
+        page_num, img_data, _ = page_data
         assert page_num == 20
         # ensure it is an JPEG
         assert "JFIF" in str(img_data[:15])

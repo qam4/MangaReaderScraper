@@ -12,6 +12,7 @@ from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
 import tqdm  # type: ignore
+from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
 from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -19,7 +20,7 @@ from reportlab.pdfgen import canvas
 from scraper.exceptions import (
     PageAlreadyPresent,
     # PageDoesNotExist,
-    VolumeAlreadyExists,
+    # VolumeAlreadyExists,
     VolumeAlreadyPresent,
     VolumeDoesntExist,
 )
@@ -117,7 +118,7 @@ class Volume:
     @pages.setter
     def pages(self, metadata: List[PageData]) -> None:
         self._pages = {}
-        for page_number, img in metadata:
+        for page_number, img, _ in metadata:
             self.add_page(page_number, img)
 
     def add_page(self, page_number: int, img: bytes) -> None:
@@ -190,21 +191,19 @@ class Manga:
             raise VolumeAlreadyPresent(f"Volume {volume_number} is already present")
 
         vol_str = volume_number
-        # if not complete:
-        #     vol_str += "-incomplete"
+        if not complete:
+            vol_str += "-incomplete"
         vol_path = self._volume_path(vol_str)
         vol_upload_path = self._volume_upload_path(vol_str)
         volume = Volume(
             number=volume_number, file_path=vol_path, upload_path=vol_upload_path
         )
-        self._volumes[volume.number] = volume
-        if vol_path.exists():
-            logger.info(f"Volume {volume_number} already saved to disk")
+        self._volumes[volume_number] = volume
 
     def volume_exists(self, volume_number: str) -> bool:
         vol_path = self._volume_path(volume_number)
         if vol_path.exists():
-            logger.info(f"Volume {volume_number} already exists in {vol_path}")
+            logger.debug(f"Volume {volume_number} already exists: {vol_path}")
             return True
         else:
             return False
@@ -228,16 +227,21 @@ class MangaBuilder:
         Download pages of a volume, and save them to disk (in pdf or cbz)
         Returns volume number & each pages raw data
         """
-        # On windows, sub-process do not inherit logLevel
+        # On windows, sub-process do not inherit logLevel, ...
+        # also, logs in sub-process mess tqmd (so better keep level=WARN)
         logging.basicConfig(
             level=logging.WARN,
-            format="%(asctime)s %(process)s %(levelname)s %(message)s",
+            format="%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(funcName)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
+        # Do not try to download volume data if the complete volume is already saved on disk
         if self.manga.volume_exists(volume_number):
             return None
 
-        self.adapter.info(f"Downloading volume {volume_number}")
+        self.adapter.info(
+            f"Downloading volume {volume_number} from {self.parser.manga.volume_url(volume_number)}"
+        )
         try:
             urls = self.parser.manga.page_urls(volume_number)
         except VolumeDoesntExist as e:
@@ -257,13 +261,10 @@ class MangaBuilder:
 
             # check if any page is missing
             volume_complete = True
-            if any([not page[1] for page in pages_data]):
+            if any([page[2] != "success" for page in pages_data]):
                 self.adapter.error(
-                    f"Volume {volume_number} is missing pages {','.join([str(page[0]) for page in pages_data if not page[1]])}"
+                    f"Volume {volume_number} is missing pages {','.join([str(page[0]) for page in pages_data if page[2] != 'success'])}, url={self.parser.manga.volume_url(volume_number)}"
                 )
-                # remove those missing pages from the volume
-                # TODO: replace with "Missing page" jpg
-                pages_data = [page for page in pages_data if page[1]]
                 volume_complete = False
 
             # Add the volume to the manga
@@ -274,7 +275,7 @@ class MangaBuilder:
                 # properties cause an error in mypy when getter/setters input
                 # differ, mypy thinks they should be the same
                 self.manga.volumes_dict[volume_number].pages = pages_data  # type: ignore
-            except (VolumeAlreadyExists, VolumeAlreadyPresent) as e:
+            except (VolumeAlreadyPresent) as e:
                 self.adapter.error(e)
 
             # Save the volume to disk
@@ -296,18 +297,17 @@ class MangaBuilder:
         Returns list of raw volume data
         """
         self.adapter.info("Downloading volumes data...")
-        self.adapter.debug(
-            f"[MangaBuilder:_get_volumes_data] self.manga.name={self.manga.name}"
-        )
-        with Pool() as pool:
-            volumes_data = list(
-                tqdm.tqdm(
-                    pool.imap(self._get_volume_data, vol_nums),
-                    total=len(list(vol_nums)),
-                    unit="volumes",
+        self.adapter.debug(f"self.manga.name={self.manga.name}")
+        with logging_redirect_tqdm(loggers=[self.adapter.logger]):
+            with Pool() as pool:
+                volumes_data = list(
+                    tqdm.tqdm(
+                        pool.imap(self._get_volume_data, vol_nums),
+                        total=len(list(vol_nums)),
+                        unit="volumes",
+                    )
                 )
-            )
-            return volumes_data
+                return volumes_data
         # no multi-process version:
         # return list(tqdm.tqdm(map(self._get_volume_data, vol_nums), total=len(vol_nums)))
 
@@ -385,22 +385,23 @@ class MangaBuilder:
         )
         preferred_name = sanitize_filename(preferred_name)
         self.adapter.debug(
-            f"[MangaBuilder:get_manga_volumes] title={title}, manga_url={self.parser.manga.manga_url}, preferred_name={preferred_name}"
+            f"title={title}, manga_url={self.parser.manga.manga_url}, preferred_name={preferred_name}"
         )
         # Create a Manga instance
         self.manga = Manga(preferred_name, self.type)
         # Find the list of volumes for that manga
         vol_nums = self.parser.manga.all_volume_numbers() if not vol_nums else vol_nums
-        # Filter out volumes already saved to disk
-        # vol_nums = [vol for vol in vol_nums if not self.manga.volume_exists(vol)]
         self.adapter.debug(f"vol_nums={vol_nums}")
 
         # Download the volumes
         _ = self._get_volumes_data(vol_nums)
 
         # Add volumes to manga
-        for volume in vol_nums:
-            if not self.manga.volumes_dict.get(volume):
-                self.manga.add_volume(volume)
+        for volume_number in vol_nums:
+            # this if statement is needed for unit tests which are not multithreaded
+            # to make sure we do not get VolumeAlreadyPresent
+            if not self.manga.volumes_dict.get(volume_number):
+                volume_complete = self.manga.volume_exists(volume_number)
+                self.manga.add_volume(volume_number, volume_complete)
 
         return self.manga

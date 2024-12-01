@@ -229,7 +229,7 @@ def page():
 @pytest.fixture
 def volume():
     img1, img2 = get_images()
-    page_data = [(1, img1), (2, img2)]
+    page_data = [(1, img1, "success"), (2, img2, "success")]
     volume = Volume("1", Path("/Some/path"), Path("/some/path"))
     volume.pages = page_data
     return volume
@@ -239,8 +239,8 @@ def volume():
 def manga():
     manga = Manga("dragon-ball", "pdf")
     manga.volumes = ["1", "2"]
-    manga.volumes_dict["1"].pages = [(1, b"here"), (2, b"bye")]
-    manga.volumes_dict["2"].pages = [(1, b"hello"), (2, b"jimmy")]
+    manga.volumes_dict["1"].pages = [(1, b"here", "success"), (2, b"bye", "success")]
+    manga.volumes_dict["2"].pages = [(1, b"hello", "success"), (2, b"jimmy", "success")]
     return manga
 
 
