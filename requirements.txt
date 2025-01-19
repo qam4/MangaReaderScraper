@@ -1,10 +1,13 @@
 beautifulsoup4
 dropbox
+cloudscraper
 lxml
 pcloud
 Pillow
 reportlab
 requests
+selenium
+undetected_chromedriver
 tabulate
 tqdm
-KindleComicConverter
+# KindleComicConverter

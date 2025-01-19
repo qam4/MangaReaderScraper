@@ -42,7 +42,7 @@ def test_404_errors(mock_request, mangaparser):
     mock_request.return_value = mock_resp
     parser = mangaparser("blahblahblah")
     with pytest.raises(MangaDoesNotExist):
-        parser.all_volume_numbers()
+        parser.all_volume_ids()
     with pytest.raises(MangaDoesNotExist):
         parser.page_urls("1")
 
@@ -55,4 +55,4 @@ def test_non_404_errors(mock_request, mangaparser):
     mock_request.return_value = mock_resp
     parser = mangaparser("blahblahblah")
     with pytest.raises(requests.exceptions.HTTPError):
-        parser.all_volume_numbers()
+        parser.all_volume_ids()

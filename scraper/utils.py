@@ -5,12 +5,17 @@ import pdb
 import re
 import sys
 import time
+import undetected_chromedriver as uc  # type: ignore
 from logging import Logger, LoggerAdapter
 from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
+from selenium import webdriver  # type: ignore
+from selenium.webdriver.chrome.service import Service as ChromeService
+from subprocess import CREATE_NO_WINDOW
 
 import bs4
 import requests  # type: ignore
+import cloudscraper  # type: ignore
 from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry
 
@@ -42,13 +47,39 @@ def get_adapter(
     return CustomAdapter(logger, extra)
 
 
-def get_html_from_url(url: str) -> bs4.BeautifulSoup:
+def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.BeautifulSoup:
     """
     Download the HTML text from a given url
     """
-    req = requests.get(url)
-    req.raise_for_status()
-    html = bs4.BeautifulSoup(req.text, features="lxml")
+    if type == "requests":
+        req = requests.get(url)
+        req.raise_for_status()
+        text = req.text
+    elif type == "cloudscraper":
+        scraper = cloudscraper.create_scraper()
+        req = scraper.get(url)
+        req.raise_for_status()
+        text = req.text
+    elif type == "uc":
+        # issue: AssertionError: daemonic processes are not allowed to have children
+        driver = uc.Chrome(headless=True, use_subprocess=False)
+        driver.get(url)
+        time.sleep(10)
+        text = driver.page_source
+    elif type == "selenium":
+        chrome_service = ChromeService()
+        chrome_service.creation_flags = CREATE_NO_WINDOW
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        driver = webdriver.Chrome(options=options, service=chrome_service)
+        driver.get(url)
+        time.sleep(3)
+        text = driver.page_source
+        driver.quit()
+    else:
+        logging.error(f"type not supported {type}")
+
+    html = bs4.BeautifulSoup(text, features="lxml")
     return html
 
 

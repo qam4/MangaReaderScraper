@@ -11,6 +11,8 @@ from scraper.parsers.mangafast import MangaFast
 from scraper.parsers.mangakaka import MangaKaka
 from scraper.parsers.manganelo import Manganelo
 from scraper.parsers.manganato import Manganato
+from scraper.parsers.mangapark import Mangapark
+from scraper.parsers.mangago import Mangago
 from scraper.parsers.mangareader import MangaReader
 from scraper.parsers.types import SiteParserClass
 from scraper.uploaders.types import Uploader
@@ -31,7 +33,7 @@ logging.basicConfig(
 
 def get_volume_values(volume: str) -> List[str]:
     """
-    Transform a string digit into a list of floats
+    Transform a string digit into a list of strings
     """
     if "-" in volume:
         start, end = volume.split("-")
@@ -70,6 +72,8 @@ def get_manga_parser(source: str) -> SiteParserClass:
         "mangakaka": MangaKaka,
         "manganelo": Manganelo,
         "manganato": Manganato,
+        "mangapark": Mangapark,
+        "mangago": Mangago,
     }
     parser = sources.get(source)
     if not parser:
@@ -221,7 +225,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--source",
         "-z",
         type=str,
-        choices={"mangareader", "mangafast", "mangakaka", "manganelo", "manganato"},
+        choices={"manganelo", "mangapark", "mangago", "mangareader"},
         default=CONFIG["source"],
         help="website to scrape data from",
     )

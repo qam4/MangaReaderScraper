@@ -1,6 +1,7 @@
 """
 Abstract base classes for all parsers
 """
+
 import abc
 import io
 import logging
@@ -103,9 +104,9 @@ class BaseMangaParser:
         return stream.getvalue()
 
     @abc.abstractmethod
-    def all_volume_numbers(self) -> Iterable[str]:
+    def all_volume_ids(self) -> Iterable[str]:
         """
-        All volume numbers for a manga
+        All volume identifiers for a manga (used to create the volume url)
         """
         pass
 

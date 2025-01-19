@@ -11,11 +11,11 @@ from scraper.parsers.mangareader import (
 from tests.helpers import METADATA, MockedImgResponse
 
 
-def test_all_volume_numbers(mangareader_manga_title_page_html):
+def test_all_volume_ids(mangareader_manga_title_page_html):
     with mock.patch("scraper.parsers.mangareader.get_html_from_url") as mocked_func:
         mocked_func.return_value = mangareader_manga_title_page_html
         parser = MangaReaderMangaParser("dragon-ball")
-        all_vols = parser.all_volume_numbers()
+        all_vols = parser.all_volume_ids()
         assert all_vols == ["1", "2", "3"]
 
 

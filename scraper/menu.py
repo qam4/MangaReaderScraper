@@ -93,7 +93,7 @@ class SearchMenu(Menu):
         data: List[List[str]] = []
         for number, metadata in self.search_results.items():
             title, chapters, source = (
-                metadata["title"],
+                metadata["title"].encode("ascii", errors="ignore").decode(),
                 metadata["chapters"],
                 metadata["source"],
             )

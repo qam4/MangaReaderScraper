@@ -180,21 +180,21 @@ def test_manga_iter(manga):
 def test_mangabuilder_get_all_volumes(inval):
     parser = MockedSiteParser()
     builder = MangaBuilder(parser)
-    manga = builder.get_manga_volumes(vol_nums=inval)
+    manga = builder.get_manga_volumes(vol_ids=inval)
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1_1.pdf"),
     )
     v2 = Volume(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2_2.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_2_2.pdf"),
     )
     v3 = Volume(
         number="3",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_3.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_3.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_3_3.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_3_3.pdf"),
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -211,11 +211,11 @@ def test_mangabuilder_get_all_volumes(inval):
 def test_mangabuilder_get_single_volumes(parser):
     parser = MockedSiteParser()
     builder = MangaBuilder(parser)
-    manga = builder.get_manga_volumes(vol_nums=["1"])
+    manga = builder.get_manga_volumes(vol_ids=["1"])
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1_1.pdf"),
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -229,11 +229,11 @@ def test_mangabuilder_get_single_volumes(parser):
 def test_manga_builder_preferred_name(parser):
     parser = MockedSiteParser()
     builder = MangaBuilder(parser)
-    manga = builder.get_manga_volumes(vol_nums=["1"], preferred_name="smelly_pancakes")
+    manga = builder.get_manga_volumes(vol_ids=["1"], preferred_name="smelly_pancakes")
     v1 = Volume(
         number="1",
-        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
-        upload_path=Path("/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
+        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_chapter_1_1.pdf"),
+        upload_path=Path("/smelly_pancakes/smelly_pancakes_chapter_1_1.pdf"),
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")

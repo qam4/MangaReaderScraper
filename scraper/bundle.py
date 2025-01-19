@@ -5,7 +5,6 @@ Bundle manga into volumes with multiple chapters
 import logging
 import os
 import shutil
-import re
 import zipfile
 import time
 import subprocess
@@ -16,7 +15,7 @@ from scraper.utils import get_adapter, settings
 from logging import LoggerAdapter
 import tqdm  # type: ignore
 from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
-from typing import Any, List
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +47,6 @@ def ceiling_division(n, d):
     Ceiling division
     """
     return -(n // -d)
-
-
-def natural_sort(_list, key=lambda s: s) -> List[Any]:
-    """
-    Sort the list into natural alphanumeric order.
-    """
-
-    def convert_text(text: str):
-        return int(text) if text.isdigit() else text.lower()
-
-    def get_alphanum_key_func(key):
-        return lambda s: [convert_text(c) for c in re.split("([0-9]+)", key(s))]
-
-    sort_key = get_alphanum_key_func(key)
-    return sorted(_list, key=sort_key)
 
 
 class Bundle:
@@ -147,9 +131,9 @@ class Bundle:
 
         series = manga_title
         if num_chapters == 1:
-            title = f"{manga_title} vol{volume:0{volume_digits}} ch{manga_chapters[chapter_start].number}"
+            title = f"{manga_title} vol{volume:0{volume_digits}} ch{chapter_start + 1}"
         else:
-            title = f"{manga_title} vol{volume:0{volume_digits}} ch{manga_chapters[chapter_start].number}-{manga_chapters[chapter_end].number}"
+            title = f"{manga_title} vol{volume:0{volume_digits}} ch{chapter_start + 1}-{chapter_end + 1}"
         volume_cbz_path = os.path.join(output_folder, "cbz", f"{series} - {title}.cbz")
 
         # check if the cbz archive needs an update

@@ -157,18 +157,18 @@ class Manga:
     def _str(self) -> str:
         return f"Manga(name={self.name}, volumes={len(self.volumes)})"
 
-    def _volume_path(self, volume_number: str) -> Path:
+    def _volume_path(self, volume_id: str) -> Path:
         """Create volume path"""
         manga_dir = settings()["config"]["manga_directory"]
         return Path(
             f"{manga_dir}/{self.name}/{self.name}"
-            f"_chapter_{volume_number}.{self.filetype}"
+            f"_chapter_{volume_id}.{self.filetype}"
         )
 
-    def _volume_upload_path(self, volume_number: str) -> Path:
+    def _volume_upload_path(self, volume_id: str) -> Path:
         """Create upload volume path"""
         root = Path(settings()["config"]["upload_root"])
-        return root / f"{self.name}/{self.name}_chapter_{volume_number}.{self.filetype}"
+        return root / f"{self.name}/{self.name}_chapter_{volume_id}.{self.filetype}"
 
     @property
     def volumes_dict(self) -> Dict[str, Volume]:
@@ -181,29 +181,44 @@ class Manga:
         return sorted_volumes
 
     @volumes.setter
+    # only used in unit tests
     def volumes(self, volumes: List[str]) -> None:
         self._volumes = {}
         for volume in volumes:
             self.add_volume(volume)
 
-    def add_volume(self, volume_number: str, complete=True) -> None:
-        if self.volumes_dict.get(volume_number):
-            raise VolumeAlreadyPresent(f"Volume {volume_number} is already present")
+    def add_volume(
+        self,
+        volume_id: str,
+        volume_index: Optional[int] = None,
+        complete: Optional[bool] = True,
+    ) -> None:
+        if self.volumes_dict.get(volume_id):
+            raise VolumeAlreadyPresent(f"Volume {volume_id} is already present")
 
-        vol_str = volume_number
+        if volume_index is not None:
+            vol_path_str = str(volume_index) + "_" + volume_id
+        else:
+            vol_path_str = volume_id
         if not complete:
-            vol_str += "-incomplete"
-        vol_path = self._volume_path(vol_str)
-        vol_upload_path = self._volume_upload_path(vol_str)
+            vol_path_str += "-incomplete"
+        vol_path = self._volume_path(vol_path_str)
+        vol_upload_path = self._volume_upload_path(vol_path_str)
         volume = Volume(
-            number=volume_number, file_path=vol_path, upload_path=vol_upload_path
+            number=str(volume_index) if volume_index is not None else volume_id,
+            file_path=vol_path,
+            upload_path=vol_upload_path,
         )
-        self._volumes[volume_number] = volume
+        self._volumes[volume_id] = volume
 
-    def volume_exists(self, volume_number: str) -> bool:
-        vol_path = self._volume_path(volume_number)
+    def volume_exists(self, volume_id: str, volume_index: int) -> bool:
+        if volume_index:
+            vol_path_str = str(volume_index) + "_" + volume_id
+        else:
+            vol_path_str = volume_id
+        vol_path = self._volume_path(vol_path_str)
         if vol_path.exists():
-            logger.debug(f"Volume {volume_number} already exists: {vol_path}")
+            logger.info(f"Volume {vol_path_str} already exists: {vol_path}")
             return True
         else:
             return False
@@ -220,8 +235,11 @@ class MangaBuilder:
         self.type: str = filetype
         self.manga: Optional[Manga] = None
 
+    def _get_volume_data_wrapped(self, arg):
+        return self._get_volume_data(*arg)  # Unpacks args
+
     def _get_volume_data(
-        self, volume_number: str
+        self, volume_index: int, volume_id: str
     ) -> Optional[Tuple[str, Optional[VolumeData]]]:
         """
         Download pages of a volume, and save them to disk (in pdf or cbz)
@@ -230,23 +248,23 @@ class MangaBuilder:
         # On windows, sub-process do not inherit logLevel, ...
         # also, logs in sub-process mess tqmd (so better keep level=WARN)
         logging.basicConfig(
-            level=logging.WARN,
+            level=logging.INFO,
             format="%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(funcName)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
         # Do not try to download volume data if the complete volume is already saved on disk
-        if self.manga.volume_exists(volume_number):
+        if self.manga.volume_exists(volume_id, volume_index):
             return None
 
         self.adapter.info(
-            f"Downloading volume {volume_number} from {self.parser.manga.volume_url(volume_number)}"
+            f"Downloading volume {volume_index} from {self.parser.manga.volume_url(volume_id)}"
         )
         try:
-            urls = self.parser.manga.page_urls(volume_number)
+            urls = self.parser.manga.page_urls(volume_id)
         except VolumeDoesntExist as e:
             self.adapter.error(e)
-            return (volume_number, None)
+            return (volume_id, None)
         if urls:
             with ThreadPool() as pool:
                 # Download the data from urls
@@ -256,14 +274,14 @@ class MangaBuilder:
             # pages_data = list(map(self.parser.manga.page_data, urls))
 
             if not pages_data:
-                self.adapter.error(f"No data for volume {volume_number}")
-                return (volume_number, None)
+                self.adapter.error(f"No data for volume {volume_id}")
+                return (volume_id, None)
 
             # check if any page is missing
             volume_complete = True
             if any([page[2] != "success" for page in pages_data]):
                 self.adapter.error(
-                    f"Volume {volume_number} is missing pages {','.join([str(page[0]) for page in pages_data if page[2] != 'success'])}, url={self.parser.manga.volume_url(volume_number)}"
+                    f"Volume {volume_id} is missing pages {','.join([str(page[0]) for page in pages_data if page[2] != 'success'])}, url={self.parser.manga.volume_url(volume_id)}"
                 )
                 volume_complete = False
 
@@ -271,26 +289,28 @@ class MangaBuilder:
             # note: each volume is created in its own process,
             # so self.manga of the parent process is not changed
             try:
-                self.manga.add_volume(volume_number, volume_complete)
+                self.manga.add_volume(
+                    volume_id, volume_index=volume_index, complete=volume_complete
+                )
                 # properties cause an error in mypy when getter/setters input
                 # differ, mypy thinks they should be the same
-                self.manga.volumes_dict[volume_number].pages = pages_data  # type: ignore
-            except (VolumeAlreadyPresent) as e:
+                self.manga.volumes_dict[volume_id].pages = pages_data  # type: ignore
+            except VolumeAlreadyPresent as e:
                 self.adapter.error(e)
 
             # Save the volume to disk
-            self.adapter.info(f"Saving volume {volume_number}")
+            self.adapter.info(f"Saving volume {volume_id}")
             self._create_manga_dir(self.manga.name)
 
             save_method = self._get_save_method(self.type)
             if save_method:
-                save_method(self.manga.volumes_dict[volume_number])
-            self.adapter.info(f"Volume {volume_number} done")
+                save_method(self.manga.volumes_dict[volume_id])
+            self.adapter.info(f"Volume {volume_id} done")
 
-            return (volume_number, None)
+            return (volume_id, None)
         return None
 
-    def _get_volumes_data(self, vol_nums: Iterable[str] = []) -> List[VolumeData]:
+    def _get_volumes_data(self, vol_ids: Iterable[str] = []) -> List[VolumeData]:
         """
         Download a list of volumes
         Each volume is processed in parallel processes
@@ -299,17 +319,19 @@ class MangaBuilder:
         self.adapter.info("Downloading volumes data...")
         self.adapter.debug(f"self.manga.name={self.manga.name}")
         with logging_redirect_tqdm(loggers=[self.adapter.logger]):
-            with Pool() as pool:
+            with Pool(4) as pool:
                 volumes_data = list(
                     tqdm.tqdm(
-                        pool.imap(self._get_volume_data, vol_nums),
-                        total=len(list(vol_nums)),
+                        pool.imap(
+                            self._get_volume_data_wrapped, enumerate(vol_ids, start=1)
+                        ),
+                        total=len(list(vol_ids)),
                         unit="volumes",
                     )
                 )
                 return volumes_data
         # no multi-process version:
-        # return list(tqdm.tqdm(map(self._get_volume_data, vol_nums), total=len(vol_nums)))
+        # return list(tqdm.tqdm(map(self._get_volume_data, vol_ids), total=len(vol_ids)))
 
     def _create_manga_dir(self, manga_name: str) -> None:
         """
@@ -369,7 +391,7 @@ class MangaBuilder:
 
     def get_manga_volumes(
         self,
-        vol_nums: Optional[Iterable[str]] = None,
+        vol_ids: Optional[Iterable[str]] = None,
         title: Optional[str] = None,
         preferred_name: Optional[str] = None,
     ) -> Manga:
@@ -390,18 +412,22 @@ class MangaBuilder:
         # Create a Manga instance
         self.manga = Manga(preferred_name, self.type)
         # Find the list of volumes for that manga
-        vol_nums = self.parser.manga.all_volume_numbers() if not vol_nums else vol_nums
-        self.adapter.debug(f"vol_nums={vol_nums}")
+        all_volume_ids = self.parser.manga.all_volume_ids()
+        # [fm] [all_volumes_numbers[int(i) + 1] for i in vol_ids]
+        vol_ids = all_volume_ids if vol_ids is None else vol_ids
+        self.adapter.debug(f"vol_ids={vol_ids}")
 
         # Download the volumes
-        _ = self._get_volumes_data(vol_nums)
+        _ = self._get_volumes_data(vol_ids)
 
         # Add volumes to manga
-        for volume_number in vol_nums:
+        for index, volume_id in enumerate(vol_ids, start=1):
             # this if statement is needed for unit tests which are not multithreaded
             # to make sure we do not get VolumeAlreadyPresent
-            if not self.manga.volumes_dict.get(volume_number):
-                volume_complete = self.manga.volume_exists(volume_number)
-                self.manga.add_volume(volume_number, volume_complete)
+            if not self.manga.volumes_dict.get(volume_id):
+                volume_complete = self.manga.volume_exists(volume_id, index)
+                self.manga.add_volume(
+                    volume_id, volume_index=index, complete=volume_complete
+                )
 
         return self.manga

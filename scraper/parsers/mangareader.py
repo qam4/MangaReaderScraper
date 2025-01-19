@@ -64,7 +64,7 @@ class MangaReaderMangaParser(BaseMangaParser):
         image_urls = [(int(x["p"]), "https:" + x["u"]) for x in page_metadata["im"]]
         return image_urls
 
-    def all_volume_numbers(self) -> Iterable[str]:
+    def all_volume_ids(self) -> Iterable[str]:
         """
         All volume numbers for a manga
         """
@@ -73,8 +73,8 @@ class MangaReaderMangaParser(BaseMangaParser):
             manga_html = get_html_from_url(url)
             # [latest]  volume_tags = manga_html.find("table", {"class": "d48"}).find_all("a")
             volume_tags = manga_html.find("div", id="chapterlist").find_all("a")
-            volume_numbers = [vol.get("href").split("/")[-1] for vol in volume_tags]
-            return volume_numbers
+            volume_ids = [vol.get("href").split("/")[-1] for vol in volume_tags]
+            return volume_ids
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")

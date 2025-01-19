@@ -19,7 +19,7 @@ class MangaFastMangaParser(BaseMangaParser):
         super().__init__(manga_url, base_url)
 
     def _scrape_volume(self, volume: str) -> BeautifulSoup:
-        highest_volume = next(iter(self.all_volume_numbers()))
+        highest_volume = next(iter(self.all_volume_ids()))
         if int(volume) > int(highest_volume):
             raise VolumeDoesntExist(f"Manga volume {volume} does not exist")
         try:
@@ -46,15 +46,15 @@ class MangaFastMangaParser(BaseMangaParser):
             img_urls.append((page_num, url))
         return img_urls
 
-    def all_volume_numbers(self) -> Iterable[str]:
+    def all_volume_ids(self) -> Iterable[str]:
         try:
             url = f"{self.base_url}/{self.manga_url}?order=old#table"
             manga_html = get_html_from_url(url)
             volume_tags = manga_html.find("table", id="table").find_all("a")
             volume_tags = [tag for tag in volume_tags if tag.text != "PDF"]
-            volume_numbers = [re.sub(r"\D", "", x.text.strip()) for x in volume_tags]
-            highest_volume = volume_numbers[0]
-            return [vol for vol in volume_numbers if vol <= highest_volume]
+            volume_ids = [re.sub(r"\D", "", x.text.strip()) for x in volume_tags]
+            highest_volume = volume_ids[0]
+            return [vol for vol in volume_ids if vol <= highest_volume]
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")

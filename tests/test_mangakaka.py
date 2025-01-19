@@ -157,11 +157,11 @@ def test_page_urls(mangakaka_volume_html):
         assert page_urls == expected
 
 
-def test_all_volume_numbers(mangakaka_manga_title_page_html):
+def test_all_volume_ids(mangakaka_manga_title_page_html):
     with mock.patch("scraper.parsers.mangakaka.get_html_from_url") as mocked_func:
         mocked_func.return_value = mangakaka_manga_title_page_html
         parser = MangaKakaMangaParser("dragon-ball")
-        all_vols = parser.all_volume_numbers()
+        all_vols = parser.all_volume_ids()
         assert all_vols == {
             "1",
             "2",

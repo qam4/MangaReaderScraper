@@ -7,11 +7,11 @@ from scraper.parsers.mangafast import MangaFast, MangaFastMangaParser, MangaFast
 from tests.helpers import MockedImgResponse
 
 
-def test_all_volume_numbers(mangafast_manga_title_page_html):
+def test_all_volume_ids(mangafast_manga_title_page_html):
     with mock.patch("scraper.parsers.mangafast.get_html_from_url") as mocked_func:
         mocked_func.return_value = mangafast_manga_title_page_html
         parser = MangaFastMangaParser("dragon-ball-super")
-        all_vols = parser.all_volume_numbers()
+        all_vols = parser.all_volume_ids()
         expected = [
             "62",
             "61",
@@ -80,7 +80,7 @@ def test_all_volume_numbers(mangafast_manga_title_page_html):
 
 def test_page_urls(mangafast_volume_html):
     func = "scraper.parsers.mangafast.get_html_from_url"
-    method = "scraper.parsers.mangafast.MangaFastMangaParser.all_volume_numbers"
+    method = "scraper.parsers.mangafast.MangaFastMangaParser.all_volume_ids"
 
     with mock.patch(func) as mocked_func:
         mocked_func.return_value = mangafast_volume_html
@@ -161,7 +161,7 @@ def test_page_urls(mangafast_volume_html):
 
 def test_invalid_volume_parser(mangafast_volume_html):
     func = "scraper.parsers.mangafast.get_html_from_url"
-    method = "scraper.parsers.mangafast.MangaFastMangaParser.all_volume_numbers"
+    method = "scraper.parsers.mangafast.MangaFastMangaParser.all_volume_ids"
 
     with mock.patch(func) as mocked_func:
         mocked_func.return_value = mangafast_volume_html

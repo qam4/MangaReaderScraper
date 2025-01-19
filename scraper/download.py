@@ -29,7 +29,7 @@ class Download:
     @download_timer
     def download_volumes(
         self,
-        vol_nums: Optional[List[str]] = None,
+        vol_ids: Optional[List[str]] = None,
         title: Optional[str] = None,
         preferred_name: Optional[str] = None,
     ) -> Manga:
@@ -37,7 +37,7 @@ class Download:
         Download all pages and volumes of a manga
         """
         self.adapter.info("Starting Downloads")
-        manga = self.factory.get_manga_volumes(vol_nums, title, preferred_name)
+        manga = self.factory.get_manga_volumes(vol_ids, title, preferred_name)
         if not manga.volumes:
             return manga
         self.adapter.info("All volumes downloaded")

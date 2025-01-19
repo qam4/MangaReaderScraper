@@ -74,7 +74,7 @@ class ManganatoMangaParser(BaseMangaParser):
         vol_text = vol_tag.split("-")[-1]
         return vol_text
 
-    def all_volume_numbers(self) -> Iterable[str]:
+    def all_volume_ids(self) -> Iterable[str]:
         """
         Get the list of all volume numbers for a manga
         """
@@ -86,11 +86,11 @@ class ManganatoMangaParser(BaseMangaParser):
 
             volume_tags = manga_html.find_all("li", {"class": "a-h"})
             logger.debug(volume_tags)
-            volume_numbers = set(
+            volume_ids = set(
                 self._extract_number(vol.find("a").get("href")) for vol in volume_tags
             )
-            logger.debug(f'volume_numbers={volume_numbers}')
-            return volume_numbers
+            logger.debug(f"volume_ids={volume_ids}")
+            return volume_ids
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 logger.warning(f"Manga {self.manga_url} does not exist")

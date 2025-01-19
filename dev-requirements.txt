@@ -1,6 +1,6 @@
 -r requirements.txt
 autoflake
-black
+black==23.3.0
 isort[pyproject]
 mypy
 mypy-extensions

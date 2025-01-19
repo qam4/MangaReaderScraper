@@ -92,7 +92,7 @@ class MockedMangaReaderParser:
         self.manga_url = manga_url
         self.base_url = base_url
 
-    def all_volume_numbers(self):
+    def all_volume_ids(self):
         return ["1", "2", "3"]
 
     def volume_url(self, volume):
