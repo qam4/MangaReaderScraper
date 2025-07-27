@@ -61,8 +61,6 @@ class MangagoMangaParser(BaseMangaParser):
         if volume_html:
             container = volume_html.find("div", {"q:key": "zn_2"})
             logger.debug(f"container={container}")
-            items = container.find("div", {"data-name": "image-item"})
-            logger.debug(f"items[0]={items[0]}")
 
             all_img_tags = container.find_all("img")
             logger.debug(f"all_img_tags[0]={all_img_tags[0]}")

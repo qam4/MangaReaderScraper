@@ -59,10 +59,10 @@ class MangaparkMangaParser(BaseMangaParser):
         volume_html = self._scrape_volume(volume)
         logger.debug(f"volume_html={volume_html}")
         if volume_html:
-            container = volume_html.find("div", {"q:key": "zn_2"})
-            logger.debug(f"container={container}")
-            all_img_tags = container.find_all("img")
-            logger.debug(f"all_img_tags[0]={all_img_tags[0]}")
+            items = volume_html.find_all("div", {"data-name": "image-item"})
+            logger.debug(f"items={items}")
+            all_img_tags = [item.find("img") for item in items]
+            logger.debug(f"all_img_tags={all_img_tags}")
             all_page_urls = [img.get("src") for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
         return None
@@ -82,10 +82,10 @@ class MangaparkMangaParser(BaseMangaParser):
             url = f"{self.base_url}/title/{self.manga_url}"
             logger.debug(f"Manga url={url}")
             manga_html = get_html_from_url(url)
-            # logger.debug(f"manga_html={manga_html}")
+            logger.debug(f"manga_html={manga_html}")
 
             volume_tags = manga_html.find_all("div", {"q:key": "8t_8"})
-            logger.debug(f"volume_tags[0]={volume_tags[0]}")
+            logger.debug(f"volume_tags={volume_tags}")
             volume_ids = list(
                 reversed(
                     list(
@@ -96,7 +96,7 @@ class MangaparkMangaParser(BaseMangaParser):
                     )
                 )
             )
-            # logger.debug(f'volume_ids={volume_ids}')
+            logger.debug(f'volume_ids={volume_ids}')
             return volume_ids
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:

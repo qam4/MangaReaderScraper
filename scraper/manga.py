@@ -262,6 +262,8 @@ class MangaBuilder:
         )
         try:
             urls = self.parser.manga.page_urls(volume_id)
+            if not urls:
+                raise Exception("Empty pages list")
         except VolumeDoesntExist as e:
             self.adapter.error(e)
             return (volume_id, None)
@@ -413,8 +415,11 @@ class MangaBuilder:
         self.manga = Manga(preferred_name, self.type)
         # Find the list of volumes for that manga
         all_volume_ids = self.parser.manga.all_volume_ids()
-        # [fm] [all_volumes_numbers[int(i) + 1] for i in vol_ids]
-        vol_ids = all_volume_ids if vol_ids is None else vol_ids
+
+        if not all_volume_ids:
+            raise Exception("Empty volumes list")
+
+        vol_ids = all_volume_ids if vol_ids is None else [all_volume_ids[int(i) - 1] for i in vol_ids]
         self.adapter.debug(f"vol_ids={vol_ids}")
 
         # Download the volumes
