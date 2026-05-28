@@ -5,17 +5,18 @@ Abstract base classes for all parsers
 import abc
 import io
 import logging
-from PIL import Image, ImageDraw, ImageFont
 import sys
+import time
 from functools import lru_cache
-from typing import Iterable, List, Optional, Tuple, Type
+from typing import Dict, Iterable, List, Optional, Tuple, Type
 
 import requests  # type: ignore
 from bs4.element import Tag
+from PIL import Image, ImageDraw, ImageFont
 
 from scraper.exceptions import MangaParserNotSet  # , PageDoesNotExist
 from scraper.new_types import SearchResults
-from scraper.utils import get_html_from_url
+from scraper.utils import get_html_from_url, request_session
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class BaseMangaParser:
     def __init__(self, manga_url: str, base_url: str = "") -> None:
         self.manga_url = manga_url
         self.base_url = base_url
+        self.headers = {}  # type: Dict[str, str]
 
     @abc.abstractmethod
     def volume_url(self, volume: str) -> str:
@@ -47,19 +49,30 @@ class BaseMangaParser:
         """
         Extracts a manga pages data
         """
-        # Try 5 times to get the page image
         attempt = 0
-        MAX_TRIES = 1
+        MAX_TRIES = 5
+        BACKOFF_SECONDS = 1
         page_num, img_url = page_url
-        while attempt < MAX_TRIES:
-            req = requests.get(img_url)
-            if req.status_code == 200:
-                break
-            attempt += 1
+        req = None
 
-        if attempt == MAX_TRIES:
+        while attempt < MAX_TRIES:
+            try:
+                with request_session() as session:
+                    req = session.get(img_url, headers=self.headers, timeout=30)
+                if req.status_code == 200:
+                    break
+                logger.warning(
+                    f"Attempt {attempt + 1}/{MAX_TRIES} failed for page {page_num} with status {req.status_code}: {img_url}"
+                )
+            except requests.exceptions.RequestException as err:
+                logger.warning(
+                    f"Attempt {attempt + 1}/{MAX_TRIES} failed for page {page_num}: {img_url} - {err}"
+                )
+            attempt += 1
+            time.sleep(BACKOFF_SECONDS * attempt)
+
+        if not req or req.status_code != 200:
             logger.error(f"Download FAILED page {page_num} at {img_url}")
-            # raise PageDoesNotExist(f"Page {page_num} at {img_url} does not exist")
             return (
                 int(page_num),
                 self.create_page(f"Page {page_num} missing\n{img_url}"),
@@ -124,7 +137,8 @@ class BaseSearchParser:
         """
         Scrape and return HTML list with search results
         """
-        html_response = get_html_from_url(url)
+        # using selenium for magago since the search results are dynamically loaded and requests does not work
+        html_response = get_html_from_url(url, "selenium")
         # logging.debug(f"html_response={html_response}")
         search_results = html_response.find_all("div", {"class": div_class})
         if not search_results:
@@ -132,7 +146,7 @@ class BaseSearchParser:
             sys.exit()
         self.results = search_results
         # logging.debug(f"search_results={search_results}")
-        return search_results
+        return search_results  # type: ignore[return-value]
 
     @abc.abstractmethod
     def search(self, start: int = 1) -> SearchResults:

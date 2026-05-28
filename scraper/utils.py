@@ -4,6 +4,7 @@ import logging
 import pdb
 import re
 import sys
+import tempfile
 import time
 import undetected_chromedriver as uc  # type: ignore
 from logging import Logger, LoggerAdapter
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
 from selenium import webdriver  # type: ignore
 from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.support.ui import WebDriverWait
 from subprocess import CREATE_NO_WINDOW
 
 import bs4
@@ -70,12 +72,36 @@ def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.Beautif
         chrome_service = ChromeService()
         chrome_service.creation_flags = CREATE_NO_WINDOW
         options = webdriver.ChromeOptions()
-        options.add_argument("--headless=new")
+        # options.add_argument("--headless=new")
+        # options.add_argument("--headless")
         driver = webdriver.Chrome(options=options, service=chrome_service)
         driver.get(url)
-        time.sleep(3)
+
+        # # Wait until document.readyState is 'complete'
+        # WebDriverWait(driver, 10).until(
+        #     lambda driver: driver.execute_script("return document.readyState") == "complete"
+        # )
+        WebDriverWait(driver, 10) # waits up to 10 seconds
+        time.sleep(5)   # wait for the page to load completely
         text = driver.page_source
+        # logging.info(f"text={text}")
         driver.quit()
+    elif type == "nodriver":
+        import asyncio
+        import nodriver as nd
+        from pathlib import Path
+        import os
+
+        async def fetch():
+            profile_path = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
+            browser = await nd.start(user_data_dir=profile_path, headless=True, sandbox=False, no_sandbox=True)
+            page = await browser.get(url)
+            await page.wait(5)
+            content = await page.get_content()
+            browser.stop()
+            return content
+
+        text = asyncio.run(fetch())
     else:
         logging.error(f"type not supported {type}")
 
@@ -113,6 +139,7 @@ def create_base_config() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
     config["config"]["manga_directory"] = str(downloaddir)
+    config["config"]["manga_bundle_directory"] = str(downloaddir)
     config["config"]["source"] = "mangareader"
     config["config"]["filetype"] = "pdf"
     config["config"]["upload_root"] = "/"

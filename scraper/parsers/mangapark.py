@@ -47,7 +47,7 @@ class MangaparkMangaParser(BaseMangaParser):
                 raise MangaDoesNotExist(
                     f"Manga {self.manga_url} volume {volume} does not exist"
                 )
-                # return None
+        return None
 
     def volume_url(self, volume: str) -> str:
         return f"{self.base_url}/title/{self.manga_url}/{volume}"
@@ -61,9 +61,9 @@ class MangaparkMangaParser(BaseMangaParser):
         if volume_html:
             items = volume_html.find_all("div", {"data-name": "image-item"})
             logger.debug(f"items={items}")
-            all_img_tags = [item.find("img") for item in items]
+            all_img_tags = [item.find("img") for item in items]  # type: ignore[union-attr]
             logger.debug(f"all_img_tags={all_img_tags}")
-            all_page_urls = [img.get("src") for img in all_img_tags]
+            all_page_urls = [img.get("src") for img in all_img_tags]  # type: ignore[union-attr]
             return list(enumerate(all_page_urls, start=1))
         return None
 
@@ -90,13 +90,13 @@ class MangaparkMangaParser(BaseMangaParser):
                 reversed(
                     list(
                         dict.fromkeys(
-                            self._extract_number(vol.find("a").get("href"))
+                            self._extract_number(vol.find("a").get("href"))  # type: ignore[union-attr]
                             for vol in volume_tags
                         )
                     )
                 )
             )
-            logger.debug(f'volume_ids={volume_ids}')
+            logger.debug(f"volume_ids={volume_ids}")
             return volume_ids
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -117,9 +117,9 @@ class MangaparkSearch(BaseSearchParser):
         """
         Extract the desired text from a HTML search result
         """
-        manga_title = result.find("img").get("alt")
+        manga_title = result.find("img").get("alt")  # type: ignore[attr-defined]
         logger.debug(f"manga_title={manga_title}")
-        manga_url = result.find("a").get("href")
+        manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
         logger.debug(f"manga_url={manga_url}")
         manga_url_short = Path(manga_url).stem.split("/")[-1]
         last_chapter = result.find(
@@ -127,7 +127,7 @@ class MangaparkSearch(BaseSearchParser):
         )
         logger.debug(f"last_chapter={last_chapter}")
         if last_chapter:
-            chapters = last_chapter.find("span").text
+            chapters = last_chapter.find("span").text  # type: ignore[attr-defined]
         else:
             chapters = 0
         logger.debug(f"chapters={chapters}")

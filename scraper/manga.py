@@ -11,11 +11,13 @@ from io import BytesIO
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
-import tqdm  # type: ignore
+from tqdm.rich import tqdm  # type: ignore
 from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
+from tqdm import TqdmExperimentalWarning  # type: ignore
 from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
+import warnings
 
 from scraper.exceptions import (
     PageAlreadyPresent,
@@ -30,6 +32,8 @@ from scraper.utils import get_adapter, settings
 
 
 logger = logging.getLogger(__name__)
+
+warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 
 def natural_sort(_list, key=lambda s: s) -> List[Any]:
@@ -263,7 +267,8 @@ class MangaBuilder:
         try:
             urls = self.parser.manga.page_urls(volume_id)
             if not urls:
-                raise Exception("Empty pages list")
+                self.adapter.warning(f"No pages found for volume {volume_id}, skipping")
+                return None
         except VolumeDoesntExist as e:
             self.adapter.error(e)
             return (volume_id, None)
@@ -323,7 +328,7 @@ class MangaBuilder:
         with logging_redirect_tqdm(loggers=[self.adapter.logger]):
             with Pool(4) as pool:
                 volumes_data = list(
-                    tqdm.tqdm(
+                    tqdm(
                         pool.imap(
                             self._get_volume_data_wrapped, enumerate(vol_ids, start=1)
                         ),
@@ -333,7 +338,7 @@ class MangaBuilder:
                 )
                 return volumes_data
         # no multi-process version:
-        # return list(tqdm.tqdm(map(self._get_volume_data, vol_ids), total=len(vol_ids)))
+        # return list(tqdm(map(self._get_volume_data, vol_ids), total=len(vol_ids)))
 
     def _create_manga_dir(self, manga_name: str) -> None:
         """
@@ -414,12 +419,18 @@ class MangaBuilder:
         # Create a Manga instance
         self.manga = Manga(preferred_name, self.type)
         # Find the list of volumes for that manga
-        all_volume_ids = self.parser.manga.all_volume_ids()
+        all_volume_ids = list(self.parser.manga.all_volume_ids())
 
         if not all_volume_ids:
             raise Exception("Empty volumes list")
 
-        vol_ids = all_volume_ids if vol_ids is None else [all_volume_ids[int(i) - 1] for i in vol_ids]
+        print(f"all_volume_ids[0]={all_volume_ids[0]}")
+
+        # TODO: fix this
+        if vol_ids is None:
+            vol_ids = list(all_volume_ids)
+        else:
+            vol_ids = [all_volume_ids[int(i) - 1] for i in vol_ids]
         self.adapter.debug(f"vol_ids={vol_ids}")
 
         # Download the volumes

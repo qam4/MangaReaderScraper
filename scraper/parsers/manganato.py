@@ -17,15 +17,13 @@ logger = logging.getLogger(__name__)
 
 class ManganatoMangaParser(BaseMangaParser):
     """
-    Scrapes & parses a specific manga page on chapmanganato.to
-
-    WARNING: this no longer works due to mangakakalot integrating
-             cloudflare blocking
+    Scrapes & parses a specific manga page on natomanga.com
+    This site is similar to mangakakalot and manganelo
+    FRED: search fails because of cloudflare
+    requests.exceptions.HTTPError: 403 Client Error: Forbidden for url: https://www.natomanga.com/search/story/billy_bat
     """
 
-    def __init__(
-        self, manga_url: str, base_url: str = "https://chapmanganato.to"
-    ) -> None:
+    def __init__(self, manga_url: str, base_url: str = "https://natomanga.com") -> None:
         super().__init__(manga_url, base_url)
 
     def _scrape_volume(self, volume: str) -> BeautifulSoup:
@@ -49,7 +47,7 @@ class ManganatoMangaParser(BaseMangaParser):
                 raise MangaDoesNotExist(
                     f"Manga {self.manga_url} volume {volume} does not exist"
                 )
-                # return None
+        return None
 
     def volume_url(self, volume: str) -> str:
         return f"{self.base_url}/manga-{self.manga_url}/chapter-{volume}"
@@ -61,7 +59,7 @@ class ManganatoMangaParser(BaseMangaParser):
         volume_html = self._scrape_volume(volume)
         if volume_html:
             container = volume_html.find("div", {"class": "container-chapter-reader"})
-            all_img_tags = container.find_all("img")
+            all_img_tags = container.find_all("img")  # type: ignore[attr-defined]
             logger.debug(f"all_img_tags[0]={all_img_tags[0]}")
             all_page_urls = [img.get("src") for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
@@ -71,7 +69,7 @@ class ManganatoMangaParser(BaseMangaParser):
         """
         Sanitises a number from scraped chapter tag
         """
-        vol_text = vol_tag.split("-")[-1]
+        vol_text = vol_tag.text.split("-")[-1]
         return vol_text
 
     def all_volume_ids(self) -> Iterable[str]:
@@ -87,7 +85,7 @@ class ManganatoMangaParser(BaseMangaParser):
             volume_tags = manga_html.find_all("li", {"class": "a-h"})
             logger.debug(volume_tags)
             volume_ids = set(
-                self._extract_number(vol.find("a").get("href")) for vol in volume_tags
+                self._extract_number(vol.find("a").get("href")) for vol in volume_tags  # type: ignore[union-attr]
             )
             logger.debug(f"volume_ids={volume_ids}")
             return volume_ids
@@ -103,22 +101,22 @@ class ManganatoSearch(BaseSearchParser):
     Parses search queries
     """
 
-    def __init__(self, query: str, base_url: str = "https://manganato.com") -> None:
+    def __init__(self, query: str, base_url: str = "https://natomanga.com") -> None:
         super().__init__(query, base_url)
 
     def _extract_text(self, result: Tag) -> Dict[str, str]:
         """
         Extract the desired text from a HTML search result
         """
-        manga_title = result.find("img").get("alt")
+        manga_title = result.find("img").get("alt")  # type: ignore[attr-defined]
         logger.debug(f"manga_title={manga_title}")
-        manga_url = result.find("a").get("href")
+        manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
         logger.debug(f"manga_url={manga_url}")
         manga_url_short = Path(manga_url).stem.split("-")[-1]
-        last_chapter = result.find("a", {"class": "item-chapter a-h text-nowrap"})
+        last_chapter = result.find("a", {"class": "item-chapter a-h text-nowrap"})  # type: ignore[union-attr]
         logger.debug(f"last_chapter={last_chapter}")
         if last_chapter:
-            chapters = last_chapter.get("href").split("-")[-1]
+            chapters = last_chapter.get("href").split("-")[-1]  # type: ignore[attr-defined]
         else:
             chapters = 0
         logger.debug(f"chapters={chapters}")
@@ -145,7 +143,7 @@ class ManganatoSearch(BaseSearchParser):
 
 class Manganato(BaseSiteParser):
     """
-    Seems to be the same as manganato.com
+    Seems to be the same as natomanga.com
 
     Can probably use this class for manganato too
     """
@@ -153,7 +151,7 @@ class Manganato(BaseSiteParser):
     def __init__(self, manga_url: Optional[str] = None) -> None:
         super().__init__(
             manga_url=manga_url,
-            base_url="https://manganato.com",
+            base_url="https://natomanga.com",
             manga_parser=ManganatoMangaParser,
             search_parser=ManganatoSearch,
         )

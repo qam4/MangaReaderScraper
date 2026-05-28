@@ -37,7 +37,7 @@ class MangaFastMangaParser(BaseMangaParser):
 
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         volume_html = self._scrape_volume(volume)
-        img_tags = volume_html.find("div", id="Read").find_all("img")
+        img_tags = volume_html.find("div", id="Read").find_all("img")  # type: ignore[attr-defined]
         img_urls: List[Tuple[int, str]] = []
         for page_num, url_tag in enumerate(img_tags, 1):
             url = url_tag.get("data-src")
@@ -50,7 +50,7 @@ class MangaFastMangaParser(BaseMangaParser):
         try:
             url = f"{self.base_url}/{self.manga_url}?order=old#table"
             manga_html = get_html_from_url(url)
-            volume_tags = manga_html.find("table", id="table").find_all("a")
+            volume_tags = manga_html.find("table", id="table").find_all("a")  # type: ignore[attr-defined]
             volume_tags = [tag for tag in volume_tags if tag.text != "PDF"]
             volume_ids = [re.sub(r"\D", "", x.text.strip()) for x in volume_tags]
             highest_volume = volume_ids[0]
@@ -67,7 +67,7 @@ class MangaFastSearch(BaseSearchParser):
 
     def _extract_text(self, result: Tag) -> Dict[str, str]:
         title = result.find("h3").text.strip()
-        manga_url = result.find("a").get("href")
+        manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
         chapters = result.find("b").text
         return {
             "title": title,

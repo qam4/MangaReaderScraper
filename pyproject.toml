@@ -27,3 +27,7 @@ force_grid_wrap = 0
 use_parentheses = true
 line_length = 88
 known_third_party = ['tabulate', 'bs4', 'requests', 'pytest', 'urllib3']
+
+[build-system]
+requires = ["setuptools>=70.1.0", "wheel"]
+build-backend = "setuptools.build_meta"

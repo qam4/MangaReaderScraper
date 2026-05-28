@@ -72,7 +72,7 @@ class MangaReaderMangaParser(BaseMangaParser):
             url = f"{self.base_url}/{self.manga_url}"
             manga_html = get_html_from_url(url)
             # [latest]  volume_tags = manga_html.find("table", {"class": "d48"}).find_all("a")
-            volume_tags = manga_html.find("div", id="chapterlist").find_all("a")
+            volume_tags = manga_html.find("div", id="chapterlist").find_all("a")  # type: ignore[attr-defined]
             volume_ids = [vol.get("href").split("/")[-1] for vol in volume_tags]
             return volume_ids
         except requests.exceptions.HTTPError as e:
@@ -99,7 +99,7 @@ class MangaReaderSearch(BaseSearchParser):
         """
         manga_name = result.find("div", {"class": "d57"})
         title = manga_name.text
-        manga_url = manga_name.find("a").get("href")
+        manga_url = manga_name.find("a").get("href")  # type: ignore[attr-defined]
         chapters = result.find("div", {"class": "d58"}).text
         return {
             "title": title.replace("\n", ""),

@@ -13,11 +13,15 @@ from multiprocessing.pool import Pool
 from scraper.manga import Manga
 from scraper.utils import get_adapter, settings
 from logging import LoggerAdapter
-import tqdm  # type: ignore
+from tqdm.rich import tqdm  # type: ignore
 from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
+from tqdm import TqdmExperimentalWarning  # type: ignore
 from typing import List
+import warnings
 
 logger = logging.getLogger(__name__)
+
+warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 WRITER_DEFAULT = "Fred Marchais"
 
@@ -77,7 +81,8 @@ class Bundle:
         """
         Get path to manga bundle dir.
         """
-        return settings()["config"]["manga_bundle_directory"]
+        config = settings()["config"]
+        return config.get("manga_bundle_directory", config.get("manga_directory", os.getcwd()))
 
     def is_obsolete(self, target: str, dependencies: List[str]) -> bool:
         if not os.path.isfile(target):
@@ -113,10 +118,9 @@ class Bundle:
         writer = self.writer
         manga_folder = os.path.join(input_root_path, manga_title)
         output_folder = os.path.join(output_root_path, manga_title)
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder, exist_ok=True)
-            os.makedirs(os.path.join(output_folder, "cbz"), exist_ok=True)
-            os.makedirs(os.path.join(output_folder, "mobi"), exist_ok=True)
+        os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(os.path.join(output_folder, "cbz"), exist_ok=True)
+        os.makedirs(os.path.join(output_folder, "mobi"), exist_ok=True)
 
         cbz_files = [os.path.basename(chapter.file_path) for chapter in manga_chapters]
 
@@ -199,6 +203,7 @@ class Bundle:
                 os.path.dirname(volume_mobi_path),
                 volume_cbz_path,
             ]
+            logger.info(f"command={command}")
             subprocess.run(command)
 
         elapsed_time = time.time() - start_time
@@ -216,7 +221,7 @@ class Bundle:
             if multi_process:
                 with Pool() as pool:
                     list(
-                        tqdm.tqdm(
+                        tqdm(
                             pool.imap(
                                 self.create_volume_wrapped,
                                 zip(range(num_volumes), repeat(volume_digits)),
@@ -227,7 +232,7 @@ class Bundle:
                     )
             else:
                 list(
-                    tqdm.tqdm(
+                    tqdm(
                         map(
                             self.create_volume_wrapped,
                             zip(range(num_volumes), repeat(volume_digits)),

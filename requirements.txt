@@ -6,6 +6,7 @@ pcloud
 Pillow
 reportlab
 requests
+rich
 selenium
 undetected_chromedriver
 tabulate

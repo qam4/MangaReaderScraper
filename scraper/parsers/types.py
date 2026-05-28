@@ -6,10 +6,20 @@ from scraper.parsers.manganelo import Manganelo, ManganeloMangaParser, Manganelo
 from scraper.parsers.manganato import Manganato, ManganatoMangaParser, ManganatoSearch
 from scraper.parsers.mangapark import Mangapark, MangaparkMangaParser, MangaparkSearch
 from scraper.parsers.mangago import Mangago, MangagoMangaParser, MangagoSearch
+from scraper.parsers.mangabuddy import (
+    Mangabuddy,
+    MangabuddyMangaParser,
+    MangabuddySearch,
+)
 from scraper.parsers.mangareader import (
     MangaReader,
     MangaReaderMangaParser,
     MangaReaderSearch,
+)
+from scraper.parsers.mangafire import (
+    Mangafire,
+    MangafireMangaParser,
+    MangafireSearch,
 )
 
 MangaParser = Union[
@@ -20,6 +30,8 @@ MangaParser = Union[
     ManganatoMangaParser,
     MangaparkMangaParser,
     MangagoMangaParser,
+    MangabuddyMangaParser,
+    MangafireMangaParser,
 ]
 SearchParser = Union[
     MangaReaderSearch,
@@ -29,9 +41,17 @@ SearchParser = Union[
     ManganatoSearch,
     MangaparkSearch,
     MangagoSearch,
+    MangabuddySearch,
 ]
 SiteParser = Union[
-    MangaReader, MangaKaka, Manganelo, MangaFast, Manganato, Mangapark, Mangago
+    MangaReader,
+    MangaKaka,
+    Manganelo,
+    MangaFast,
+    Manganato,
+    Mangapark,
+    Mangago,
+    Mangabuddy,
 ]
 
 
@@ -43,6 +63,7 @@ MangaParserClass = Union[
     Type[ManganatoMangaParser],
     Type[MangaparkMangaParser],
     Type[MangagoMangaParser],
+    Type[MangabuddyMangaParser],
 ]
 SearchParserClass = Union[
     Type[MangaReaderSearch],
@@ -52,6 +73,7 @@ SearchParserClass = Union[
     Type[ManganatoSearch],
     Type[MangaparkSearch],
     Type[MangagoSearch],
+    Type[MangabuddySearch],
 ]
 SiteParserClass = Union[
     Type[MangaReader],
@@ -61,4 +83,5 @@ SiteParserClass = Union[
     Type[Manganato],
     Type[Mangapark],
     Type[Mangago],
+    Type[Mangabuddy],
 ]

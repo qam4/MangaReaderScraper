@@ -13,7 +13,9 @@ from scraper.parsers.manganelo import Manganelo
 from scraper.parsers.manganato import Manganato
 from scraper.parsers.mangapark import Mangapark
 from scraper.parsers.mangago import Mangago
+from scraper.parsers.mangabuddy import Mangabuddy
 from scraper.parsers.mangareader import MangaReader
+from scraper.parsers.mangafire import Mangafire
 from scraper.parsers.types import SiteParserClass
 from scraper.uploaders.types import Uploader
 from scraper.bundle import Bundle
@@ -67,13 +69,15 @@ def get_manga_parser(source: str) -> SiteParserClass:
     Use the string to return correct parser class
     """
     sources: Dict[str, SiteParserClass] = {
-        "mangareader": MangaReader,
-        "mangafast": MangaFast,
-        "mangakaka": MangaKaka,
-        "manganelo": Manganelo,
-        "manganato": Manganato,
+        "mangareader": MangaReader,  # dead
+        "mangafast": MangaFast,  # dead
+        "mangakaka": MangaKaka,  # cloudflare on search
+        "manganelo": Manganelo,  # cloudflare on search
+        "manganato": Manganato,  # cloudflare on search
         "mangapark": Mangapark,
-        "mangago": Mangago,
+        "mangago": Mangago,  # cloudflare on search
+        "mangabuddy": Mangabuddy,
+        "mangafire": Mangafire,
     }
     parser = sources.get(source)
     if not parser:
@@ -138,6 +142,9 @@ def cli(arguments: List[str]) -> dict:
         args["volumes"] = volumes
     else:
         args["volumes"] = None
+
+    if args["bundle"]:
+        args["filetype"] = "cbz"
 
     logger.debug(f"[download_manga] args={args}")
     try:
@@ -225,7 +232,13 @@ def get_parser() -> argparse.ArgumentParser:
         "--source",
         "-z",
         type=str,
-        choices={"manganelo", "mangapark", "mangago", "mangareader"},
+        choices={
+            "mangareader",
+            "mangapark",
+            "mangabuddy",
+            "mangago",
+            "mangafire",
+        },  # keeping mangareader for unit tests
         default=CONFIG["source"],
         help="website to scrape data from",
     )
