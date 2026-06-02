@@ -1,121 +1,234 @@
-# MangaReaderScraper — Refactoring Plan
+# MangaReaderScraper — Sanitization & Refactoring Plan
 
 Status: proposal / design note. Captures concrete findings from working on
 the MangaFire parser (the parser rewrite, the network probe, and the test
 suite that exposed several import-time breakages).
 
-This is written against the code as of the `mangafire-parser-rewrite` branch.
-It is a map for a cleanup, not a finished spec — but every item below is
-grounded in a specific file, not generic advice.
+Written against the code on the `mangafire-parser-rewrite` branch. It is a map
+for a cleanup, not a finished spec — but every item is tied to a specific file,
+not generic advice.
+
+---
+
+## 0. The honest framing (read this first)
+
+There are **two independent problems** here, and earlier drafts of this plan
+conflated them. They need separating because the fixes are different and one of
+them is partly unsolvable.
+
+### Problem A — adding a site is manual, and largely *has* to be
+
+You cannot know a site's structure until you look at it. For every new site
+someone must: open it, find where the chapter list / volume list / page images
+live, and write the site-specific extraction. **No refactor and no tool removes
+this.** Supporting a site whose internals you don't know in advance is, in the
+general case, not automatable.
+
+What tooling *can* do is shrink the manual core and remove the friction around
+it:
+- make the **looking** faster (a probe that surfaces candidate endpoints and
+  selectors instead of you scrolling through 74KB of HTML);
+- make the **writing** smaller (base helpers so a new parser is ~20 lines of
+  selectors, not ~120 lines of copy-pasted scaffolding);
+- **sidestep** the work entirely for sites that secretly run a known engine
+  (see §4.2 — the one real multiplier).
+
+So the realistic goal is "shrink and de-friction the manual loop," not
+"automate adding sites." This doc is careful not to promise the latter.
+
+### Problem B — the codebase has accumulated friction and inconsistency
+
+This is the fixable part, and it's worth doing on its own merits even though it
+doesn't make new sites effortless: stringly-typed fetch dispatch, no shared
+domain model (the chapter-id saga, §3.1), four files to register a source,
+dead code that breaks imports, dependency soup. Cleaning this up makes the tool
+pleasant to work in and the tests runnable. It's orthogonal to Problem A.
+
+**Two tracks, neither a silver bullet:**
+- **Workflow** (§4–§5): smarter probe, engine reuse, base helpers — shrinks the
+  manual loop.
+- **Hygiene** (§3, §6): domain model, fetch abstraction, registry, deps, dead
+  code — makes the codebase sane and the tests fast.
 
 ---
 
 ## 1. Goals
 
-1. **Make adding a new site a recipe, not archaeology.** Today it requires
-   editing four files and reverse-engineering which fetch backend works.
-2. **Share the repeated parser scaffolding** instead of copy-pasting it eight
-   times.
-3. **Stop the bleeding on imports / deps** so the test suite runs on a modern
-   Python in seconds without a browser installed.
-4. **Delete dead weight** that actively breaks things (the upload feature, the
-   `undetected_chromedriver` dependency, dead sources).
+1. Shrink and de-friction the manual "add a site" loop (accepting it can't be
+   eliminated).
+2. Establish **one domain model** so site differences don't ripple into five
+   files.
+3. Share the repeated parser scaffolding instead of copy-pasting it eight times.
+4. Stop the import/dependency bleeding so tests run on a modern Python in
+   seconds without a browser.
+5. Delete dead weight that actively breaks things.
 
-Non-goals: resurrecting every dead site, building a plugin-loading system,
-100% type coverage. This is a single-user tool; right-size the effort.
+Non-goals: supporting arbitrary unknown sites automatically, a plugin-loading
+system, 100% type coverage. Single-user tool; right-size the effort.
 
 ---
 
 ## 2. What's good (keep)
 
-- The **`BaseSiteParser` / `BaseMangaParser` / `BaseSearchParser` split** is a
-  sound shape. A site = a manga parser + a search parser, wired by a site
-  parser. Keep this.
-- The **`page_data` retry + Pillow validation + placeholder-page-on-failure**
-  in `base.py` is genuinely good: failed pages become a "Page N missing"
-  image rather than crashing the volume. Keep and reuse.
-- The **`(page_num, bytes, status)` 3-tuple** flowing into `manga.py`'s
-  `ThreadPool`, and the per-volume `Pool` parallelism, work. Don't churn them.
-- The **CBZ/PDF save methods** in `manga.py` are fine.
-
-## 3. What's bad (the core problems)
-
-### 3.1 Stringly-typed fetch dispatch — the root of most mess
-
-`utils.get_html_from_url(url, type="selenium")` is a 5-way `if/elif` over
-`"requests" | "cloudscraper" | "uc" | "selenium" | "nodriver"`. Consequences:
-
-- Every parser picks a backend by magic string, inline, with no type safety.
-- Each parser re-implements Cloudflare handling and "is this a 404" logic.
-- Several `_scrape_volume` methods catch `requests.exceptions.HTTPError`
-  **even when the fetch went through selenium/nodriver**, which never raise
-  it. That error handling is dead code (see `mangabuddy.py`, `mangafire.py`
-  pre-rewrite).
-- `import undetected_chromedriver as uc` sits at **module top of `utils.py`**,
-  so importing *anything* drags in uc — which fails on Python ≥3.12
-  (`distutils` removed). This is why the whole test suite can't import on a
-  clean modern interpreter.
-
-### 3.2 Adding a source touches four places
-
-To add MangaFire I had to edit:
-- `scraper/parsers/types.py` — four separate `Union[...]` lists
-- `scraper/__main__.py` — the `get_manga_parser` dict **and** the `--source`
-  argparse `choices` set
-- `scraper/parsers/mangafire.py` — the parser itself
-- (and `tests/helpers.py` if it should be in `ALL_PARSERS`)
-
-Three of those four are pure boilerplate that should be automatic.
-
-### 3.3 Untyped result dict
-
-`SearchResults = Dict[str, Dict[str, str]]`. Every parser builds
-`{"title": ..., "manga_url": ..., "chapters": ..., "source": ...}` by hand,
-and the menu reads those string keys back. One typo = silent wrong column.
-
-### 3.4 Search assumes HTML scraping
-
-`BaseSearchParser._scrape_results(url, div_class)` bakes in "fetch a page,
-find `<div class=X>`". MangaFire's search is a vrf-token-gated JSON ajax call
-that doesn't fit this at all — which is exactly why search was the hardest
-part of the rewrite and why the old parser just returned `{}`.
-
-### 3.5 Dead weight breaking imports
-
-- **Upload feature** (dropbox / pcloud / mega): you confirmed it never really
-  worked. Worse, `scraper.__main__` imports `DropboxUploader`/`PcloudUploader`
-  at module top, so `__main__` won't import without `dropbox` installed — and
-  the test suite's autouse fixture patches `scraper.__main__.CONFIG`, so a
-  missing `dropbox` breaks **every test**, not just upload tests.
-- **`undetected_chromedriver`**: superseded by `nodriver` (same author) for
-  this project's needs, and it's the dep that breaks on modern Python.
-- **Dead sources**: `__main__` literally comments `mangareader # dead`,
-  `mangafast # dead`. They linger in the unions and choices.
-
-### 3.6 Dependency soup
-
-`requirements.txt` carries `requests`, `cloudscraper`, `selenium`,
-`undetected_chromedriver`, `nodriver`, **and** `curl_cffi` — multiple tools
-for the same job, unpinned, flat (no dev/runtime split). No `pyproject`
-dependency groups, no documented venv (so installs land in whatever Python is
-on PATH — e.g. a global pyenv).
-
-### 3.7 Test coupling
-
-`conftest.py` imports `scraper.manga`, which imports `scraper.parsers.types`,
-which imports **every** parser, which imports `base`, which imports `utils`,
-which imports `undetected_chromedriver` at module top. So a unit test of pure
-HTML parsing transitively needs reportlab, dropbox, a chromedriver shim, and
-lxml all present. That's why the suite is fragile.
+- The **site / manga / search parser split** is a sound shape. Keep it.
+- `page_data`'s **retry + Pillow validation + placeholder-page-on-failure**
+  (in `base.py`) is genuinely good — a failed page becomes a "Page N missing"
+  image instead of crashing the volume. Keep and reuse.
+- The **`(page_num, bytes, status)` tuple** flowing into `manga.py`'s
+  `ThreadPool`, and per-volume `Pool` parallelism, work. Don't churn them.
+- The CBZ/PDF writers in `manga.py` are fine.
 
 ---
 
-## 4. Target architecture
+## 3. What's bad (the fixable friction)
 
-### 4.1 A Fetcher abstraction (the keystone)
+### 3.1 No single domain model — the chapter-id saga (canonical symptom)
 
-Replace the `get_html_from_url(url, type=...)` string switch with a small
-protocol and lazy-imported implementations:
+The chapter/volume identifier has been reworked repeatedly (int → float →
+string + natural sort) because different sites number chapters differently
+(decimals like `9.22`, `28.22`; gaps; volume-vs-chapter). The result is that
+**three different orderings and an int-only selector coexist in the tree right
+now**:
+
+- `scraper/__main__.py` `get_volume_values`: `range(int(start), int(end)+1)`
+  — the `--volumes 9-12` range parser is **integer-only**. It silently cannot
+  express decimal chapters (the `9.22` / `28.22` we saw on MangaFire).
+- `scraper/manga.py` `Volume.number` is a **`str`**, and volumes are sorted
+  with **`natural_sort`** (alphanumeric).
+- `scraper/parsers/mangafire.py` `all_volume_ids` sorts with **`float(v)`**.
+- `scraper/parsers/mangafast.py` `all_volume_ids` compares
+  **`vol <= highest_volume` as strings** (lexicographic — `"9" > "10"`).
+
+This is the root symptom of having no shared notion of "chapter id." Every new
+site with a different scheme forced a patch in whichever spot broke.
+
+**Fix:** one `ChapterId` value object (or a single normalize+sort helper) that
+all parsers, the selector parser, and the sorter use. It must handle: integers,
+decimals (`9.22`), and the `start-end` range selector over non-integers.
+Define ordering once; forbid ad-hoc `float()`/`int()`/string sorts elsewhere.
+
+### 3.2 Stringly-typed fetch dispatch
+
+`utils.get_html_from_url(url, type="selenium")` is a 5-way `if/elif` over
+`"requests" | "cloudscraper" | "uc" | "selenium" | "nodriver"`:
+- parsers pick a backend by magic string, inline, no type safety;
+- each parser re-implements Cloudflare and 404 handling;
+- several `_scrape_volume` methods catch `requests.exceptions.HTTPError`
+  **even when the fetch went through selenium/nodriver**, which never raise it
+  — dead error-handling (see `mangabuddy.py`, pre-rewrite `mangafire.py`);
+- `import undetected_chromedriver` sits at **module top of `utils.py`**, so
+  importing anything pulls in uc — which fails on Python ≥3.12 (`distutils`
+  removed). This is why the suite can't import on a clean modern interpreter.
+
+### 3.3 Adding a source touches four places
+
+For MangaFire I edited: `parsers/types.py` (four `Union[...]` lists),
+`__main__.py` (the `get_manga_parser` dict **and** the `--source` argparse
+`choices`), the parser itself, and `tests/helpers.py`. Three of four are pure
+boilerplate that should be automatic.
+
+### 3.4 Untyped result dict
+
+`SearchResults = Dict[str, Dict[str, str]]`. Every parser hand-builds
+`{"title","manga_url","chapters","source"}` and the menu reads those keys back.
+One typo = silent wrong column.
+
+### 3.5 Search base assumes HTML scraping
+
+`BaseSearchParser._scrape_results(url, div_class)` bakes in "fetch page, find
+`<div class=X>`". MangaFire's search is a vrf-token-gated JSON ajax call that
+doesn't fit at all — which is why search was the hardest part of the rewrite
+and why the old parser just returned `{}`.
+
+### 3.6 Dead weight breaking imports
+
+- **Upload** (dropbox/pcloud/mega): confirmed never really worked. `__main__`
+  imports the uploaders at module top, so it won't import without `dropbox`
+  installed — and the test suite's autouse fixture patches
+  `scraper.__main__.CONFIG`, so a missing `dropbox` breaks **every** test.
+- **`undetected_chromedriver`**: superseded by `nodriver` (same author) for
+  this project's needs; it's the dep that breaks on modern Python.
+- **Dead sources**: `__main__` literally comments `mangareader # dead`,
+  `mangafast # dead`, yet they linger in the unions and choices.
+
+### 3.7 Dependency soup
+
+`requirements.txt` carries `requests`, `cloudscraper`, `selenium`,
+`undetected_chromedriver`, `nodriver`, **and** `curl_cffi` — multiple tools for
+the same job, unpinned, flat (no dev/runtime split). No `pyproject` dependency
+groups, no documented venv, so installs land in whatever Python is on PATH.
+
+### 3.8 Test coupling
+
+`conftest.py` → `scraper.manga` → `parsers.types` → every parser → `base` →
+`utils` → top-level `undetected_chromedriver`. So a unit test of pure HTML
+parsing transitively needs reportlab, dropbox, a chromedriver shim, and lxml.
+That's why the suite is fragile. (Also: `test_mangafast` triggers a real
+selenium run, ~17 min — it should be opt-in integration, not a unit test.)
+
+---
+
+## 4. Workflow track — shrink the manual loop (Problem A)
+
+### 4.1 A smarter probe (surfaces candidates, doesn't just dump)
+
+The thing that made MangaFire tractable was **watching the network**, not
+reading HTML: the instant the probe printed `ajax_log.txt`, we had the search
+and chapter endpoints with zero eyeballing. Make that the point of the tool.
+
+`scraper probe <url>` should:
+- log every ajax URL the page fires (this alone often hands you the API);
+- for HTML sites, heuristically **surface candidate selectors**: links matching
+  `chapter-[\d.]+`, the largest `<img>` cluster, elements carrying
+  `data-number` / `data-src`;
+- dump captured JSON/HTML into `tests/test_files/<site>/`.
+
+Goal: turn "stare at 74KB of HTML" into "here are 5 candidates, pick one." It
+doesn't eliminate the manual step — it makes the looking fast.
+
+### 4.2 Parsers per *engine*, not per *site* (the one real multiplier)
+
+Many manga sites are reskins of the same backends (Madara WordPress theme,
+MangaStream/MangaReader engines, etc.). The codebase already half-knows this:
+`manganelo.py` says *"Seems to be the same as manganelo.com — can probably use
+this class for manganelo too,"* and `mangabuddy.py` echoes it.
+
+If parsers were keyed to **engines**, a new site running a known engine becomes:
+point a new `base_url` at the existing engine parser. Near-zero archaeology.
+This is the closest thing to a real win — and it's honest about its limit: it
+only helps when a new site happens to run an engine you already support. It
+does not solve the genuinely-new-site case (Problem A remains).
+
+### 4.3 Probe captures ARE the parser spec
+
+You probe → it surfaces endpoints/selectors → you drop captures into fixtures →
+you write the parser against real data → tests parse those captures. This is
+exactly the MangaFire flow; make it the documented, only way to add a site.
+
+#### "Add a source" checklist (for CONTRIBUTING/docs)
+1. `scraper probe <manga page URL>` and `scraper probe --search <terms>`.
+2. Read `ajax_log.txt` / candidate selectors to find search, chapter-list, and
+   page-list mechanisms (or confirm plain HTML).
+3. Save captured responses into `tests/test_files/<site>/`.
+4. Implement manga + search parsers (copy MangaFire for a JSON/ajax site,
+   MangaFast for an HTML site) — or just bind a `base_url` to an engine parser.
+5. `@register_source("<site>")` on the site parser. No other files.
+6. Write tests that parse the captured fixtures.
+
+---
+
+## 5. Hygiene track — make the codebase sane (Problem B)
+
+### 5.1 One domain model first (`ChapterId`)
+
+Do §3.1 before anything else — it's small and it stops the recurring patch.
+A single value object with a defined ordering, used by parsers, the `--volumes`
+range parser, and the sorter. Decimals and ranges-over-decimals handled in one
+place.
+
+### 5.2 Fetcher abstraction (supporting plumbing, not the headline)
+
+Replace the `type=...` switch with a small protocol and lazy-imported backends:
 
 ```python
 class Fetcher(Protocol):
@@ -127,131 +240,83 @@ class FetchResult:
     # optional: cookies, final_url, json()
 ```
 
-Concrete fetchers, each importing its heavy dep **lazily inside the class**,
-never at module top:
-- `RequestsFetcher` (plain, fast path)
-- `CloudscraperFetcher`
-- `BrowserFetcher` (nodriver) — also exposes `fetch_json_in_page(url)` and
-  `capture_xhr(predicate)`, the two primitives the MangaFire work actually
-  needed (intercept an ajax call, re-fetch it inside the page).
+Backends (`RequestsFetcher`, `CloudscraperFetcher`, `BrowserFetcher`) import
+their heavy dep **lazily inside the class**, never at module top. `BrowserFetcher`
+(nodriver) also exposes `fetch_json_in_page(url)` and `capture_xhr(predicate)`
+— the two primitives the MangaFire work actually needed. A parser declares
+`fetcher = BrowserFetcher` instead of passing strings.
 
-A parser declares the fetcher it wants (`fetcher = BrowserFetcher`) instead of
-passing magic strings. Backends are imported only when instantiated, so
-importing a parser never pulls in a browser driver. This alone fixes 3.1, the
-uc-on-import breakage (3.5), and most of the test coupling (3.7).
+This is plumbing the probe and engine parsers rely on; it also fixes the
+uc-on-import breakage (§3.6) and most test coupling (§3.8). Not the headline.
 
-Retire `undetected_chromedriver` and (probably) `selenium` once `BrowserFetcher`
-covers their cases via nodriver.
-
-### 4.2 Typed result model
+### 5.3 Typed `SearchResult` + source registry
 
 ```python
 @dataclass
 class SearchResult:
     title: str
-    slug: str            # was manga_url
+    slug: str
     latest_chapter: str
     source: str
-```
 
-`search()` returns `list[SearchResult]`; the menu indexes them. Kills 3.3.
-
-### 4.3 Source registry
-
-```python
 @register_source("mangafire")
 class Mangafire(BaseSiteParser): ...
 ```
 
-A registry dict populated by the decorator. `--source` choices and the
-`get_manga_parser` lookup both read from the registry. Adding a site = create
-one file + decorate. The giant `Union[...]` blocks in `types.py` largely
-disappear (use the base classes for typing). Kills 3.2.
+`--source` choices and `get_manga_parser` read from the registry. Adding a site
+= one file + a decorator. The `Union[...]` blocks in `types.py` largely vanish.
 
-### 4.4 Parser base offers both shapes
+### 5.4 Quarantine or remove upload
 
-`BaseSearchParser` should provide two helpers and force neither:
-- `parse_html_cards(html, selector)` — for scraping sites
-- `parse_json(...)` — for ajax/JSON sites (MangaFire, increasingly common)
+Move dropbox/pcloud/mega behind an optional extra (`pip install .[upload]`)
+with lazy imports, OR delete it. Either way `__main__` must import without those
+packages (unblocks the whole test suite).
 
-Same for chapter lists: HTML-page scrape vs. ajax endpoint. The MangaFire
-parser becomes the reference example of the JSON path.
+### 5.5 Dependencies & packaging
 
----
+`pyproject.toml` with runtime/dev groups, pinned versions, a documented venv.
+Prune: drop `undetected_chromedriver`; decide on `selenium`/`cloudscraper` once
+`BrowserFetcher` lands; keep `nodriver` + `curl_cffi` (both proven by MangaFire).
+Pin a known-good `nodriver` (note the UTF-in-comment patch needed on some
+Python versions) so it's not rediscovered each setup.
 
-## 5. The probe: promote it to a first-class tool
+### 5.6 Consistent error semantics
 
-The thing that actually made MangaFire tractable was **capturing real network
-traffic**, not guessing selectors. Ship that workflow:
+Parsers raise typed exceptions (`VolumeDoesntExist`, `MangaDoesNotExist`); the
+downloader decides policy. No more `return None` vs. raise vs.
+catch-an-error-that-never-fires.
 
-- `scraper probe <url>` subcommand (productized `mangafire_probe.py`): drives a
-  browser, logs every ajax URL, dumps captured JSON/HTML into
-  `tests/test_files/<site>/`.
-- These captures become **test fixtures**. The MangaFire tests already parse
-  the real captured `chapter_list.json` / `search.json` — that's the pattern:
-  tests verify parsing against real responses, not assumptions.
+### 5.7 Test tiering + CI
 
-### "Add a source" checklist (goes in CONTRIBUTING / docs)
-
-1. `scraper probe <a manga page URL>` and `scraper probe --search <terms>`.
-2. Read `ajax_log.txt` to find the search / chapter-list / page-list
-   endpoints (or confirm it's plain HTML).
-3. Save the captured responses into `tests/test_files/<site>/`.
-4. Implement the manga + search parsers (copy MangaFire for a JSON site,
-   MangaFast for an HTML site).
-5. `@register_source("<site>")` on the site parser. Done — no other files.
-6. Write tests that parse the captured fixtures.
+Unit tests mock the fetcher and parse fixtures — zero browser/network deps,
+seconds to run. Browser-touching tests marked `integration` and skippable. CI
+green on a pinned modern Python.
 
 ---
 
-## 6. Better practices (unglamorous, high payoff)
+## 6. Suggested phasing
 
-- **`pyproject.toml` with dependency groups** (runtime vs. dev), pinned
-  versions, and a documented **venv**. Stop relying on PATH Python.
-- **Prune deps**: drop `undetected_chromedriver`; decide on `selenium` and
-  `cloudscraper` once `BrowserFetcher` lands; keep `nodriver` + `curl_cffi`
-  (both proven by the MangaFire work).
-- **Quarantine or remove upload**: move dropbox/pcloud/mega behind an optional
-  extra (`pip install .[upload]`) with lazy imports, OR delete it. Either way,
-  `__main__` must import without those packages.
-- **Consistent error semantics**: parsers raise typed exceptions
-  (`VolumeDoesntExist`, `MangaDoesNotExist`); the downloader decides policy.
-  No more `return None` vs. raise vs. catch-an-error-that-never-fires.
-- **Unit tests run with zero browser/network deps.** With the Fetcher
-  abstraction, parser tests mock the fetcher and parse fixtures. Mark
-  browser-touching tests as integration and make them skippable. (Right now
-  `test_mangafast` triggers real selenium and takes ~17 min; that should be an
-  opt-in integration test, not part of the default unit run.)
-- **CI green on a pinned modern Python**, unit tests in seconds.
-- **Kill `nodriver` UTF-in-comment patch friction**: pin a known-good
-  `nodriver` version, or vendor the one-line patch, and note it in docs.
+Each phase leaves the tool working.
+
+1. **Stop the bleeding** — make heavy imports lazy (move
+   `undetected_chromedriver` out of `utils` top; lazy-import upload in
+   `__main__`). Suite imports on modern Python. Cheapest, biggest relief.
+2. **Domain model** — `ChapterId` + single sort/range helper (§3.1/§5.1).
+   Removes the recurring numbering patch.
+3. **Fetcher abstraction** — migrate MangaFire first (already browser-based).
+4. **Typed `SearchResult` + registry** — migrate parsers one at a time; shrink
+   `types.py`.
+5. **Smarter probe + "add a source" docs**, MangaFire as the example.
+6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
+   onto shared engine classes. The real workflow multiplier.
+7. **Deps/packaging cleanup; dead-code removal; CI + test tiering.**
 
 ---
 
-## 7. Suggested phasing
-
-1. **Stop the bleeding.** Make heavy imports lazy (move `import
-   undetected_chromedriver` out of `utils` module top; lazy-import upload in
-   `__main__`). Suite imports on modern Python. Low risk, high relief.
-2. **Fetcher abstraction.** Introduce `Fetcher` + concrete backends; migrate
-   one parser (MangaFire — already browser-based) as the proof.
-3. **Typed `SearchResult` + source registry.** Migrate parsers one at a time;
-   shrink `types.py`.
-4. **Probe subcommand + "add a source" docs**, with MangaFire as the example.
-5. **Dependency + packaging cleanup** (`pyproject`, pinning, prune, venv).
-6. **Dead code removal** (dead sources, upload decision) once nothing depends
-   on them.
-7. **CI + test tiering** (unit vs. integration).
-
-Each phase leaves the tool working. Phase 1 is the cheapest and removes the
-most day-to-day pain.
-
----
-
-## 8. Reference: the MangaFire rewrite as the worked example
+## 7. Reference: MangaFire as the worked example
 
 `scraper/parsers/mangafire.py` (this branch) already demonstrates the target
-patterns for a JSON-ajax site:
+patterns for a JSON/ajax site:
 - chapter list via `/ajax/manga/<id>/chapter/en` (id = slug after last `.`)
 - page list via intercepting `ajax/read/chapter` then re-fetching in-page
 - images via curl_cffi (Chrome impersonation) + browser cookies + Referer
@@ -260,5 +325,6 @@ patterns for a JSON-ajax site:
   intercept the call)
 - tests parse real captured responses in `tests/test_files/mangafire/`
 
-Use it as the template when building the Fetcher abstraction and the
-"add a source" recipe.
+Note even here the chapter-id wart shows: `all_volume_ids` sorts by `float(v)`
+while the rest of the tree uses `natural_sort` or string compares — the §3.1
+fix would unify these.
