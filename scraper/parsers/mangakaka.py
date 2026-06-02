@@ -69,11 +69,13 @@ class MangaKakaMangaParser(BaseMangaParser):
             return list(enumerate(all_page_urls, start=1))
         return None
 
-    def _extract_number(self, vol_tag: Tag) -> str:
+    def _extract_number(self, vol_tag: str) -> str:
         """
-        Sanitises a number from scraped chapter tag
+        Sanitises a number from a scraped chapter href, e.g.
+        ``.../chapter_55`` -> ``55`` (or ``chapter_520.5`` -> ``520.5``).
+        Receives the href string, not a Tag.
         """
-        vol_text = vol_tag.text.split("_")[-1]
+        vol_text = vol_tag.split("_")[-1]
         return vol_text
 
     def all_volume_ids(self) -> Iterable[str]:

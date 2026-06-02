@@ -81,6 +81,22 @@ class MockedImgResponse:
             self.status_code = 200
 
 
+def mocked_request_session(*args, **kwargs):
+    """
+    Returns a mock that stands in for ``utils.request_session()``.
+
+    ``base.page_data`` does ``with request_session() as session: session.get(...)``,
+    so the mock is a context manager whose ``.get`` returns a MockedImgResponse
+    (a real JPEG). Used to patch ``scraper.parsers.base.request_session`` in the
+    page_data tests, which previously mocked the wrong target and fell through to
+    a real network call.
+    """
+    session = mock.MagicMock()
+    session.__enter__.return_value = session
+    session.get.return_value = MockedImgResponse()
+    return session
+
+
 class MockedMangaReaderParser:
     """
     Mocks MangaReaderMangaParser

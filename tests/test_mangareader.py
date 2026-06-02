@@ -8,7 +8,7 @@ from scraper.parsers.mangareader import (
     MangaReaderMangaParser,
     MangaReaderSearch,
 )
-from tests.helpers import METADATA, MockedImgResponse
+from tests.helpers import METADATA, mocked_request_session
 
 
 def test_all_volume_ids(mangareader_manga_title_page_html):
@@ -117,9 +117,8 @@ def test_invalid_volume_parser(mangareader_invalid_volume_html):
             parser.page_urls("2000")
 
 
-@mock.patch("scraper.parsers.mangareader.requests.get")
-def test_page_data(mocked_get, mangareader_page_html):
-    mocked_get.return_value = MockedImgResponse()
+@mock.patch("scraper.parsers.base.request_session", mocked_request_session)
+def test_page_data(mangareader_page_html):
     with mock.patch("scraper.parsers.mangareader.fetch_soup") as mocked_func:
         mocked_func.return_value = mangareader_page_html
         parser = MangaReaderMangaParser("dragon-ball")

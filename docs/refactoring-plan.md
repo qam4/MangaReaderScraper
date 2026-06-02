@@ -434,17 +434,17 @@ Each phase leaves the tool working.
 5. **Smarter probe + "add a source" docs**, MangaFire as the example.
 6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
    onto shared engine classes. The real workflow multiplier.
-7. **Dead-code removal; CI + test tiering** — 🟡 **IN PROGRESS.** Deps prune
-   **done**: dropped `selenium` and `undetected_chromedriver` (dead since the
-   Phase 3 fetcher migration); deleted the root `test.py` scratch file (a
-   misleadingly-named Cloudflare-spike, not a real test module); fixed a stale
-   selenium reference in mangago's docstring. `uv.lock` regenerated (73 → 63
-   packages). Kept `cloudscraper` (live `CloudscraperFetcher` backend),
-   `nodriver`, `curl_cffi`. Verified the full suite passes with selenium/uc
-   uninstalled. **Still TODO:** un-deselect/repair the mangakaka
-   `test_all_volume_ids` bs4 breakage (or formally retire the dead source),
-   test tiering (mark the browser/network tests as opt-in `integration`), and
-   the optional ruff consolidation.
+7. **Dead-code removal; CI + test tiering** — ✅ **DONE.** Deps prune (above)
+   plus the test cleanup: the `test_page_data` tests now mock
+   `base.request_session` correctly (they had mocked the wrong target and fell
+   through to real network — the source of the "17-min mangafast" hang); the
+   mangakaka `test_all_volume_ids` bs4 breakage was a wrong-argument bug
+   (`_extract_number` called `.text` on an href string) and is fixed. Result:
+   **`uv run pytest` is green with no flags** (166 pass) — the
+   `-k`/`--deselect`/`--ignore` incantation is gone from CI. Registered an
+   `integration` marker for future browser/network tests, though the suite is
+   currently fully mocked so none are tagged yet. Optional ruff consolidation
+   still deferred.
 
 ---
 

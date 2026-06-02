@@ -105,6 +105,9 @@ known_third_party = ['tabulate', 'bs4', 'requests', 'pytest', 'urllib3']
 addopts = "--cov scraper --timeout=60"
 log_cli = true
 log_cli_level = "WARN"
+markers = [
+    "integration: tests that touch a real browser/network (deselect with -m 'not integration'). None yet -- the suite is fully mocked.",
+]
 
 [tool.mypy]
 check_untyped_defs = true
