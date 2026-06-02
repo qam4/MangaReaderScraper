@@ -434,8 +434,17 @@ Each phase leaves the tool working.
 5. **Smarter probe + "add a source" docs**, MangaFire as the example.
 6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
    onto shared engine classes. The real workflow multiplier.
-7. **Dead-code removal; CI + test tiering** (deps/packaging already handled in
-   Phase 0).
+7. **Dead-code removal; CI + test tiering** — 🟡 **IN PROGRESS.** Deps prune
+   **done**: dropped `selenium` and `undetected_chromedriver` (dead since the
+   Phase 3 fetcher migration); deleted the root `test.py` scratch file (a
+   misleadingly-named Cloudflare-spike, not a real test module); fixed a stale
+   selenium reference in mangago's docstring. `uv.lock` regenerated (73 → 63
+   packages). Kept `cloudscraper` (live `CloudscraperFetcher` backend),
+   `nodriver`, `curl_cffi`. Verified the full suite passes with selenium/uc
+   uninstalled. **Still TODO:** un-deselect/repair the mangakaka
+   `test_all_volume_ids` bs4 breakage (or formally retire the dead source),
+   test tiering (mark the browser/network tests as opt-in `integration`), and
+   the optional ruff consolidation.
 
 ---
 

@@ -165,7 +165,8 @@ class MangagoSearch(BaseSearchParser):
         FRED: search fails because of cloudflare
         requests.exceptions.HTTPError: 403 Client Error: Forbidden for url: https://www.mangago.me/r/l_search/?name=billy+bat
 
-        4/12/2026: search works with selenium NOT headless.
+        4/12/2026: search works with a real browser (nodriver / BrowserFetcher),
+        NOT headless.
         """
         url = f"{self.base_url}/r/l_search/?name={self.query.replace(' ', '+')}"
         logger.info(f"search_url={url}")

@@ -22,10 +22,8 @@ dependencies = [
     "reportlab",
     "requests",
     "rich",
-    "selenium",
     "tabulate",
     "tqdm",
-    "undetected_chromedriver",
 ]
 
 [project.optional-dependencies]
