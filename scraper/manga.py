@@ -4,19 +4,20 @@ Manga building blocks & factories
 
 import logging
 import tempfile
+import warnings
 import zipfile
 from dataclasses import dataclass, field
 from io import BytesIO
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Callable, Dict, Generator, Iterable, List, Optional, Tuple
-from tqdm.rich import tqdm  # type: ignore
-from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
-from tqdm import TqdmExperimentalWarning  # type: ignore
+
 from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
-import warnings
+from tqdm import TqdmExperimentalWarning  # type: ignore
+from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
+from tqdm.rich import tqdm  # type: ignore
 
 from scraper.exceptions import (
     PageAlreadyPresent,
@@ -149,8 +150,7 @@ class Manga:
         """Create volume path"""
         manga_dir = settings()["config"]["manga_directory"]
         return Path(
-            f"{manga_dir}/{self.name}/{self.name}"
-            f"_chapter_{volume_id}.{self.filetype}"
+            f"{manga_dir}/{self.name}/{self.name}_chapter_{volume_id}.{self.filetype}"
         )
 
     def _volume_upload_path(self, volume_id: str) -> Path:
@@ -392,7 +392,9 @@ class MangaBuilder:
         preferred_name = (
             preferred_name
             if preferred_name
-            else title if title else self.parser.manga.manga_url
+            else title
+            if title
+            else self.parser.manga.manga_url
         )
         preferred_name = sanitize_filename(preferred_name)
         self.adapter.debug(

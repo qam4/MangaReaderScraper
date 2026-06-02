@@ -115,7 +115,8 @@ class MangagoMangaParser(BaseMangaParser):
             )
             # logger.info(volume_tags)
             volume_ids = set(
-                self._extract_number(vol.find("a").get("href")) for vol in volume_tags  # type: ignore[union-attr]
+                self._extract_number(vol.find("a").get("href"))
+                for vol in volume_tags  # type: ignore[union-attr]
             )
             logger.info(f"volume_ids={volume_ids}")
             return volume_ids

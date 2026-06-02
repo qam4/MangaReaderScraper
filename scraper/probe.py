@@ -60,7 +60,7 @@ class ProbeReport:
             lines.append(f"  {s}")
         lines.append("")
         lines.append(
-            f"elements with data-src (page images?): " f"{len(self.data_src_samples)}"
+            f"elements with data-src (page images?): {len(self.data_src_samples)}"
         )
         for s in self.data_src_samples[:10]:
             lines.append(f"  {s}")

@@ -1,7 +1,7 @@
+import shutil
 from pathlib import Path
 
 import pytest
-import shutil
 
 from scraper.exceptions import PageAlreadyPresent, VolumeAlreadyPresent
 from scraper.manga import Manga, MangaBuilder, Page, Volume

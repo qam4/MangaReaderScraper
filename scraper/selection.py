@@ -156,8 +156,9 @@ def _select_by_index(tokens: Iterable[str], available: List[str]) -> List[str]:
             continue
         range_match = _RANGE_RE.match(token)
         if range_match:
-            low, high = int(float(range_match.group(1))), int(
-                float(range_match.group(2))
+            low, high = (
+                int(float(range_match.group(1))),
+                int(float(range_match.group(2))),
             )
             if low > high:
                 low, high = high, low

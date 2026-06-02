@@ -3,6 +3,7 @@ import logging
 import sys
 from typing import Dict, List, Optional, Tuple, Type
 
+from scraper.bundle import Bundle
 from scraper.download import Download
 from scraper.exceptions import MangaDoesNotExist
 from scraper.manga import Manga
@@ -10,7 +11,6 @@ from scraper.menu import SearchMenu
 from scraper.parsers.types import SiteParserClass
 from scraper.registry import available_sources, get_source
 from scraper.uploaders.types import Uploader
-from scraper.bundle import Bundle
 from scraper.utils import menu_input, settings
 
 CONFIG = settings()["config"]
@@ -50,8 +50,7 @@ def manga_search(
     title = manga["title"]
     url = manga["manga_url"]
     msg = (
-        "Which volume(s) do you want to download "
-        "(Enter alone to download all volumes)?"
+        "Which volume(s) do you want to download (Enter alone to download all volumes)?"
     )
     volumes = menu_input(msg)
     logger.debug(f"[manga_search] volumes={volumes}")
@@ -171,9 +170,7 @@ def change_args_to_search(args: Dict[str, Optional[str]]) -> List[Optional[str]]
     Alters arguments to use --search
     """
     updated_args = []
-    args.update(
-        {"manga": None, "volumes": None, "search": args["manga"], "volumes": None}
-    )
+    args.update({"manga": None, "volumes": None, "search": args["manga"]})
 
     flags = ["remove"]
 

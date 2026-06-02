@@ -4,7 +4,7 @@ import pytest
 
 from scraper.exceptions import VolumeDoesntExist
 from scraper.parsers.mangafast import MangaFast, MangaFastMangaParser, MangaFastSearch
-from tests.helpers import mocked_request_session, as_search_results
+from tests.helpers import as_search_results, mocked_request_session
 
 
 def test_all_volume_ids(mangafast_manga_title_page_html):

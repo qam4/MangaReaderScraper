@@ -5,19 +5,21 @@ Bundle manga into volumes with multiple chapters
 import logging
 import os
 import shutil
-import zipfile
-import time
 import subprocess
+import time
+import warnings
+import zipfile
 from itertools import repeat
+from logging import LoggerAdapter
 from multiprocessing.pool import Pool
+from typing import List
+
+from tqdm import TqdmExperimentalWarning  # type: ignore
+from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
+from tqdm.rich import tqdm  # type: ignore
+
 from scraper.manga import Manga
 from scraper.utils import get_adapter, settings
-from logging import LoggerAdapter
-from tqdm.rich import tqdm  # type: ignore
-from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
-from tqdm import TqdmExperimentalWarning  # type: ignore
-from typing import List
-import warnings
 
 logger = logging.getLogger(__name__)
 

@@ -20,18 +20,16 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra upload
 
-      - name: Lint (pyflakes + flake8)
-        run: |
-          uv run pyflakes scraper tests
-          uv run flake8 ./scraper ./tests
+      - name: Lint (ruff)
+        run: uv run ruff check ./scraper ./tests
 
-      - name: Format check (black)
-        run: uv run black --check ./scraper ./tests
+      - name: Format check (ruff)
+        run: uv run ruff format --check ./scraper ./tests
 
       - name: Type check (mypy)
-        # Non-blocking: the bs4 upgrade surfaced ~35 pre-existing latent type
-        # errors in the parsers. These get cleaned up as parsers are refactored
-        # (plan phases 2-6). Kept visible so the count trends down, not up.
+        # Non-blocking: the bs4 upgrade surfaced latent type errors in the
+        # parsers (Tag.get() typed as str | AttributeValueList). Kept visible so
+        # the count trends down, not up.
         continue-on-error: true
         run: uv run mypy scraper
 

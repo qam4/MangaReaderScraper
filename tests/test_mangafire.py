@@ -18,8 +18,8 @@ from scraper.parsers.mangafire import (
     Mangafire,
     MangafireMangaParser,
     MangafireSearch,
-    descramble,
     _encode_page_url,
+    descramble,
 )
 
 CHAPTER_JSON = Path("tests/test_files/mangafire/chapter_list.json").read_text(

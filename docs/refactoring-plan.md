@@ -465,8 +465,12 @@ Each phase leaves the tool working.
    **`uv run pytest` is green with no flags** (166 pass) — the
    `-k`/`--deselect`/`--ignore` incantation is gone from CI. Registered an
    `integration` marker for future browser/network tests, though the suite is
-   currently fully mocked so none are tagged yet. Optional ruff consolidation
-   still deferred.
+   currently fully mocked so none are tagged yet. **ruff consolidation done**:
+   replaced `pyflakes` + `flake8` + `black` + `isort` (+ `autoflake`) with a
+   single `ruff` (lint `E`/`F`/`I`/`W` + formatter), config in `[tool.ruff]`;
+   deleted `.flake8`; updated CI, pre-commit, and README. ruff caught a real
+   latent bug the old stack missed: a duplicate `"volumes"` dict key in
+   `__main__.change_args_to_search` (F601). Lockfile 63 → 55 packages.
 
 ---
 

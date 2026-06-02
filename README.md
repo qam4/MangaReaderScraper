@@ -31,8 +31,8 @@ Common dev commands:
 ```bash
 uv run pytest                 # tests
 uv run mypy scraper           # type check
-uv run flake8 ./scraper ./tests
-uv run black ./scraper ./tests
+uv run ruff check ./scraper ./tests    # lint
+uv run ruff format ./scraper ./tests   # format
 ```
 ## usage
 $ manga-scraper --help

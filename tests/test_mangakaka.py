@@ -4,7 +4,7 @@ import pytest
 
 from scraper.exceptions import VolumeDoesntExist
 from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser, MangaKakaSearch
-from tests.helpers import mocked_request_session, as_search_results
+from tests.helpers import as_search_results, mocked_request_session
 
 METADATA = as_search_results(
     {

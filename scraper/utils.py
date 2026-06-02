@@ -32,7 +32,9 @@ class CustomAdapter(LoggerAdapter):
 
 
 def get_adapter(
-    logger: Logger, manga: str, volume: Optional[Union[str, int]] = None  # noqa: E251
+    logger: Logger,
+    manga: str,
+    volume: Optional[Union[str, int]] = None,  # noqa: E251
 ) -> CustomAdapter:
     if volume:
         extra = {"manga": manga, "volume": volume}

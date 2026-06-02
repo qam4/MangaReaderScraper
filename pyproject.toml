@@ -45,17 +45,13 @@ Homepage = "https://github.com/superDross/MangaReaderScraper"
 # Includes the `upload` extra so the existing upload tests keep running until
 # they are tiered into opt-in integration tests (plan §5.7).
 dev = [
-    "autoflake",
-    "black>=24.10",
-    "isort",
+    "ruff>=0.10",
     "mypy",
     "mypy-extensions",
-    "pyflakes",
     "pytest",
     "pytest-cov",
     "pytest-timeout",
     "click",
-    "flake8>=5.0",
     "MangaReaderScraper[upload]",
 ]
 
@@ -69,35 +65,21 @@ packages = ["scraper", "scraper.parsers", "scraper.uploaders"]
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py313']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  # The following are specific to Black, you probably don't want those.
-  | blib2to3
-  | tests/data
-  | profiling
-)/
-'''
+target-version = "py313"
+extend-exclude = [".venv", "build", "dist"]
 
-[tool.isort]
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-line_length = 88
-known_third_party = ['tabulate', 'bs4', 'requests', 'pytest', 'urllib3']
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort -- replaces flake8 + pyflakes + isort.
+select = ["E", "F", "I", "W"]
+# E203 (whitespace before ':') and E501 (line length) conflict with / are owned
+# by the formatter; E701 (multiple statements) was already ignored in the old
+# flake8 config.
+ignore = ["E203", "E501", "E701"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["tabulate", "bs4", "requests", "pytest", "urllib3"]
 
 [tool.pytest.ini_options]
 # A per-test timeout so a mis-targeted mock that falls through to a real network
