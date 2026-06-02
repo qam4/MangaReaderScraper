@@ -1,7 +1,9 @@
 beautifulsoup4
+curl_cffi
 dropbox
 cloudscraper
 lxml
+nodriver
 pcloud
 Pillow
 reportlab

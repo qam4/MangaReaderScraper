@@ -42,6 +42,7 @@ SearchParser = Union[
     MangaparkSearch,
     MangagoSearch,
     MangabuddySearch,
+    MangafireSearch,
 ]
 SiteParser = Union[
     MangaReader,
@@ -52,6 +53,7 @@ SiteParser = Union[
     Mangapark,
     Mangago,
     Mangabuddy,
+    Mangafire,
 ]
 
 
@@ -64,6 +66,7 @@ MangaParserClass = Union[
     Type[MangaparkMangaParser],
     Type[MangagoMangaParser],
     Type[MangabuddyMangaParser],
+    Type[MangafireMangaParser],
 ]
 SearchParserClass = Union[
     Type[MangaReaderSearch],
@@ -74,6 +77,7 @@ SearchParserClass = Union[
     Type[MangaparkSearch],
     Type[MangagoSearch],
     Type[MangabuddySearch],
+    Type[MangafireSearch],
 ]
 SiteParserClass = Union[
     Type[MangaReader],
@@ -84,4 +88,5 @@ SiteParserClass = Union[
     Type[Mangapark],
     Type[Mangago],
     Type[Mangabuddy],
+    Type[Mangafire],
 ]
