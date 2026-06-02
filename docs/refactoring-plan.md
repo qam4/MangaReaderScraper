@@ -397,22 +397,28 @@ Each phase leaves the tool working.
    than silently selecting nothing. New tests: `tests/test_selection.py` (incl.
    the opaque-slug fallback) + builder gap/decimal cases in `test_manga.py`;
    updated CLI + mangafast expectations.
-3. **Fetcher abstraction** — 🟡 **IN PROGRESS.** Added `scraper/fetchers.py`:
-   `FetchResult` (status/text/cookies/json/raise_for_status), a `Fetcher`
-   protocol, and lazy-import backends `RequestsFetcher`, `CloudscraperFetcher`,
-   `BrowserFetcher`. `BrowserFetcher` exposes `get`, `fetch_json_in_page`, and
-   `capture_xhr(url, predicate, trigger_js=, with_cookies=)` — the primitives
-   the MangaFire work needed. **MangaFire migrated first** (per plan): its three
-   bespoke module-level async browser helpers (`_capture_page_list`,
-   `_fetch_in_browser`, `_search_in_browser`) are gone, replaced by
-   `BrowserFetcher` calls; the parser keeps only JSON parsing + descramble.
-   Tests retargeted at the new seam; mangafire coverage rose to ~67% (browser
-   plumbing now mockable). New `tests/test_fetchers.py` (FetchResult, pure
-   JS/predicate helpers, http backends). **Still TODO:** migrate the 7 HTTP
-   parsers (mangareader/mangakaka/manganelo/manganato/mangapark/mangago/
-   mangabuddy) off `utils.get_html_from_url` onto `RequestsFetcher`/
-   `CloudscraperFetcher`/`BrowserFetcher`, then retire `get_html_from_url`. Each
-   migrates independently; the legacy switch stays until then.
+3. **Fetcher abstraction** — ✅ **DONE.** Added `scraper/fetchers.py`:
+   `FetchResult`, `Fetcher` protocol, lazy-import backends `RequestsFetcher`,
+   `CloudscraperFetcher`, `BrowserFetcher` (nodriver, with `get` /
+   `fetch_json_in_page` / `capture_xhr`), and a `fetch_soup(url, fetcher=)`
+   seam. **All parsers migrated** off `utils.get_html_from_url`, which is now
+   **deleted**:
+   - MangaFire → `BrowserFetcher` (capture_xhr / fetch_json_in_page).
+   - mangareader/mangakaka/manganelo/manganato/mangafast → `fetch_soup`
+     (RequestsFetcher); 404 handling preserved via `FetchResult.raise_for_status`.
+   - mangabuddy/mangapark → `fetch_soup` for the requests-side chapter list,
+     `fetch_soup(url, BrowserFetcher())` for the JS volume page.
+   - mangago + the shared search path (`base._scrape_results`) → `BrowserFetcher`.
+   Tests retargeted at the `fetch_soup` / `BrowserFetcher` seams.
+   **selenium → nodriver consolidation:** the old `"selenium"` browser path is
+   gone; browser parsers now use nodriver via `BrowserFetcher`. ⚠️ This is a
+   behaviour change on browser code that can't be unit-tested (mocked away);
+   needs a live download to confirm nodriver renders these sites correctly.
+   **Now-dead deps:** `selenium` and `undetected_chromedriver` are no longer
+   referenced anywhere in `scraper/` (only in the root `test.py` scratch file);
+   `cloudscraper` is available as a backend but unused by any parser. Pruning
+   them from `pyproject.toml` (and deleting `test.py`) is left for the Phase 7
+   deps cleanup.
 4. **Typed `SearchResult` + registry** — migrate parsers one at a time; shrink
    `types.py`.
 5. **Smarter probe + "add a source" docs**, MangaFire as the example.

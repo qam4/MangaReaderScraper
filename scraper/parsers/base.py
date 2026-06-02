@@ -15,8 +15,9 @@ from bs4.element import Tag
 from PIL import Image, ImageDraw, ImageFont
 
 from scraper.exceptions import MangaParserNotSet  # , PageDoesNotExist
+from scraper.fetchers import BrowserFetcher, fetch_soup
 from scraper.new_types import SearchResults
-from scraper.utils import get_html_from_url, request_session
+from scraper.utils import request_session
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +138,8 @@ class BaseSearchParser:
         """
         Scrape and return HTML list with search results
         """
-        # using selenium for magago since the search results are dynamically loaded and requests does not work
-        html_response = get_html_from_url(url, "selenium")
+        # search results are dynamically loaded, so drive a real browser
+        html_response = fetch_soup(url, BrowserFetcher())
         # logging.debug(f"html_response={html_response}")
         search_results = html_response.find_all("div", {"class": div_class})
         if not search_results:

@@ -7,10 +7,10 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.selection import ChapterId
-from scraper.utils import get_html_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class MangaFastMangaParser(BaseMangaParser):
         if int(volume) > int(highest_volume):
             raise VolumeDoesntExist(f"Manga volume {volume} does not exist")
         try:
-            volume_html = get_html_from_url(self.volume_url(volume))
+            volume_html = fetch_soup(self.volume_url(volume))
             return volume_html
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -50,7 +50,7 @@ class MangaFastMangaParser(BaseMangaParser):
     def all_volume_ids(self) -> Iterable[str]:
         try:
             url = f"{self.base_url}/{self.manga_url}?order=old#table"
-            manga_html = get_html_from_url(url)
+            manga_html = fetch_soup(url)
             volume_tags = manga_html.find("table", id="table").find_all("a")  # type: ignore[attr-defined]
             volume_tags = [tag for tag in volume_tags if tag.text != "PDF"]
             volume_ids = [re.sub(r"\D", "", x.text.strip()) for x in volume_tags]

@@ -8,7 +8,7 @@ from tests.helpers import MockedImgResponse
 
 
 def test_all_volume_ids(mangafast_manga_title_page_html):
-    with mock.patch("scraper.parsers.mangafast.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangafast.fetch_soup") as mocked_func:
         mocked_func.return_value = mangafast_manga_title_page_html
         parser = MangaFastMangaParser("dragon-ball-super")
         all_vols = parser.all_volume_ids()
@@ -79,7 +79,7 @@ def test_all_volume_ids(mangafast_manga_title_page_html):
 
 
 def test_page_urls(mangafast_volume_html):
-    func = "scraper.parsers.mangafast.get_html_from_url"
+    func = "scraper.parsers.mangafast.fetch_soup"
     method = "scraper.parsers.mangafast.MangaFastMangaParser.all_volume_ids"
 
     with mock.patch(func) as mocked_func:
@@ -160,7 +160,7 @@ def test_page_urls(mangafast_volume_html):
 
 
 def test_invalid_volume_parser(mangafast_volume_html):
-    func = "scraper.parsers.mangafast.get_html_from_url"
+    func = "scraper.parsers.mangafast.fetch_soup"
     method = "scraper.parsers.mangafast.MangaFastMangaParser.all_volume_ids"
 
     with mock.patch(func) as mocked_func:
@@ -177,7 +177,7 @@ def test_invalid_volume_parser(mangafast_volume_html):
 @mock.patch("scraper.parsers.mangareader.requests.get")
 def test_page_data(mocked_get, mangareader_page_html):
     mocked_get.return_value = MockedImgResponse()
-    with mock.patch("scraper.parsers.mangafast.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangafast.fetch_soup") as mocked_func:
         mocked_func.return_value = mangareader_page_html
         parser = MangaFastMangaParser("dragon-ball")
         page_url = (
@@ -207,7 +207,7 @@ def test_get_search_results(mangafast_search_html):
         },
     }
 
-    with mock.patch("scraper.parsers.base.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.base.fetch_soup") as mocked_func:
         mocked_func.return_value = mangafast_search_html
         mangasearch = MangaFastSearch("Dragon Ball Super")
         results = mangasearch.search()
@@ -215,7 +215,7 @@ def test_get_search_results(mangafast_search_html):
 
 
 def test_get_search_results_with_invalid_query(caplog, mangafast_invalid_search_html):
-    with mock.patch("scraper.parsers.base.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.base.fetch_soup") as mocked_func:
         mocked_func.return_value = mangafast_invalid_search_html
         with pytest.raises(SystemExit):
             mangasearch = MangaFastSearch("gibbersish")
@@ -239,7 +239,7 @@ def test_mangafast_search_parser(mangafast_search_html):
         },
     }
 
-    with mock.patch("scraper.parsers.base.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.base.fetch_soup") as mocked_func:
         mocked_func.return_value = mangafast_search_html
         mangasearch = MangaFast()
         results = mangasearch.search("a query")

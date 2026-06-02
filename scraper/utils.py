@@ -4,14 +4,11 @@ import logging
 import pdb
 import re
 import sys
-import subprocess
-import tempfile
 import time
 from logging import Logger, LoggerAdapter
 from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
 
-import bs4
 import requests  # type: ignore
 from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry
@@ -42,80 +39,6 @@ def get_adapter(
     else:
         extra = {"manga": manga}
     return CustomAdapter(logger, extra)
-
-
-def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.BeautifulSoup:
-    """
-    Download the HTML text from a given url
-    """
-    if type == "requests":
-        req = requests.get(url)
-        req.raise_for_status()
-        text = req.text
-    elif type == "cloudscraper":
-        import cloudscraper  # type: ignore
-
-        scraper = cloudscraper.create_scraper()
-        req = scraper.get(url)
-        req.raise_for_status()
-        text = req.text
-    elif type == "uc":
-        import undetected_chromedriver as uc  # type: ignore
-
-        # issue: AssertionError: daemonic processes are not allowed to have children
-        driver = uc.Chrome(headless=True, use_subprocess=False)
-        driver.get(url)
-        time.sleep(10)
-        text = driver.page_source
-    elif type == "selenium":
-        from selenium import webdriver  # type: ignore
-        from selenium.webdriver.chrome.service import Service as ChromeService
-        from selenium.webdriver.support.ui import WebDriverWait
-
-        chrome_service = ChromeService()
-        # CREATE_NO_WINDOW hides the console window on Windows; it does not exist
-        # on other platforms, so fall back to 0 (no special flags) there.
-        chrome_service.creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        options = webdriver.ChromeOptions()
-        # options.add_argument("--headless=new")
-        # options.add_argument("--headless")
-        driver = webdriver.Chrome(options=options, service=chrome_service)
-        driver.get(url)
-
-        # # Wait until document.readyState is 'complete'
-        # WebDriverWait(driver, 10).until(
-        #     lambda driver: driver.execute_script("return document.readyState") == "complete"
-        # )
-        WebDriverWait(driver, 10)  # waits up to 10 seconds
-        time.sleep(5)  # wait for the page to load completely
-        text = driver.page_source
-        # logging.info(f"text={text}")
-        driver.quit()
-    elif type == "nodriver":
-        import asyncio
-        import nodriver as nd
-        from pathlib import Path
-
-        async def fetch():
-            profile_path = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-            browser = await nd.start(
-                user_data_dir=profile_path,
-                headless=True,
-                sandbox=False,
-                no_sandbox=True,
-            )
-            page = await browser.get(url)
-            await page.wait(5)
-            content = await page.get_content()
-            browser.stop()
-            return content
-
-        text = asyncio.run(fetch())
-    else:
-        logging.error(f"type not supported {type}")
-
-    html = bs4.BeautifulSoup(text, features="lxml")
-    return html
 
 
 def download_timer(func: Callable) -> Callable:
