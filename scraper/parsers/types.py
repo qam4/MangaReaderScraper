@@ -1,92 +1,21 @@
-from typing import Type, Union
+"""
+Parser type aliases.
 
-from scraper.parsers.mangafast import MangaFast, MangaFastMangaParser, MangaFastSearch
-from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser, MangaKakaSearch
-from scraper.parsers.manganelo import Manganelo, ManganeloMangaParser, ManganeloSearch
-from scraper.parsers.manganato import Manganato, ManganatoMangaParser, ManganatoSearch
-from scraper.parsers.mangapark import Mangapark, MangaparkMangaParser, MangaparkSearch
-from scraper.parsers.mangago import Mangago, MangagoMangaParser, MangagoSearch
-from scraper.parsers.mangabuddy import (
-    Mangabuddy,
-    MangabuddyMangaParser,
-    MangabuddySearch,
-)
-from scraper.parsers.mangareader import (
-    MangaReader,
-    MangaReaderMangaParser,
-    MangaReaderSearch,
-)
-from scraper.parsers.mangafire import (
-    Mangafire,
-    MangafireMangaParser,
-    MangafireSearch,
-)
+Since every site/manga/search parser derives from the ``Base*`` classes, these
+aliases are just the base types -- no need to enumerate every concrete parser in
+a ``Union`` (which also forced this module to import all of them). Sources are
+discovered via ``scraper.registry`` now, not these unions (refactoring-plan
+§3.3 / §5.3).
+"""
 
-MangaParser = Union[
-    MangaReaderMangaParser,
-    MangaKakaMangaParser,
-    ManganeloMangaParser,
-    MangaFastMangaParser,
-    ManganatoMangaParser,
-    MangaparkMangaParser,
-    MangagoMangaParser,
-    MangabuddyMangaParser,
-    MangafireMangaParser,
-]
-SearchParser = Union[
-    MangaReaderSearch,
-    MangaKakaSearch,
-    ManganeloSearch,
-    MangaFastSearch,
-    ManganatoSearch,
-    MangaparkSearch,
-    MangagoSearch,
-    MangabuddySearch,
-    MangafireSearch,
-]
-SiteParser = Union[
-    MangaReader,
-    MangaKaka,
-    Manganelo,
-    MangaFast,
-    Manganato,
-    Mangapark,
-    Mangago,
-    Mangabuddy,
-    Mangafire,
-]
+from typing import Type
 
+from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 
-MangaParserClass = Union[
-    Type[MangaReaderMangaParser],
-    Type[MangaKakaMangaParser],
-    Type[ManganeloMangaParser],
-    Type[MangaFastMangaParser],
-    Type[ManganatoMangaParser],
-    Type[MangaparkMangaParser],
-    Type[MangagoMangaParser],
-    Type[MangabuddyMangaParser],
-    Type[MangafireMangaParser],
-]
-SearchParserClass = Union[
-    Type[MangaReaderSearch],
-    Type[MangaKakaSearch],
-    Type[ManganeloSearch],
-    Type[MangaFastSearch],
-    Type[ManganatoSearch],
-    Type[MangaparkSearch],
-    Type[MangagoSearch],
-    Type[MangabuddySearch],
-    Type[MangafireSearch],
-]
-SiteParserClass = Union[
-    Type[MangaReader],
-    Type[MangaKaka],
-    Type[Manganelo],
-    Type[MangaFast],
-    Type[Manganato],
-    Type[Mangapark],
-    Type[Mangago],
-    Type[Mangabuddy],
-    Type[Mangafire],
-]
+MangaParser = BaseMangaParser
+SearchParser = BaseSearchParser
+SiteParser = BaseSiteParser
+
+MangaParserClass = Type[BaseMangaParser]
+SearchParserClass = Type[BaseSearchParser]
+SiteParserClass = Type[BaseSiteParser]

@@ -7,16 +7,8 @@ from scraper.download import Download
 from scraper.exceptions import MangaDoesNotExist
 from scraper.manga import Manga
 from scraper.menu import SearchMenu
-from scraper.parsers.mangafast import MangaFast
-from scraper.parsers.mangakaka import MangaKaka
-from scraper.parsers.manganelo import Manganelo
-from scraper.parsers.manganato import Manganato
-from scraper.parsers.mangapark import Mangapark
-from scraper.parsers.mangago import Mangago
-from scraper.parsers.mangabuddy import Mangabuddy
-from scraper.parsers.mangareader import MangaReader
-from scraper.parsers.mangafire import Mangafire
 from scraper.parsers.types import SiteParserClass
+from scraper.registry import available_sources, get_source
 from scraper.uploaders.types import Uploader
 from scraper.bundle import Bundle
 from scraper.utils import menu_input, settings
@@ -68,22 +60,12 @@ def manga_search(
 
 def get_manga_parser(source: str) -> SiteParserClass:
     """
-    Use the string to return correct parser class
+    Use the string to return correct parser class, looked up in the registry.
     """
-    sources: Dict[str, SiteParserClass] = {
-        "mangareader": MangaReader,  # dead
-        "mangafast": MangaFast,  # dead
-        "mangakaka": MangaKaka,  # cloudflare on search
-        "manganelo": Manganelo,  # cloudflare on search
-        "manganato": Manganato,  # cloudflare on search
-        "mangapark": Mangapark,
-        "mangago": Mangago,  # cloudflare on search
-        "mangabuddy": Mangabuddy,
-        "mangafire": Mangafire,
-    }
-    parser = sources.get(source)
+    parser = get_source(source)
     if not parser:
-        raise ValueError(f"{source} is not supported try {', '.join(sources.keys())}")
+        available = ", ".join(available_sources())
+        raise ValueError(f"{source} is not supported try {available}")
     return parser
 
 
@@ -239,13 +221,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--source",
         "-z",
         type=str,
-        choices={
-            "mangareader",
-            "mangapark",
-            "mangabuddy",
-            "mangago",
-            "mangafire",
-        },  # keeping mangareader for unit tests
+        choices=available_sources(),
         default=CONFIG["source"],
         help="website to scrape data from",
     )

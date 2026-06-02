@@ -11,6 +11,7 @@ from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
+from scraper.registry import register_source
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ class ManganatoSearch(BaseSearchParser):
         return metadata
 
 
+@register_source("manganato")
 class Manganato(BaseSiteParser):
     """
     Seems to be the same as natomanga.com

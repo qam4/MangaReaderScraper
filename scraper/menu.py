@@ -78,7 +78,7 @@ class SearchMenu(Menu):
         self.parser: SiteParser = parser()
         self.search_results: SearchResults = self._search(query)
         choices: str = self.table()
-        options: Dict[str, Dict[str, str]] = self._create_options()
+        options: SearchResults = self._create_options()
         Menu.__init__(self, options, choices)
 
     def _search(self, query: List[str]) -> SearchResults:

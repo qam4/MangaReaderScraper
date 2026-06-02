@@ -32,6 +32,7 @@ from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import BrowserFetcher, _make_marker_predicate
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
+from scraper.registry import register_source
 from scraper.selection import sort_chapter_ids
 
 logger = logging.getLogger(__name__)
@@ -364,6 +365,7 @@ class MangafireSearch(BaseSearchParser):
         return self._parse_results(html_fragment, start)
 
 
+@register_source("mangafire")
 class Mangafire(BaseSiteParser):
     """
     Scraper & parser for mangafire.to
