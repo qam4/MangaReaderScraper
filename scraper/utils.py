@@ -81,8 +81,8 @@ def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.Beautif
         # WebDriverWait(driver, 10).until(
         #     lambda driver: driver.execute_script("return document.readyState") == "complete"
         # )
-        WebDriverWait(driver, 10) # waits up to 10 seconds
-        time.sleep(5)   # wait for the page to load completely
+        WebDriverWait(driver, 10)  # waits up to 10 seconds
+        time.sleep(5)  # wait for the page to load completely
         text = driver.page_source
         # logging.info(f"text={text}")
         driver.quit()
@@ -90,11 +90,15 @@ def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.Beautif
         import asyncio
         import nodriver as nd
         from pathlib import Path
-        import os
 
         async def fetch():
             profile_path = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-            browser = await nd.start(user_data_dir=profile_path, headless=True, sandbox=False, no_sandbox=True)
+            browser = await nd.start(
+                user_data_dir=profile_path,
+                headless=True,
+                sandbox=False,
+                no_sandbox=True,
+            )
             page = await browser.get(url)
             await page.wait(5)
             content = await page.get_content()

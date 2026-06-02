@@ -77,7 +77,7 @@ class MangagoMangaParser(BaseMangaParser):
         logger.info(f"vol_tag={vol_tag}")
         base = f"{self.base_url}/read-manga/{self.manga_url}/"
         if vol_tag.startswith(base):
-            vol_text = vol_tag[len(base):].rstrip("/")
+            vol_text = vol_tag[len(base) :].rstrip("/")
         else:
             raise ValueError(f"vol_tag does not start with expected base: {base}")
         logger.info(f"vol_text={vol_text}")
@@ -109,12 +109,14 @@ class MangagoMangaParser(BaseMangaParser):
             #         )
             #     )
             # )
-            volume_tags = manga_html.find_all("table", {"class": "listing", "id": "chapter_table"})
+            volume_tags = manga_html.find_all(
+                "table", {"class": "listing", "id": "chapter_table"}
+            )
             # logger.info(volume_tags)
             volume_ids = set(
                 self._extract_number(vol.find("a").get("href")) for vol in volume_tags  # type: ignore[union-attr]
             )
-            logger.info(f'volume_ids={volume_ids}')
+            logger.info(f"volume_ids={volume_ids}")
             return volume_ids
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -141,9 +143,7 @@ class MangagoSearch(BaseSearchParser):
         logger.info(f"manga_url={manga_url}")
         manga_url_short = Path(manga_url).stem.split("/")[-1]
         # fred: last capters are in "row-5 gray"
-        last_chapter = result.find(
-            "a", {"class": "chico"}
-        )
+        last_chapter = result.find("a", {"class": "chico"})
         logger.info(f"last_chapter={last_chapter}")
         if last_chapter:
             chapters = last_chapter.find("span").text  # type: ignore[attr-defined]

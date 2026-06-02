@@ -82,7 +82,9 @@ class Bundle:
         Get path to manga bundle dir.
         """
         config = settings()["config"]
-        return config.get("manga_bundle_directory", config.get("manga_directory", os.getcwd()))
+        return config.get(
+            "manga_bundle_directory", config.get("manga_directory", os.getcwd())
+        )
 
     def is_obsolete(self, target: str, dependencies: List[str]) -> bool:
         if not os.path.isfile(target):

@@ -20,8 +20,19 @@ For development:
 
 ```bash
 git clone https://github.com/superDross/MangaReaderScraper
-pip install -r MangaReaderScraper/dev_requirements.txt
-export PYTHONPATH=$PYTHONPATH:/path/to/MangaReaderScraper/
+cd MangaReaderScraper
+# uv creates the venv (pinned to Python 3.13 via .python-version) and installs
+# runtime + dev deps. Add the upload backends with the `upload` extra.
+uv sync --extra upload
+```
+
+Common dev commands:
+
+```bash
+uv run pytest                 # tests
+uv run mypy scraper           # type check
+uv run flake8 ./scraper ./tests
+uv run black ./scraper ./tests
 ```
 ## usage
 $ manga-scraper --help

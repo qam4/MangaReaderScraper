@@ -30,7 +30,6 @@ from scraper.new_types import PageData, VolumeData
 from scraper.parsers.types import SiteParser
 from scraper.utils import get_adapter, settings
 
-
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
@@ -408,9 +407,7 @@ class MangaBuilder:
         preferred_name = (
             preferred_name
             if preferred_name
-            else title
-            if title
-            else self.parser.manga.manga_url
+            else title if title else self.parser.manga.manga_url
         )
         preferred_name = sanitize_filename(preferred_name)
         self.adapter.debug(

@@ -1,1 +1,4 @@
 tests/test_files/* linguist-documentation
+
+# Keep the uv lockfile LF-normalized across platforms (avoids CRLF churn on Windows)
+uv.lock text eol=lf

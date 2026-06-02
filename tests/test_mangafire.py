@@ -29,6 +29,7 @@ SEARCH_JSON = Path("tests/test_files/mangafire/search.json").read_text(encoding=
 
 # ============================== chapter list =============================
 
+
 def test_all_volume_ids_parses_real_response():
     """all_volume_ids should pull every data-number out of the real ajax JSON."""
     with mock.patch(
@@ -63,11 +64,10 @@ def test_volume_url_uses_chapter_number_verbatim():
 
 # ================================ search =================================
 
+
 def test_search_parses_real_response():
     """search should turn the real ajax/manga/search html into the menu dict."""
-    with mock.patch.object(
-        MangafireSearch, "_search_in_browser"
-    ) as browser:
+    with mock.patch.object(MangafireSearch, "_search_in_browser") as browser:
         # _search_in_browser returns the inner result.html string
         browser.return_value = json.loads(SEARCH_JSON)["result"]["html"]
         results = MangafireSearch("ad astra").search()
@@ -114,6 +114,7 @@ def test_parse_results_handles_dict_and_str_shape():
 
 # =============================== descramble ==============================
 
+
 def _solid_grid_image(w=1000, h=1500):
     """A test image with a unique color per descramble piece, so we can verify
     the pieces are moved to the expected positions."""
@@ -143,6 +144,7 @@ def test_descramble_returns_valid_jpeg():
 
 # ============================== page urls ================================
 
+
 def test_encode_page_url_marks_scrambled():
     assert _encode_page_url("http://x/p.jpg", 0) == "http://x/p.jpg"
     assert _encode_page_url("http://x/p.jpg", 5) == "http://x/p.jpg#scrambled_5"
@@ -167,6 +169,7 @@ def test_page_urls_carries_offset_in_fragment():
 
 
 # ================================ wiring =================================
+
 
 def test_site_parser_wires_subparsers():
     site = Mangafire("ad-astra-scipio-and-hanniball.lww3")

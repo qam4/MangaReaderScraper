@@ -1,6 +1,79 @@
+[project]
+name = "MangaReaderScraper"
+dynamic = ["version"]
+description = "Search & download mangas from the command line"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "superDross", email = "dross78375@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+]
+dependencies = [
+    "beautifulsoup4",
+    "cloudscraper",
+    "curl_cffi",
+    "lxml",
+    "nodriver",
+    "Pillow",
+    "reportlab",
+    "requests",
+    "rich",
+    "selenium",
+    "tabulate",
+    "tqdm",
+    "undetected_chromedriver",
+]
+
+[project.optional-dependencies]
+# Cloud upload backends. Quarantined behind an extra (see refactoring-plan §5.4):
+# `uv sync --extra upload` or `pip install .[upload]`.
+upload = [
+    "dropbox",
+    "pcloud",
+]
+
+[project.scripts]
+manga-scraper = "scraper.__main__:cli_entry"
+
+[project.urls]
+Homepage = "https://github.com/superDross/MangaReaderScraper"
+
+[dependency-groups]
+# Dev tooling, installed by default with `uv sync`.
+# Includes the `upload` extra so the existing upload tests keep running until
+# they are tiered into opt-in integration tests (plan §5.7).
+dev = [
+    "autoflake",
+    "black>=24.10",
+    "isort",
+    "mypy",
+    "mypy-extensions",
+    "pyflakes",
+    "pytest",
+    "pytest-cov",
+    "pytest-timeout",
+    "click",
+    "flake8>=5.0",
+    "MangaReaderScraper[upload]",
+]
+
+[build-system]
+requires = ["setuptools>=70.1.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["scraper", "scraper.parsers", "scraper.uploaders"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
 [tool.black]
 line-length = 88
-target-version = ['py37', 'py38']
+target-version = ['py313']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -28,6 +101,37 @@ use_parentheses = true
 line_length = 88
 known_third_party = ['tabulate', 'bs4', 'requests', 'pytest', 'urllib3']
 
-[build-system]
-requires = ["setuptools>=70.1.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.pytest.ini_options]
+# A per-test timeout so a mis-targeted mock that falls through to a real network
+# call fails fast instead of hanging CI (see refactoring-plan §5.7). Tune as needed.
+addopts = "--cov scraper --timeout=60"
+log_cli = true
+log_cli_level = "WARN"
+
+[tool.mypy]
+check_untyped_defs = true
+no_strict_optional = true
+
+[[tool.mypy.overrides]]
+module = [
+    "dropbox.*",
+    "mega.*",
+    "bs4.*",
+    "urllib3.*",
+    "PIL",
+    "reportlab.*",
+    "pcloud",
+    "setuptools",
+    "tqdm",
+    "curl_cffi.*",
+]
+ignore_missing_imports = true
+
+# nodriver ships a cdp module with a non-UTF-8 byte that crashes mypy's parser
+# (the "UTF-in-comment" issue noted in refactoring-plan §5.5). Skip following
+# imports into it; we only type-check our own code.
+[[tool.mypy.overrides]]
+module = ["nodriver.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+follow_imports_for_stubs = true

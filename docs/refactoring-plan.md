@@ -59,8 +59,8 @@ pleasant to work in and the tests runnable. It's orthogonal to Problem A.
 2. Establish **one domain model** so site differences don't ripple into five
    files.
 3. Share the repeated parser scaffolding instead of copy-pasting it eight times.
-4. Stop the import/dependency bleeding so tests run on a modern Python in
-   seconds without a browser.
+4. Stop the import/dependency bleeding so tests run on a single pinned modern
+   Python in seconds without a browser.
 5. Delete dead weight that actively breaks things.
 
 Non-goals: supporting arbitrary unknown sites automatically, a plugin-loading
@@ -272,13 +272,47 @@ Move dropbox/pcloud/mega behind an optional extra (`pip install .[upload]`)
 with lazy imports, OR delete it. Either way `__main__` must import without those
 packages (unblocks the whole test suite).
 
-### 5.5 Dependencies & packaging
+### 5.5 Dependencies, packaging & environment (do this first — §6.0)
 
-`pyproject.toml` with runtime/dev groups, pinned versions, a documented venv.
-Prune: drop `undetected_chromedriver`; decide on `selenium`/`cloudscraper` once
-`BrowserFetcher` lands; keep `nodriver` + `curl_cffi` (both proven by MangaFire).
-Pin a known-good `nodriver` (note the UTF-in-comment patch needed on some
-Python versions) so it's not rediscovered each setup.
+**Single Python version.** Drop the multi-version pretence. `tox.ini` declares
+`envlist = py37,py38`, but CI already runs only 3.7 (the matrix is commented
+out: *"py3.8 fails due to lxml error"*), and this plan is trying to move
+*forward* to a modern interpreter (§3.6: uc breaks on ≥3.12). Supporting a
+range is cost with no payoff for a single-user tool. **Target Python 3.13**
+(3.13.5 confirmed available locally via pyenv-win); pin it and target only
+that. Note the dev machine's default `python` is 3.14 — a `.python-version`
+file pinning `3.13` keeps uv selecting the right interpreter regardless.
+
+**Adopt `uv`.** It delivers exactly what this section needs — reproducible
+pinned installs (`uv.lock`, killing the §3.7 soup), dependency groups
+(runtime / dev / an optional `upload` extra to quarantine §5.4), and a fast
+documented venv (`uv sync`). It also subsumes what `tox` was doing here: with a
+single target, tox is just a task runner around `pyflakes/flake8/black/mypy/
+pytest`, so replace it with `uv run <tool>` (in a Makefile/justfile or the
+README). Keep tox only if a version matrix ever comes back (then `tox-uv`);
+for now, delete it.
+
+**Concrete moves:**
+- `pyproject.toml` with `[project].dependencies` (migrated out of
+  `requirements.txt`), `requires-python = ">=3.13"`, and
+  `[project.optional-dependencies]` `dev` + `upload` groups. Retire `setup.py`
+  in favour of the `[project]` table (build-backend is already setuptools).
+  Add a `.python-version` pinning `3.13`.
+- Pinned versions; `uv lock` committed.
+- Prune: drop `undetected_chromedriver`; decide on `selenium`/`cloudscraper`
+  once `BrowserFetcher` lands; keep `nodriver` + `curl_cffi` (both proven by
+  MangaFire). Pin a known-good `nodriver` (note the UTF-in-comment patch needed
+  on some Python versions) so it's not rediscovered each setup.
+- Optional consolidation: replace `pyflakes`+`flake8`+`black`+`isort` with
+  **ruff** (lint + format + import sort, one config block) — same
+  reduce-overlapping-tools instinct as the fetch-lib pruning. mypy/pytest stay.
+- Rewrite CI to `setup-uv` + `uv sync` + `uv run` the checks on the one Python.
+- Refresh `.pre-commit-config.yaml` (pinned to python3.7 / black 19.10b0) or
+  fold its hooks into ruff.
+
+Why first: every later phase wants a sane, fast baseline to test against, and
+the lazy-import work (§6.1) only pays off once the suite actually runs on a
+clean modern interpreter.
 
 ### 5.6 Consistent error semantics
 
@@ -298,6 +332,30 @@ green on a pinned modern Python.
 
 Each phase leaves the tool working.
 
+0. **Environment & packaging baseline (do first)** — ✅ **DONE.** Pinned Python
+   3.13 (`.python-version`); migrated to `uv` with `pyproject.toml`
+   (`[project]` deps, `dev` group, `upload` extra) + `uv.lock`; consolidated
+   `pytest.ini`/`mypy.ini`/tox lint config into `pyproject.toml`; deleted
+   `tox.ini`, `setup.py`, `requirements.txt`, `dev-requirements.txt`; rewrote CI
+   on `uv` + Python 3.13; refreshed `.pre-commit-config.yaml` and `.flake8`.
+   Findings worth recording:
+   - The §3.6 claim that the suite *can't import* on modern Python did **not**
+     reproduce: `undetected_chromedriver` 3.5.5 imports fine on 3.13.5 (setuptools
+     still vendors a `distutils` shim). The import-bleed risk is real but not yet
+     fatal — Phase 1 (lazy imports) is still worth doing, just less urgent.
+   - The real breakage is **test mocks targeting the wrong module**: every
+     `test_page_data` patches `<module>.requests.get`, but `page_data` lives in
+     `base.py` and uses `utils.request_session().get()` — so the mock misses and
+     the test makes real network calls with retry/backoff (this is the "17-min
+     mangafast" hang; it's actually all the `test_page_data` tests). Added
+     `pytest-timeout` (60s default) so this fails fast instead of hanging.
+   - bs4 upgrade surfaced two latent bugs: `mangakaka.all_volume_ids` (`.text`
+     on a str) and ~35 mypy `union-attr` errors from `Tag.get()` now typed as
+     `str | AttributeValueList`. mangakaka is already dead; the rest is
+     parser-refactor work. mypy is **non-blocking** in CI until then.
+   - nodriver's `cdp/network.py` has the §5.5 non-UTF-8 byte that crashes mypy's
+     parser; handled with a `follow_imports = skip` override (no source patch
+     needed).
 1. **Stop the bleeding** — make heavy imports lazy (move
    `undetected_chromedriver` out of `utils` top; lazy-import upload in
    `__main__`). Suite imports on modern Python. Cheapest, biggest relief.
@@ -309,7 +367,8 @@ Each phase leaves the tool working.
 5. **Smarter probe + "add a source" docs**, MangaFire as the example.
 6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
    onto shared engine classes. The real workflow multiplier.
-7. **Deps/packaging cleanup; dead-code removal; CI + test tiering.**
+7. **Dead-code removal; CI + test tiering** (deps/packaging already handled in
+   Phase 0).
 
 ---
 

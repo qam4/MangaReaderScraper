@@ -2,7 +2,6 @@
 #
 # Allows one to choose what to include/exclude in source distribution
 
-include requirements.txt
 include VERSION
 include README.md
 include LICENSE

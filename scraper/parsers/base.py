@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 from functools import lru_cache
-from typing import Dict, Iterable, List, Optional, Tuple, Type
+from typing import Iterable, List, Optional, Tuple, Type
 
 import requests  # type: ignore
 from bs4.element import Tag
@@ -29,7 +29,7 @@ class BaseMangaParser:
     def __init__(self, manga_url: str, base_url: str = "") -> None:
         self.manga_url = manga_url
         self.base_url = base_url
-        self.headers = {}  # type: Dict[str, str]
+        self.headers: dict[str, str] = {}
 
     @abc.abstractmethod
     def volume_url(self, volume: str) -> str:

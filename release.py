@@ -95,7 +95,7 @@ def push_tags() -> None:
 
 
 def prepare_package() -> None:
-    setup_process = execute_subprocess(["python", "setup.py", "sdist"])
+    setup_process = execute_subprocess(["uv", "build", "--sdist"])
     print(setup_process.stdout.decode("utf-8"))
 
 

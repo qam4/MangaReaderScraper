@@ -48,6 +48,7 @@ _SCRAMBLE_TAG = "scrambled"
 
 # ============================== descramble ===============================
 
+
 def _ceil_div(a: int, b: int) -> int:
     return (a + (b - 1)) // b
 
@@ -82,6 +83,7 @@ def descramble(data: bytes, offset: int) -> bytes:
 
 
 # ========================= browser page-list capture =====================
+
 
 async def _capture_page_list(chapter_url: str, timeout: float = 45.0):
     """Open a chapter in nodriver, grab the page-list JSON & cookies.
@@ -141,7 +143,9 @@ async def _capture_page_list(chapter_url: str, timeout: float = 45.0):
 
         cookies: Dict[str, str] = {}
         try:
-            raw = await asyncio.wait_for(tab.send(cdp.network.get_cookies()), timeout=10)
+            raw = await asyncio.wait_for(
+                tab.send(cdp.network.get_cookies()), timeout=10
+            )
             cookies = {c.name: c.value for c in raw}
         except Exception as err:  # pragma: no cover - best effort
             logger.warning(f"could not read cookies via CDP: {err}")
@@ -158,8 +162,9 @@ def _encode_page_url(url: str, offset: int) -> str:
     return url
 
 
-async def _fetch_in_browser(establish_url: str, ajax_url: str,
-                            timeout: float = 45.0) -> str:
+async def _fetch_in_browser(
+    establish_url: str, ajax_url: str, timeout: float = 45.0
+) -> str:
     """Navigate to ``establish_url`` (for Cloudflare clearance + cookies), then
     fetch ``ajax_url`` from inside the page and return the response text.
 
@@ -183,14 +188,16 @@ async def _fetch_in_browser(establish_url: str, ajax_url: str,
             "  return await r.text();"
             "})()"
         )
-        text = await asyncio.wait_for(page.evaluate(js, await_promise=True),
-                                      timeout=timeout)
+        text = await asyncio.wait_for(
+            page.evaluate(js, await_promise=True), timeout=timeout
+        )
         return text
     finally:
         browser.stop()
 
 
 # ================================ parser =================================
+
 
 class MangafireMangaParser(BaseMangaParser):
     """
@@ -268,8 +275,11 @@ class MangafireMangaParser(BaseMangaParser):
 
         if not content:
             logger.error(f"Download FAILED page {page_num} at {url}")
-            return (int(page_num), self.create_page(f"Page {page_num} missing\n{url}"),
-                    "missing")
+            return (
+                int(page_num),
+                self.create_page(f"Page {page_num} missing\n{url}"),
+                "missing",
+            )
 
         try:
             if offset > 0:
@@ -280,9 +290,11 @@ class MangafireMangaParser(BaseMangaParser):
                 img.verify()
         except Exception as err:
             logger.error(f"page {page_num} at {url} corrupted: {err}")
-            return (int(page_num),
-                    self.create_page(f"Page {page_num} corrupted.\n{err}\n{url}"),
-                    "corrupted")
+            return (
+                int(page_num),
+                self.create_page(f"Page {page_num} corrupted.\n{err}\n{url}"),
+                "corrupted",
+            )
 
         return (int(page_num), content, "success")
 

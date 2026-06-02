@@ -81,6 +81,8 @@ target/
 
 # pyenv
 .python-version
+# ...but this project pins its interpreter for uv/CI, so track it
+!.python-version
 
 # celery beat schedule file
 celerybeat-schedule
