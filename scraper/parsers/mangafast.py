@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import requests  # type: ignore
 from bs4 import BeautifulSoup
@@ -8,7 +8,7 @@ from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
-from scraper.new_types import SearchResults
+from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.selection import ChapterId
 
@@ -69,16 +69,16 @@ class MangaFastSearch(BaseSearchParser):
     def __init__(self, query: str, base_url: str = "https://mangafast.net") -> None:
         super().__init__(query, base_url)
 
-    def _extract_text(self, result: Tag) -> Dict[str, str]:
+    def _extract_text(self, result: Tag) -> SearchResult:
         title = result.find("h3").text.strip()
         manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
         chapters = result.find("b").text
-        return {
-            "title": title,
-            "manga_url": manga_url.split("/")[-2],
-            "chapters": re.sub(r"\D", "", chapters),
-            "source": "mangafast",
-        }
+        return SearchResult(
+            title=title,
+            manga_url=manga_url.split("/")[-2],
+            chapters=re.sub(r"\D", "", chapters),
+            source="mangafast",
+        )
 
     def search(self, start: int = 1) -> SearchResults:
         """
@@ -86,7 +86,7 @@ class MangaFastSearch(BaseSearchParser):
         """
         url = f"{self.base_url}/?s={self.query}"
         results = self._scrape_results(url, div_class="ls5")
-        metadata: Dict[str, Dict[str, str]] = {}
+        metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
             manga_metadata = self._extract_text(result)
             metadata[str(key)] = manga_metadata

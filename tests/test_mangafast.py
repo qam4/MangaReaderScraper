@@ -4,7 +4,7 @@ import pytest
 
 from scraper.exceptions import VolumeDoesntExist
 from scraper.parsers.mangafast import MangaFast, MangaFastMangaParser, MangaFastSearch
-from tests.helpers import MockedImgResponse
+from tests.helpers import MockedImgResponse, as_search_results
 
 
 def test_all_volume_ids(mangafast_manga_title_page_html):
@@ -192,20 +192,22 @@ def test_page_data(mocked_get, mangareader_page_html):
 
 
 def test_get_search_results(mangafast_search_html):
-    expected = {
-        "1": {
-            "chapters": "17",
-            "manga_url": "super-dragon-ball-heroes-dark-demon-realm-mission",
-            "source": "mangafast",
-            "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
-        },
-        "2": {
-            "chapters": "62",
-            "manga_url": "dragon-ball-super",
-            "source": "mangafast",
-            "title": "Dragon Ball Super",
-        },
-    }
+    expected = as_search_results(
+        {
+            "1": {
+                "chapters": "17",
+                "manga_url": "super-dragon-ball-heroes-dark-demon-realm-mission",
+                "source": "mangafast",
+                "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
+            },
+            "2": {
+                "chapters": "62",
+                "manga_url": "dragon-ball-super",
+                "source": "mangafast",
+                "title": "Dragon Ball Super",
+            },
+        }
+    )
 
     with mock.patch("scraper.parsers.base.fetch_soup") as mocked_func:
         mocked_func.return_value = mangafast_search_html
@@ -224,20 +226,22 @@ def test_get_search_results_with_invalid_query(caplog, mangafast_invalid_search_
 
 
 def test_mangafast_search_parser(mangafast_search_html):
-    expected = {
-        "1": {
-            "chapters": "17",
-            "manga_url": "super-dragon-ball-heroes-dark-demon-realm-mission",
-            "source": "mangafast",
-            "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
-        },
-        "2": {
-            "chapters": "62",
-            "manga_url": "dragon-ball-super",
-            "source": "mangafast",
-            "title": "Dragon Ball Super",
-        },
-    }
+    expected = as_search_results(
+        {
+            "1": {
+                "chapters": "17",
+                "manga_url": "super-dragon-ball-heroes-dark-demon-realm-mission",
+                "source": "mangafast",
+                "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
+            },
+            "2": {
+                "chapters": "62",
+                "manga_url": "dragon-ball-super",
+                "source": "mangafast",
+                "title": "Dragon Ball Super",
+            },
+        }
+    )
 
     with mock.patch("scraper.parsers.base.fetch_soup") as mocked_func:
         mocked_func.return_value = mangafast_search_html

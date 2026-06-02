@@ -4,82 +4,84 @@ import pytest
 
 from scraper.exceptions import VolumeDoesntExist
 from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser, MangaKakaSearch
-from tests.helpers import MockedImgResponse
+from tests.helpers import MockedImgResponse, as_search_results
 
-METADATA = {
-    "1": {
-        "title": "Dragon Ball",
-        "manga_url": "read_dragon_ball_manga_online_for_free2",
-        "chapters": "520.5",
-        "source": "mangakaka",
-    },
-    "2": {
-        "title": "Dragon Ball Super",
-        "manga_url": "dragon_ball_super",
-        "chapters": "55",
-        "source": "mangakaka",
-    },
-    "3": {
-        "title": "Dragon Ball Chou",
-        "manga_url": "read_dragon_ball_chou",
-        "chapters": "42",
-        "source": "mangakaka",
-    },
-    "4": {
-        "title": "Dragon Ball SD",
-        "manga_url": "read_dragon_ball_sd",
-        "chapters": "34",
-        "source": "mangakaka",
-    },
-    "5": {
-        "title": "Dragon Ball Heroes - Victory Mission",
-        "manga_url": "iaw1400679346",
-        "chapters": "19",
-        "source": "mangakaka",
-    },
-    "6": {
-        "title": "The Dragon Knight's Beloved",
-        "manga_url": "no920419",
-        "chapters": "2",
-        "source": "mangakaka",
-    },
-    "7": {
-        "title": "Dragon Ball Full Color Freeza Arc",
-        "manga_url": "jj921224",
-        "chapters": "75",
-        "source": "mangakaka",
-    },
-    "8": {
-        "title": "Dragon Ball GT",
-        "manga_url": "ca917828",
-        "chapters": "39",
-        "source": "mangakaka",
-    },
-    "9": {
-        "title": "Dragon Ball Heroes: Victory Mission",
-        "manga_url": "fm917877",
-        "chapters": "19",
-        "source": "mangakaka",
-    },
-    "10": {
-        "title": "Dragon Ball Full Color Saiyan Arc",
-        "manga_url": "zv921223",
-        "chapters": "34",
-        "source": "mangakaka",
-    },
-    "11": {
-        "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
-        "manga_url": "dq920989",
-        "chapters": "14",
-        "source": "mangakaka",
-    },
-    "12": {
-        "title": "Super Dragon Ball Heroes: Universe Mission",
-        "manga_url": "xy919160",
-        "chapters": "1",
-        "source": "mangakaka",
-    },
-}
+METADATA = as_search_results(
+    {
+        "1": {
+            "title": "Dragon Ball",
+            "manga_url": "read_dragon_ball_manga_online_for_free2",
+            "chapters": "520.5",
+            "source": "mangakaka",
+        },
+        "2": {
+            "title": "Dragon Ball Super",
+            "manga_url": "dragon_ball_super",
+            "chapters": "55",
+            "source": "mangakaka",
+        },
+        "3": {
+            "title": "Dragon Ball Chou",
+            "manga_url": "read_dragon_ball_chou",
+            "chapters": "42",
+            "source": "mangakaka",
+        },
+        "4": {
+            "title": "Dragon Ball SD",
+            "manga_url": "read_dragon_ball_sd",
+            "chapters": "34",
+            "source": "mangakaka",
+        },
+        "5": {
+            "title": "Dragon Ball Heroes - Victory Mission",
+            "manga_url": "iaw1400679346",
+            "chapters": "19",
+            "source": "mangakaka",
+        },
+        "6": {
+            "title": "The Dragon Knight's Beloved",
+            "manga_url": "no920419",
+            "chapters": "2",
+            "source": "mangakaka",
+        },
+        "7": {
+            "title": "Dragon Ball Full Color Freeza Arc",
+            "manga_url": "jj921224",
+            "chapters": "75",
+            "source": "mangakaka",
+        },
+        "8": {
+            "title": "Dragon Ball GT",
+            "manga_url": "ca917828",
+            "chapters": "39",
+            "source": "mangakaka",
+        },
+        "9": {
+            "title": "Dragon Ball Heroes: Victory Mission",
+            "manga_url": "fm917877",
+            "chapters": "19",
+            "source": "mangakaka",
+        },
+        "10": {
+            "title": "Dragon Ball Full Color Saiyan Arc",
+            "manga_url": "zv921223",
+            "chapters": "34",
+            "source": "mangakaka",
+        },
+        "11": {
+            "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
+            "manga_url": "dq920989",
+            "chapters": "14",
+            "source": "mangakaka",
+        },
+        "12": {
+            "title": "Super Dragon Ball Heroes: Universe Mission",
+            "manga_url": "xy919160",
+            "chapters": "1",
+            "source": "mangakaka",
+        },
+    }
+)
 
 
 def test_page_urls(mangakaka_volume_html):

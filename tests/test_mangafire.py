@@ -13,6 +13,7 @@ from unittest import mock
 
 from PIL import Image
 
+from scraper.new_types import SearchResult
 from scraper.parsers.mangafire import (
     Mangafire,
     MangafireMangaParser,
@@ -77,12 +78,12 @@ def test_search_parses_real_response():
     assert len(results) == 5
 
     # first card, exact values from the fixture
-    assert results["1"] == {
-        "title": "Ad Astra Per Aspera",
-        "manga_url": "ad-astra-per-asperaa.mqmwp",
-        "chapters": "7",
-        "source": "mangafire",
-    }
+    assert results["1"] == SearchResult(
+        title="Ad Astra Per Aspera",
+        manga_url="ad-astra-per-asperaa.mqmwp",
+        chapters="7",
+        source="mangafire",
+    )
 
     # the manga we care about is present with its real slug + latest chapter
     slugs = {v["manga_url"]: v for v in results.values()}

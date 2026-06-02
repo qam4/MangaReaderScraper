@@ -103,7 +103,7 @@ class SearchMenu(Menu):
         table = tabulate(data, headers=columns, tablefmt="psql")
         return table
 
-    def _create_options(self) -> Dict[str, Dict[str, str]]:
+    def _create_options(self) -> SearchResults:
         """
         Take number and url from search object
         """

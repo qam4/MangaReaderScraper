@@ -5,7 +5,7 @@ HTML parsers that scrape and parse data from MangaReader.net
 import json
 import logging
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import requests  # type: ignore
 from bs4 import BeautifulSoup
@@ -13,7 +13,7 @@ from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
-from scraper.new_types import SearchResults
+from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ class MangaReaderSearch(BaseSearchParser):
         self.order: int = 0
         self.genre: str = "0000000000000000000000000000000000000"
 
-    def _extract_text(self, result: Tag) -> Dict[str, str]:
+    def _extract_text(self, result: Tag) -> SearchResult:
         """
         Extract the desired text from a HTML search result
         """
@@ -99,12 +99,12 @@ class MangaReaderSearch(BaseSearchParser):
         title = manga_name.text
         manga_url = manga_name.find("a").get("href")  # type: ignore[attr-defined]
         chapters = result.find("div", {"class": "d58"}).text
-        return {
-            "title": title.replace("\n", ""),
-            "manga_url": manga_url[1:],
-            "chapters": re.sub(r"\D", "", chapters),
-            "source": "mangareader",
-        }
+        return SearchResult(
+            title=title.replace("\n", ""),
+            manga_url=manga_url[1:],
+            chapters=re.sub(r"\D", "", chapters),
+            source="mangareader",
+        )
 
     def search(self, start: int = 1) -> SearchResults:
         """
@@ -115,7 +115,7 @@ class MangaReaderSearch(BaseSearchParser):
             f"&status={self.manga_status}&order=0&genre={self.genre}&p=0"
         )
         results = self._scrape_results(url, div_class="d54")
-        metadata: Dict[str, Dict[str, str]] = {}
+        metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
             manga_metadata = self._extract_text(result)
             metadata[str(key)] = manga_metadata

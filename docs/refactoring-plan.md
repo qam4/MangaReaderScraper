@@ -419,8 +419,18 @@ Each phase leaves the tool working.
    `cloudscraper` is available as a backend but unused by any parser. Pruning
    them from `pyproject.toml` (and deleting `test.py`) is left for the Phase 7
    deps cleanup.
-4. **Typed `SearchResult` + registry** — migrate parsers one at a time; shrink
-   `types.py`.
+4. **Typed `SearchResult` + registry** — 🟡 **IN PROGRESS.** Typed
+   `SearchResult` **done**: `new_types.SearchResult` is now a dataclass
+   (`title/manga_url/chapters/source`) with a dict-style `__getitem__` shim so
+   the menu and CLI keep working, and a `__post_init__` that coerces `chapters`
+   to a string. All 8 parsers build `SearchResult(...)` instead of raw dicts;
+   `SearchResults = Dict[str, SearchResult]`. **The §3.4 mangabuddy fix landed
+   here:** its search no longer dumps raw `latest-chapter` text / the int `0`
+   into `chapters` — it extracts the leading chapter number (and the dataclass
+   guarantees a string). Tests updated (a `as_search_results` helper converts
+   the dict fixtures). **Still TODO:** the source registry (`@register_source`)
+   so `--source` choices + `get_manga_parser` + the `types.py` `Union`s read
+   from one place (§3.3).
 5. **Smarter probe + "add a source" docs**, MangaFire as the example.
 6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
    onto shared engine classes. The real workflow multiplier.

@@ -1,7 +1,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import requests  # type: ignore
 from bs4 import BeautifulSoup
@@ -9,7 +9,7 @@ from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
-from scraper.new_types import SearchResults
+from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ class MangaKakaSearch(BaseSearchParser):
     def __init__(self, query: str, base_url: str = "https://mangakakalot.gg") -> None:
         super().__init__(query, base_url)
 
-    def _extract_text(self, result: Tag) -> Dict[str, str]:
+    def _extract_text(self, result: Tag) -> SearchResult:
         """
         Extract the desired text from a HTML search result
         """
@@ -119,12 +119,12 @@ class MangaKakaSearch(BaseSearchParser):
         logger.debug(f"last_chapter={last_chapter}")
         chapters = last_chapter.get("href").split("_")[-1]
         logger.debug(f"chapters={chapters}")
-        return {
-            "title": manga_title,
-            "manga_url": Path(manga_url).stem,
-            "chapters": chapters,
-            "source": "mangakaka",
-        }
+        return SearchResult(
+            title=manga_title,
+            manga_url=Path(manga_url).stem,
+            chapters=chapters,
+            source="mangakaka",
+        )
 
     def search(self, start: int = 1) -> SearchResults:
         """

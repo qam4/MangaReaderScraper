@@ -30,7 +30,7 @@ from PIL import Image
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import BrowserFetcher, _make_marker_predicate
-from scraper.new_types import SearchResults
+from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.selection import sort_chapter_ids
 
@@ -307,12 +307,12 @@ class MangafireSearch(BaseSearchParser):
                     chapters = cm.group(1)
                     break
 
-            metadata[str(key)] = {
-                "title": title,
-                "manga_url": slug,
-                "chapters": chapters,
-                "source": "mangafire",
-            }
+            metadata[str(key)] = SearchResult(
+                title=title,
+                manga_url=slug,
+                chapters=chapters,
+                source="mangafire",
+            )
             key += 1
         return metadata
 

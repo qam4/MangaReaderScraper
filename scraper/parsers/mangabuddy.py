@@ -1,7 +1,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import requests  # type: ignore
 from bs4 import BeautifulSoup
@@ -9,7 +9,7 @@ from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import BrowserFetcher, fetch_soup
-from scraper.new_types import SearchResults
+from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ class MangabuddySearch(BaseSearchParser):
     ) -> None:
         super().__init__(query, base_url)
 
-    def _extract_text(self, result: Tag) -> Dict[str, str]:
+    def _extract_text(self, result: Tag) -> SearchResult:
         """
         Extract the desired text from a HTML search result
         """
@@ -132,16 +132,20 @@ class MangabuddySearch(BaseSearchParser):
         last_chapter = result.find("span", {"class": "latest-chapter"})
         logger.debug(f"last_chapter={last_chapter}")
         if last_chapter:
-            chapters = last_chapter.text
+            # latest-chapter is display text like "Chapter 100" / "Chap 81.5";
+            # extract the leading chapter number for the "Latest Volume" column,
+            # matching the other parsers (which strip to digits).
+            match = re.search(r"([\d.]+)", last_chapter.text)
+            chapters = match.group(1) if match else ""
         else:
-            chapters = 0
+            chapters = ""
         logger.debug(f"chapters={chapters}")
-        return {
-            "title": manga_title,
-            "manga_url": manga_url_short,
-            "chapters": chapters,
-            "source": "mangabuddy",
-        }
+        return SearchResult(
+            title=manga_title,
+            manga_url=manga_url_short,
+            chapters=chapters,
+            source="mangabuddy",
+        )
 
     def search(self, start: int = 1) -> SearchResults:
         """

@@ -3,6 +3,7 @@ from unittest import mock
 
 from bs4 import BeautifulSoup
 
+from scraper.new_types import SearchResult
 from scraper.parsers.base import BaseSiteParser
 from scraper.parsers.mangafast import MangaFast, MangaFastMangaParser
 from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser
@@ -14,44 +15,44 @@ ALL_SCRAPERS_AND_PARSERS = [
     (scraper, parser) for scraper, parser in zip(ALL_SCRAPERS, ALL_PARSERS)
 ]
 
-# used as a mocked output for MangaReaderSearch.metadata()
+# used as a mocked output for MangaReaderSearch.search()
 METADATA = {
-    "1": {
-        "chapters": "3",
-        "manga_url": "dragon-ball-episode-of-bardock",
-        "source": "mangareader",
-        "title": "Dragon Ball: Episode of Bardock",
-    },
-    "2": {
-        "chapters": "35",
-        "manga_url": "dragon-ball-sd",
-        "source": "mangareader",
-        "title": "Dragon Ball SD",
-    },
-    "3": {
-        "chapters": "4",
-        "manga_url": "dragonball-next-gen",
-        "source": "mangareader",
-        "title": "DragonBall Next Gen",
-    },
-    "4": {
-        "chapters": "520",
-        "manga_url": "dragon-ball",
-        "source": "mangareader",
-        "title": "Dragon Ball",
-    },
-    "5": {
-        "chapters": "3",
-        "manga_url": "dragon-ball-z-rebirth-of-f",
-        "source": "mangareader",
-        "title": "Dragon Ball Z - Rebirth of F",
-    },
-    "6": {
-        "chapters": "62",
-        "manga_url": "dragon-ball-super",
-        "source": "mangareader",
-        "title": "Dragon Ball Super",
-    },
+    "1": SearchResult(
+        title="Dragon Ball: Episode of Bardock",
+        manga_url="dragon-ball-episode-of-bardock",
+        chapters="3",
+        source="mangareader",
+    ),
+    "2": SearchResult(
+        title="Dragon Ball SD",
+        manga_url="dragon-ball-sd",
+        chapters="35",
+        source="mangareader",
+    ),
+    "3": SearchResult(
+        title="DragonBall Next Gen",
+        manga_url="dragonball-next-gen",
+        chapters="4",
+        source="mangareader",
+    ),
+    "4": SearchResult(
+        title="Dragon Ball",
+        manga_url="dragon-ball",
+        chapters="520",
+        source="mangareader",
+    ),
+    "5": SearchResult(
+        title="Dragon Ball Z - Rebirth of F",
+        manga_url="dragon-ball-z-rebirth-of-f",
+        chapters="3",
+        source="mangareader",
+    ),
+    "6": SearchResult(
+        title="Dragon Ball Super",
+        manga_url="dragon-ball-super",
+        chapters="62",
+        source="mangareader",
+    ),
 }
 
 
@@ -222,6 +223,12 @@ def setup_uploader(uploader):
     manga.name = mock.Mock(return_value="hiya")
     upl._setup_adapter(manga)
     return upl
+
+
+def as_search_results(d):
+    """Convert a {key: {field: value}} dict into {key: SearchResult} for tests
+    that still spell their expected metadata as plain dicts."""
+    return {k: SearchResult(**v) for k, v in d.items()}
 
 
 def get_bs4_tree(filepath):
