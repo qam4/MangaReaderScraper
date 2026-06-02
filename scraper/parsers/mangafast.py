@@ -9,6 +9,7 @@ from bs4.element import Tag
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
+from scraper.selection import ChapterId
 from scraper.utils import get_html_from_url
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,11 @@ class MangaFastMangaParser(BaseMangaParser):
             volume_tags = manga_html.find("table", id="table").find_all("a")  # type: ignore[attr-defined]
             volume_tags = [tag for tag in volume_tags if tag.text != "PDF"]
             volume_ids = [re.sub(r"\D", "", x.text.strip()) for x in volume_tags]
-            highest_volume = volume_ids[0]
-            return [vol for vol in volume_ids if vol <= highest_volume]
+            # The list is scraped newest-first; keep that order but drop any
+            # entries above the latest chapter. Compare by chapter number, not
+            # lexicographically ("9" must not be treated as > "62").
+            highest_volume = ChapterId(volume_ids[0])
+            return [vol for vol in volume_ids if ChapterId(vol) <= highest_volume]
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")

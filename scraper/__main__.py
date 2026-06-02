@@ -35,12 +35,15 @@ logging.basicConfig(
 
 def get_volume_values(volume: str) -> List[str]:
     """
-    Transform a string digit into a list of strings
+    Split a ``--volumes`` argument into selector tokens.
+
+    Ranges (``9-12``) are passed through verbatim as single tokens; they are
+    resolved against the manga's actual chapter list later by
+    ``scraper.selection.select_chapters`` (chapter-number based), so that ranges
+    can span decimal chapters and tolerate gaps. Comma-separated values are
+    split into individual tokens.
     """
-    if "-" in volume:
-        start, end = volume.split("-")
-        return [str(x) for x in range(int(start), int(end) + 1)]
-    return [x for x in volume.split(",")]
+    return [token for token in volume.split(",") if token]
 
 
 def manga_search(

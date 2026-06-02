@@ -3,14 +3,13 @@ Manga building blocks & factories
 """
 
 import logging
-import re
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from io import BytesIO
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Generator, Iterable, List, Optional, Tuple
 from tqdm.rich import tqdm  # type: ignore
 from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
 from tqdm import TqdmExperimentalWarning  # type: ignore
@@ -28,26 +27,12 @@ from scraper.exceptions import (
 )
 from scraper.new_types import PageData, VolumeData
 from scraper.parsers.types import SiteParser
+from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
 from scraper.utils import get_adapter, settings
 
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
-
-
-def natural_sort(_list, key=lambda s: s) -> List[Any]:
-    """
-    Sort the list into natural alphanumeric order.
-    """
-
-    def convert_text(text: str):
-        return int(text) if text.isdigit() else text.lower()
-
-    def get_alphanum_key_func(key):
-        return lambda s: [convert_text(c) for c in re.split("([0-9]+)", key(s))]
-
-    sort_key = get_alphanum_key_func(key)
-    return sorted(_list, key=sort_key)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -180,7 +165,7 @@ class Manga:
     @property
     def volumes(self) -> List[Volume]:
         volumes = self._volumes.values()
-        sorted_volumes = natural_sort(volumes, key=lambda x: x.number)
+        sorted_volumes = sorted(volumes, key=lambda v: ChapterId(v.number))
         return sorted_volumes
 
     @volumes.setter
@@ -415,19 +400,19 @@ class MangaBuilder:
         )
         # Create a Manga instance
         self.manga = Manga(preferred_name, self.type)
-        # Find the list of volumes for that manga
-        all_volume_ids = list(self.parser.manga.all_volume_ids())
+        # Find the list of volumes for that manga, in canonical chapter order
+        all_volume_ids = sort_chapter_ids(self.parser.manga.all_volume_ids())
 
         if not all_volume_ids:
             raise Exception("Empty volumes list")
 
-        print(f"all_volume_ids[0]={all_volume_ids[0]}")
-
-        # TODO: fix this
+        # Selection is chapter-number based (see scraper.selection): vol_ids are
+        # selector tokens like ["9-12", "28.22"], matched against the chapter
+        # numbers the site offers -- not 1-based indices into the list.
         if vol_ids is None:
             vol_ids = list(all_volume_ids)
         else:
-            vol_ids = [all_volume_ids[int(i) - 1] for i in vol_ids]
+            vol_ids = select_chapters(vol_ids, all_volume_ids)
         self.adapter.debug(f"vol_ids={vol_ids}")
 
         # Download the volumes

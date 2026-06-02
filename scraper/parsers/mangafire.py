@@ -33,6 +33,7 @@ from PIL import Image
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
+from scraper.selection import sort_chapter_ids
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +345,7 @@ class MangafireMangaParser(BaseMangaParser):
             raise MangaDoesNotExist(
                 f"No chapters found for {self.manga_url} (bad slug or page blocked)"
             )
-        return sorted(volume_ids, key=lambda v: float(v))
+        return sort_chapter_ids(volume_ids)
 
 
 class MangafireSearch(BaseSearchParser):

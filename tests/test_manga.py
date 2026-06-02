@@ -242,6 +242,43 @@ def test_manga_builder_preferred_name(parser):
     assert manga.volumes_dict["1"] == v1
 
 
+class _GappyDecimalParser(MockedSiteParser):
+    """Site whose chapters have a gap (no 11) and a decimal (9.22).
+
+    Overrides the manga parser's listing + page methods so the test isolates
+    *selection* behaviour from the mock's url-based page parsing.
+    """
+
+    def __init__(self, manga_url="dragon-ball"):
+        super().__init__(manga_url=manga_url)
+        chapters = ["9", "9.22", "10", "12"]
+        img = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb").read()
+        self._manga.all_volume_ids = lambda: list(chapters)
+        self._manga.page_urls = lambda volume: [(1, f"u/{volume}/1")]
+        self._manga.page_data = lambda page_url: (1, img, "success")
+
+
+def test_builder_selection_is_chapter_number_based_with_gaps_and_decimals():
+    """
+    --volumes "9-10" must select chapters 9, 9.22 and 10 by *number* (a range
+    over a decimal chapter), not by list index, and must skip the gap at 11.
+    """
+    builder = MangaBuilder(_GappyDecimalParser())
+    manga = builder.get_manga_volumes(vol_ids=["9-10", "12"])
+    # selected the decimal chapter inside the range + the explicit 12
+    assert set(manga.volumes_dict.keys()) == {"9", "9.22", "10", "12"}
+
+
+def test_builder_unmatched_selector_skipped_not_indexed():
+    """
+    Selecting chapter "3" when only 9/9.22/10/12 exist returns nothing for that
+    token (old code would have indexed into the list and grabbed the 3rd item).
+    """
+    builder = MangaBuilder(_GappyDecimalParser())
+    manga = builder.get_manga_volumes(vol_ids=["3"])
+    assert manga.volumes_dict == {}
+
+
 def teardown_function():
     """
     Remove directories after every test, if present

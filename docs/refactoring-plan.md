@@ -133,6 +133,17 @@ boilerplate that should be automatic.
 `{"title","manga_url","chapters","source"}` and the menu reads those keys back.
 One typo = silent wrong column.
 
+Concrete symptom (mangabuddy `_extract_text`): the `chapters` field is meant to
+carry the latest-chapter number for the "Latest Volume" column, but mangabuddy
+stuffs the raw `latest-chapter` text (`"Chapter 100: Title"`) in without the
+`re.sub(r"\D", "", ...)` the other parsers apply, and falls back to the **int**
+`0` when absent — violating the `Dict[str, str]` type the menu then indexes as a
+string. Two lessons: (a) "latest chapter" is a display string, not a reliable
+chapter *count*/ordering signal (slug/number schemes vary per site — see §3.1
+fallback); (b) the typed `SearchResult` (§5.3) should own this normalization so
+one parser can't quietly emit the wrong type. Defer the mangabuddy fix to that
+phase (its search is Cloudflare-broken anyway).
+
 ### 3.5 Search base assumes HTML scraping
 
 `BaseSearchParser._scrape_results(url, div_class)` bakes in "fetch page, find
@@ -359,8 +370,22 @@ Each phase leaves the tool working.
 1. **Stop the bleeding** — make heavy imports lazy (move
    `undetected_chromedriver` out of `utils` top; lazy-import upload in
    `__main__`). Suite imports on modern Python. Cheapest, biggest relief.
-2. **Domain model** — `ChapterId` + single sort/range helper (§3.1/§5.1).
-   Removes the recurring numbering patch.
+2. **Domain model** — ✅ **DONE.** Added `scraper/selection.py` with a
+   `ChapterId` value object (numeric ordering, preserves raw string for url
+   round-trip), `sort_chapter_ids` (the single ordering), and `select_chapters`
+   (chapter-number-based selection). Wired into `manga.py` (sorter + builder),
+   `__main__.get_volume_values` (tokenize only; ranges resolved later),
+   `mangafire.py` (replaced `sorted(key=float)`), and `mangafast.py` (replaced
+   the lexicographic `vol <= highest` compare — this also un-dropped chapters
+   7/8/9 in the fixture). **Behavior change:** `--volumes` selection is now
+   chapter-number based, not list-index based, so `9-12` spans decimals like
+   `9.22` and tolerates gaps. **Opaque-slug sites** (mangabuddy:
+   `vol-54-chapter-name`, `chapter-3000`) carry no extractable number —
+   Problem A — so ordering preserves the site's own order and selection falls
+   back to positional (1-based), preserving their pre-existing behaviour rather
+   than silently selecting nothing. New tests: `tests/test_selection.py` (incl.
+   the opaque-slug fallback) + builder gap/decimal cases in `test_manga.py`;
+   updated CLI + mangafast expectations.
 3. **Fetcher abstraction** — migrate MangaFire first (already browser-based).
 4. **Typed `SearchResult` + registry** — migrate parsers one at a time; shrink
    `types.py`.
