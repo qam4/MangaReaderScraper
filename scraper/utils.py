@@ -4,6 +4,7 @@ import logging
 import pdb
 import re
 import sys
+import subprocess
 import tempfile
 import time
 import undetected_chromedriver as uc  # type: ignore
@@ -13,7 +14,6 @@ from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
 from selenium import webdriver  # type: ignore
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support.ui import WebDriverWait
-from subprocess import CREATE_NO_WINDOW
 
 import bs4
 import requests  # type: ignore
@@ -70,7 +70,9 @@ def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.Beautif
         text = driver.page_source
     elif type == "selenium":
         chrome_service = ChromeService()
-        chrome_service.creation_flags = CREATE_NO_WINDOW
+        # CREATE_NO_WINDOW hides the console window on Windows; it does not exist
+        # on other platforms, so fall back to 0 (no special flags) there.
+        chrome_service.creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         options = webdriver.ChromeOptions()
         # options.add_argument("--headless=new")
         # options.add_argument("--headless")
