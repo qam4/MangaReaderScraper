@@ -442,8 +442,20 @@ Each phase leaves the tool working.
    building blocks: `fetchers`, `selection`, `SearchResult`, `@register_source`).
    `analyze_html` unit-tested + verified against a real fixture (surfaced 81
    chapter links from the mangakaka page).
-6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
-   onto shared engine classes. The real workflow multiplier.
+6. **Engine parsers** — ✅ **DONE.** Extracted the shared "kakalot-family"
+   engine (`scraper/parsers/kakalot.py`): `KakalotMangaParser` /
+   `KakalotSearchParser` hold the shared `<li class="a-h">` / `container-
+   chapter-reader` / `search/story/` scraping, parameterized by class attrs
+   (URL templates, `page_img_attr`, `chapter_href_sep`, result-card selector).
+   manganelo/manganato/mangakaka collapsed from ~160 lines each to ~45-line
+   parameter subclasses (manganato overrides `_slug`/`_chapters` for its
+   layout). Net −118 lines. **Bonus:** the engine's `_extract_number` operates
+   on the href string, fixing the same latent `.text`-on-a-str bug that
+   manganelo/manganato carried (they had no tests to catch it). New
+   `tests/test_kakalot.py` pins each site's URLs/params (valuable — manganelo/
+   manganato had no other tests); mangakaka mocks retargeted to the engine
+   module. mypy 33 → 29 (deduped union-attr sites). Adding another kakalot-style
+   site is now ~a dozen lines of parameters (§4.2 multiplier).
 7. **Dead-code removal; CI + test tiering** — ✅ **DONE.** Deps prune (above)
    plus the test cleanup: the `test_page_data` tests now mock
    `base.request_session` correctly (they had mocked the wrong target and fell
