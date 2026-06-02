@@ -55,18 +55,45 @@ class FetchResult:
         return _json.loads(self.text)
 
     def raise_for_status(self) -> None:
-        """Mimic ``requests``' raise_for_status for parsers that want it."""
+        """Mimic ``requests``' raise_for_status for parsers that want it.
+
+        Raises an ``HTTPError`` carrying a response whose ``status_code`` is set,
+        so existing parser code that inspects ``e.response.status_code`` (e.g.
+        the 404 -> MangaDoesNotExist checks) keeps working unchanged.
+        """
         if not self.ok:
             import requests  # type: ignore
 
+            resp = requests.Response()
+            resp.status_code = self.status
+            resp.url = self.url
             raise requests.exceptions.HTTPError(
-                f"{self.status} for url {self.url}", response=None
+                f"{self.status} for url {self.url}", response=resp
             )
 
 
 @runtime_checkable
 class Fetcher(Protocol):
     def get(self, url: str) -> FetchResult: ...
+
+
+def fetch_soup(url: str, fetcher: Optional["Fetcher"] = None):
+    """
+    Fetch ``url`` and return a parsed ``BeautifulSoup`` (lxml).
+
+    Defaults to ``RequestsFetcher``. Raises ``requests.exceptions.HTTPError`` on
+    a non-2xx status (via ``FetchResult.raise_for_status``) so parsers can keep
+    their existing ``except HTTPError ... status_code == 404`` handling. This is
+    the migration seam replacing ``utils.get_html_from_url(url)`` for plain-HTTP
+    parsers.
+    """
+    import bs4
+
+    if fetcher is None:
+        fetcher = RequestsFetcher()
+    result = fetcher.get(url)
+    result.raise_for_status()
+    return bs4.BeautifulSoup(result.text, features="lxml")
 
 
 # ============================== http backends ============================

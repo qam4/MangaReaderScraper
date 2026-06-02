@@ -83,7 +83,7 @@ METADATA = {
 
 
 def test_page_urls(mangakaka_volume_html):
-    with mock.patch("scraper.parsers.mangakaka.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangakaka.fetch_soup") as mocked_func:
         mocked_func.return_value = mangakaka_volume_html
         parser = MangaKakaMangaParser("dragon-ball")
         page_urls = parser.page_urls("1")
@@ -158,7 +158,7 @@ def test_page_urls(mangakaka_volume_html):
 
 
 def test_all_volume_ids(mangakaka_manga_title_page_html):
-    with mock.patch("scraper.parsers.mangakaka.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangakaka.fetch_soup") as mocked_func:
         mocked_func.return_value = mangakaka_manga_title_page_html
         parser = MangaKakaMangaParser("dragon-ball")
         all_vols = parser.all_volume_ids()
@@ -223,7 +223,7 @@ def test_all_volume_ids(mangakaka_manga_title_page_html):
 
 
 def test_invalid_volume_parser(mangakaka_invalid_volume_html):
-    with mock.patch("scraper.parsers.mangakaka.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangakaka.fetch_soup") as mocked_func:
         mocked_func.return_value = mangakaka_invalid_volume_html
         parser = MangaKakaMangaParser("dragon-ball")
         with pytest.raises(VolumeDoesntExist):
@@ -233,7 +233,7 @@ def test_invalid_volume_parser(mangakaka_invalid_volume_html):
 @mock.patch("scraper.parsers.mangakaka.requests.get")
 def test_page_data(mocked_get, mangakaka_volume_html):
     mocked_get.return_value = MockedImgResponse()
-    with mock.patch("scraper.parsers.mangakaka.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangakaka.fetch_soup") as mocked_func:
         mocked_func.return_value = mangakaka_volume_html
         parser = MangaKakaMangaParser("dragon-ball")
         page_data = parser.page_data(

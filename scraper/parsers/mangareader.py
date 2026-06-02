@@ -12,9 +12,9 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
-from scraper.utils import get_html_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,7 @@ class MangaReaderMangaParser(BaseMangaParser):
         Retrieve HTML for a given manga volume number
         """
         try:
-            volume_html = get_html_from_url(
-                f"{self.base_url}/{self.manga_url}/{volume}"
-            )
+            volume_html = fetch_soup(f"{self.base_url}/{self.manga_url}/{volume}")
             if not volume_html.text:
                 raise MangaDoesNotExist(self.manga_url)
             string = re.compile(".*not released yet.*")
@@ -70,7 +68,7 @@ class MangaReaderMangaParser(BaseMangaParser):
         """
         try:
             url = f"{self.base_url}/{self.manga_url}"
-            manga_html = get_html_from_url(url)
+            manga_html = fetch_soup(url)
             # [latest]  volume_tags = manga_html.find("table", {"class": "d48"}).find_all("a")
             volume_tags = manga_html.find("div", id="chapterlist").find_all("a")  # type: ignore[attr-defined]
             volume_ids = [vol.get("href").split("/")[-1] for vol in volume_tags]

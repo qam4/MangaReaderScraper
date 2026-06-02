@@ -12,7 +12,7 @@ from tests.helpers import METADATA, MockedImgResponse
 
 
 def test_all_volume_ids(mangareader_manga_title_page_html):
-    with mock.patch("scraper.parsers.mangareader.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangareader.fetch_soup") as mocked_func:
         mocked_func.return_value = mangareader_manga_title_page_html
         parser = MangaReaderMangaParser("dragon-ball")
         all_vols = parser.all_volume_ids()
@@ -20,7 +20,7 @@ def test_all_volume_ids(mangareader_manga_title_page_html):
 
 
 def test_page_urls(mangareader_volume_html):
-    with mock.patch("scraper.parsers.mangareader.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangareader.fetch_soup") as mocked_func:
         mocked_func.return_value = mangareader_volume_html
         parser = MangaReaderMangaParser("dragon-ball")
         page_urls = parser.page_urls("1")
@@ -110,7 +110,7 @@ def test_page_urls(mangareader_volume_html):
 
 
 def test_invalid_volume_parser(mangareader_invalid_volume_html):
-    with mock.patch("scraper.parsers.mangareader.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangareader.fetch_soup") as mocked_func:
         mocked_func.return_value = mangareader_invalid_volume_html
         parser = MangaReaderMangaParser("dragon-ball")
         with pytest.raises(VolumeDoesntExist):
@@ -120,7 +120,7 @@ def test_invalid_volume_parser(mangareader_invalid_volume_html):
 @mock.patch("scraper.parsers.mangareader.requests.get")
 def test_page_data(mocked_get, mangareader_page_html):
     mocked_get.return_value = MockedImgResponse()
-    with mock.patch("scraper.parsers.mangareader.get_html_from_url") as mocked_func:
+    with mock.patch("scraper.parsers.mangareader.fetch_soup") as mocked_func:
         mocked_func.return_value = mangareader_page_html
         parser = MangaReaderMangaParser("dragon-ball")
         page_url = (

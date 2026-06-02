@@ -8,9 +8,9 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
-from scraper.utils import get_html_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class ManganatoMangaParser(BaseMangaParser):
         try:
             url = self.volume_url(volume)
             logger.debug(f"Volume url={url}")
-            volume_html = get_html_from_url(url)
+            volume_html = fetch_soup(url)
             string = re.compile("404 NOT FOUND")
             matches = volume_html.find_all(string=string, recursive=True)
             if matches:
@@ -79,7 +79,7 @@ class ManganatoMangaParser(BaseMangaParser):
         try:
             url = f"{self.base_url}/manga-{self.manga_url}"
             logger.debug(f"Manga url={url}")
-            manga_html = get_html_from_url(url)
+            manga_html = fetch_soup(url)
             logger.debug(f"manga_html={manga_html}")
 
             volume_tags = manga_html.find_all("li", {"class": "a-h"})
