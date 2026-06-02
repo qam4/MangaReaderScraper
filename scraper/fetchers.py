@@ -1,0 +1,283 @@
+"""
+Fetcher abstraction: typed backends replacing the ``get_html_from_url(url,
+type="...")`` string switch (refactoring-plan §3.2 / §5.2).
+
+A ``Fetcher`` knows how to GET a url and return a ``FetchResult``. Each backend
+imports its heavy dependency **lazily inside the method**, never at module top,
+so importing this module (and anything that declares a fetcher) costs nothing
+until a fetch actually happens. This is what lets the test suite and the CLI
+import without selenium/cloudscraper/nodriver installed.
+
+Backends:
+  * ``RequestsFetcher``      -- plain ``requests`` (lightweight, default)
+  * ``CloudscraperFetcher``  -- ``cloudscraper`` (Cloudflare IUAM bypass)
+  * ``BrowserFetcher``       -- ``nodriver`` real browser; also exposes the two
+    primitives the MangaFire work needed: ``fetch_json_in_page`` (navigate for
+    Cloudflare clearance, then fetch a known ajax url from inside the page) and
+    ``capture_xhr`` (intercept the first XHR matching a predicate, optionally
+    after running a trigger script, then re-fetch it in-page).
+
+A parser declares ``fetcher = BrowserFetcher`` instead of passing magic strings.
+
+Note: this module is additive. Parsers are migrated onto it incrementally; the
+legacy ``utils.get_html_from_url`` stays until they all are.
+"""
+
+from __future__ import annotations
+
+import json as _json
+import logging
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Optional, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FetchResult:
+    """
+    The outcome of a fetch. ``text`` is the response body; ``cookies`` and
+    ``final_url`` are populated when the backend can provide them (browser /
+    requests), empty/None otherwise.
+    """
+
+    url: str
+    status: int
+    text: str
+    cookies: Dict[str, str] = field(default_factory=dict)
+    final_url: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status < 300
+
+    def json(self):
+        return _json.loads(self.text)
+
+    def raise_for_status(self) -> None:
+        """Mimic ``requests``' raise_for_status for parsers that want it."""
+        if not self.ok:
+            import requests  # type: ignore
+
+            raise requests.exceptions.HTTPError(
+                f"{self.status} for url {self.url}", response=None
+            )
+
+
+@runtime_checkable
+class Fetcher(Protocol):
+    def get(self, url: str) -> FetchResult: ...
+
+
+# ============================== http backends ============================
+
+
+class RequestsFetcher:
+    """Plain ``requests`` GET. Does not raise on HTTP error -- inspect
+    ``FetchResult.ok`` / ``status`` or call ``raise_for_status()``."""
+
+    def get(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: int = 30,
+    ) -> FetchResult:
+        import requests  # type: ignore
+
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        return FetchResult(
+            url=url,
+            status=resp.status_code,
+            text=resp.text,
+            cookies=dict(resp.cookies),
+            final_url=resp.url,
+        )
+
+
+class CloudscraperFetcher:
+    """``cloudscraper`` GET -- clears Cloudflare's JS interstitial for sites
+    that don't need a full browser."""
+
+    def get(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: int = 30,
+    ) -> FetchResult:
+        import cloudscraper  # type: ignore
+
+        scraper = cloudscraper.create_scraper()
+        resp = scraper.get(url, headers=headers, timeout=timeout)
+        return FetchResult(
+            url=url,
+            status=resp.status_code,
+            text=resp.text,
+            cookies=dict(resp.cookies),
+            final_url=resp.url,
+        )
+
+
+# ============================ browser backend ============================
+
+# nodriver launch options used throughout the MangaFire work; kept here so all
+# browser sessions are configured identically.
+_BROWSER_KWARGS = dict(headless=False, sandbox=False, no_sandbox=True)
+
+
+def _in_page_fetch_js(url: str) -> str:
+    """Build the JS that fetches ``url`` from inside the page (credentialed,
+    XHR header) and returns the response text. Pure -- unit-testable."""
+    return (
+        "(async () => {"
+        f"  const r = await fetch({_json.dumps(url)}, "
+        "    {credentials: 'include', "
+        "     headers: {'X-Requested-With': 'XMLHttpRequest'}});"
+        "  return await r.text();"
+        "})()"
+    )
+
+
+def _make_marker_predicate(markers) -> Callable[[str], bool]:
+    """A predicate matching any url that contains one of ``markers``. Pure."""
+    markers = tuple(markers)
+
+    def predicate(url: str) -> bool:
+        return any(m in url for m in markers)
+
+    return predicate
+
+
+class BrowserFetcher:
+    """
+    nodriver-backed fetcher for Cloudflare-protected, JS-heavy sites.
+
+    Exposes three operations (all synchronous wrappers over nodriver's async
+    API, mirroring how the MangaFire parser already drives it):
+
+      * ``get(url)``                      -- navigate and return rendered HTML
+      * ``fetch_json_in_page(a, b)``      -- navigate to ``a`` (clearance +
+        cookies), then fetch known url ``b`` from inside the page
+      * ``capture_xhr(url, predicate, ...)`` -- navigate to ``url``, optionally
+        run ``trigger_js``, intercept the first XHR whose url matches
+        ``predicate``, then re-fetch that url in-page; returns (text, cookies)
+    """
+
+    def __init__(self, wait: float = 5.0, timeout: float = 45.0) -> None:
+        self.wait = wait
+        self.timeout = timeout
+
+    # -- sync wrappers -----------------------------------------------------
+
+    def get(self, url: str) -> FetchResult:
+        import asyncio
+
+        text = asyncio.run(self._get(url))
+        return FetchResult(url=url, status=200, text=text)
+
+    def fetch_json_in_page(self, establish_url: str, fetch_url: str) -> str:
+        import asyncio
+
+        return asyncio.run(self._fetch_json_in_page(establish_url, fetch_url))
+
+    def capture_xhr(
+        self,
+        url: str,
+        predicate: Callable[[str], bool],
+        trigger_js: Optional[str] = None,
+        with_cookies: bool = False,
+    ):
+        import asyncio
+
+        return asyncio.run(self._capture_xhr(url, predicate, trigger_js, with_cookies))
+
+    # -- async implementations --------------------------------------------
+
+    async def _start(self):
+        import tempfile
+        from pathlib import Path
+
+        import nodriver as nd
+
+        profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
+        return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
+
+    async def _get(self, url: str) -> str:
+        browser = await self._start()
+        try:
+            page = await browser.get(url)
+            await page.wait(self.wait)
+            return await page.get_content()
+        finally:
+            browser.stop()
+
+    async def _fetch_json_in_page(self, establish_url: str, fetch_url: str) -> str:
+        import asyncio
+
+        browser = await self._start()
+        try:
+            page = await browser.get(establish_url)
+            await page.wait(self.wait)
+            return await asyncio.wait_for(
+                page.evaluate(_in_page_fetch_js(fetch_url), await_promise=True),
+                timeout=self.timeout,
+            )
+        finally:
+            browser.stop()
+
+    async def _capture_xhr(
+        self,
+        url: str,
+        predicate: Callable[[str], bool],
+        trigger_js: Optional[str],
+        with_cookies: bool,
+    ):
+        import asyncio
+
+        from nodriver import cdp
+
+        browser = await self._start()
+        try:
+            tab = await browser.get("about:blank")
+            state: Dict[str, Optional[str]] = {"url": None}
+            found = asyncio.Event()
+
+            async def on_request(evt: cdp.network.RequestWillBeSent):
+                if state["url"] is None and predicate(evt.request.url):
+                    state["url"] = evt.request.url
+                    found.set()
+
+            async def on_response(evt: cdp.network.ResponseReceived):
+                if state["url"] is None and predicate(evt.response.url):
+                    state["url"] = evt.response.url
+                    found.set()
+
+            tab.add_handler(cdp.network.RequestWillBeSent, on_request)
+            tab.add_handler(cdp.network.ResponseReceived, on_response)
+            await tab.send(cdp.network.enable())
+
+            await tab.get(url)
+            if trigger_js:
+                await tab.wait(3)
+                await tab.evaluate(trigger_js)
+
+            await asyncio.wait_for(found.wait(), timeout=self.timeout)
+            captured_url = state["url"]
+
+            body = await asyncio.wait_for(
+                tab.evaluate(_in_page_fetch_js(captured_url), await_promise=True),
+                timeout=30,
+            )
+
+            cookies: Dict[str, str] = {}
+            if with_cookies:
+                try:
+                    raw = await asyncio.wait_for(
+                        tab.send(cdp.network.get_cookies()), timeout=10
+                    )
+                    cookies = {c.name: c.value for c in raw}
+                except Exception as err:  # pragma: no cover - best effort
+                    logger.warning(f"could not read cookies via CDP: {err}")
+
+            return body, cookies
+        finally:
+            browser.stop()

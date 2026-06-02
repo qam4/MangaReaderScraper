@@ -33,12 +33,13 @@ SEARCH_JSON = Path("tests/test_files/mangafire/search.json").read_text(encoding=
 def test_all_volume_ids_parses_real_response():
     """all_volume_ids should pull every data-number out of the real ajax JSON."""
     with mock.patch(
-        "scraper.parsers.mangafire._fetch_in_browser", return_value=CHAPTER_JSON
+        "scraper.parsers.mangafire.BrowserFetcher.fetch_json_in_page",
+        return_value=CHAPTER_JSON,
     ) as fetched:
         parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
         vols = list(parser.all_volume_ids())
 
-    # the endpoint that should have been hit
+    # the endpoint that should have been hit (2nd positional arg = ajax url)
     args = fetched.call_args[0]
     assert args[1] == "https://mangafire.to/ajax/manga/lww3/chapter/en"
 
@@ -100,6 +101,14 @@ def test_search_excludes_view_all_link():
         assert entry["manga_url"]  # non-empty slug
 
 
+def test_search_trigger_js_embeds_query_safely():
+    """_type_query_js must json-encode the query (quoting/escaping) so a query
+    with quotes can't break out of the injected JS."""
+    js = MangafireSearch('a"b')._type_query_js()
+    assert json.dumps('a"b') in js
+    assert "input[name=keyword]" in js
+
+
 def test_parse_results_handles_dict_and_str_shape():
     """_search_in_browser must unwrap both {'result': {'html': ...}} and
     {'result': '...'} response shapes - covered by parsing the raw fixture."""
@@ -155,9 +164,12 @@ def test_page_urls_carries_offset_in_fragment():
         ["http://cdn/p1.jpg", 0, 0],
         ["http://cdn/p2.jpg", 0, 4],
     ]
+    # capture_xhr returns (raw_json_body, cookies); page_urls parses
+    # json["result"]["images"] itself.
+    body = json.dumps({"result": {"images": images}})
     with mock.patch(
-        "scraper.parsers.mangafire._capture_page_list",
-        return_value=(images, {"cf": "cookie"}),
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
+        return_value=(body, {"cf": "cookie"}),
     ):
         parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
         urls = parser.page_urls("78")

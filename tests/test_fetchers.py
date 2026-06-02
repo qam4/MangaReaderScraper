@@ -1,0 +1,115 @@
+"""
+Tests for scraper.fetchers.
+
+Covers the parts that don't need a real browser: FetchResult behaviour, the
+pure JS/predicate helpers, and the http backends (requests/cloudscraper mocked).
+BrowserFetcher's nodriver-driven async paths are exercised only through the
+MangaFire parser's (mocked) integration tests, since they require a live browser.
+"""
+
+import json
+from unittest import mock
+
+import pytest
+
+from scraper.fetchers import (
+    BrowserFetcher,
+    CloudscraperFetcher,
+    Fetcher,
+    FetchResult,
+    RequestsFetcher,
+    _in_page_fetch_js,
+    _make_marker_predicate,
+)
+
+# ============================== FetchResult ==============================
+
+
+def test_fetchresult_ok_true_for_2xx():
+    assert FetchResult("u", 200, "body").ok
+    assert FetchResult("u", 204, "").ok
+    assert not FetchResult("u", 404, "").ok
+    assert not FetchResult("u", 500, "").ok
+
+
+def test_fetchresult_json_parses_body():
+    res = FetchResult("u", 200, '{"result": {"images": [1, 2]}}')
+    assert res.json() == {"result": {"images": [1, 2]}}
+
+
+def test_fetchresult_raise_for_status_raises_on_error():
+    import requests
+
+    res = FetchResult("http://x", 503, "")
+    with pytest.raises(requests.exceptions.HTTPError):
+        res.raise_for_status()
+
+
+def test_fetchresult_raise_for_status_silent_on_ok():
+    FetchResult("http://x", 200, "ok").raise_for_status()  # no raise
+
+
+# ============================ pure helpers ===============================
+
+
+def test_in_page_fetch_js_embeds_url_safely():
+    js = _in_page_fetch_js("https://x/ajax?vrf=a&b='c")
+    # the url must be json-encoded (quoted) inside the fetch call
+    assert json.dumps("https://x/ajax?vrf=a&b='c") in js
+    assert "credentials: 'include'" in js
+    assert "X-Requested-With" in js
+
+
+def test_make_marker_predicate_matches_any_marker():
+    pred = _make_marker_predicate(("ajax/read/chapter", "ajax/read/volume"))
+    assert pred("https://site/ajax/read/chapter/123?vrf=x")
+    assert pred("https://site/ajax/read/volume/9")
+    assert not pred("https://site/ajax/manga/search")
+
+
+# ============================ http backends ==============================
+
+
+def test_requests_fetcher_maps_response():
+    fake = mock.Mock(status_code=200, text="<html>", url="http://x/final")
+    fake.cookies = {"cf": "1"}
+    with mock.patch("requests.get", return_value=fake) as g:
+        res = RequestsFetcher().get("http://x", headers={"H": "v"}, timeout=12)
+    g.assert_called_once_with("http://x", headers={"H": "v"}, timeout=12)
+    assert res.status == 200
+    assert res.text == "<html>"
+    assert res.final_url == "http://x/final"
+    assert res.cookies == {"cf": "1"}
+    assert res.ok
+
+
+def test_requests_fetcher_does_not_raise_on_404():
+    fake = mock.Mock(status_code=404, text="nope", url="http://x")
+    fake.cookies = {}
+    with mock.patch("requests.get", return_value=fake):
+        res = RequestsFetcher().get("http://x")
+    assert res.status == 404
+    assert not res.ok
+
+
+def test_cloudscraper_fetcher_maps_response():
+    fake = mock.Mock(status_code=200, text="cf-cleared", url="http://x")
+    fake.cookies = {}
+    scraper = mock.Mock()
+    scraper.get.return_value = fake
+    fake_module = mock.Mock()
+    fake_module.create_scraper.return_value = scraper
+    with mock.patch.dict("sys.modules", {"cloudscraper": fake_module}):
+        res = CloudscraperFetcher().get("http://x")
+    assert res.text == "cf-cleared"
+    assert res.ok
+
+
+# ============================ protocol check =============================
+
+
+def test_backends_satisfy_fetcher_protocol():
+    # runtime_checkable Protocol: each backend has a .get
+    assert isinstance(RequestsFetcher(), Fetcher)
+    assert isinstance(CloudscraperFetcher(), Fetcher)
+    assert isinstance(BrowserFetcher(), Fetcher)

@@ -23,14 +23,13 @@ import io
 import json
 import logging
 import re
-import tempfile
-from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 from PIL import Image
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.fetchers import BrowserFetcher, _make_marker_predicate
 from scraper.new_types import SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.selection import sort_chapter_ids
@@ -86,115 +85,11 @@ def descramble(data: bytes, offset: int) -> bytes:
 # ========================= browser page-list capture =====================
 
 
-async def _capture_page_list(chapter_url: str, timeout: float = 45.0):
-    """Open a chapter in nodriver, grab the page-list JSON & cookies.
-
-    Returns (images, cookies):
-      images  -> list of [url, ?, offset] entries
-      cookies -> dict for the CDN image downloads
-
-    A CDP event handler only RECORDS the ajax url (calling tab.send inside a
-    handler deadlocks nodriver's receive loop). We then re-fetch that url from
-    inside the page via fetch(), which avoids the flaky getResponseBody call.
-    """
-    import nodriver as nd
-    from nodriver import cdp
-
-    profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-    browser = await nd.start(
-        user_data_dir=profile, headless=False, sandbox=False, no_sandbox=True
-    )
-    try:
-        tab = await browser.get("about:blank")
-        state: Dict[str, Optional[str]] = {"url": None}
-        found = asyncio.Event()
-
-        def matches(url: str) -> bool:
-            return any(m in url for m in _AJAX_MARKERS)
-
-        async def on_request(evt: cdp.network.RequestWillBeSent):
-            if state["url"] is None and matches(evt.request.url):
-                state["url"] = evt.request.url
-                found.set()
-
-        async def on_response(evt: cdp.network.ResponseReceived):
-            if state["url"] is None and matches(evt.response.url):
-                state["url"] = evt.response.url
-                found.set()
-
-        tab.add_handler(cdp.network.RequestWillBeSent, on_request)
-        tab.add_handler(cdp.network.ResponseReceived, on_response)
-        await tab.send(cdp.network.enable())
-
-        await tab.get(chapter_url)
-        await asyncio.wait_for(found.wait(), timeout=timeout)
-        page_list_url = state["url"]
-
-        js = (
-            "(async () => {"
-            f"  const r = await fetch({json.dumps(page_list_url)}, "
-            "    {credentials: 'include', "
-            "     headers: {'X-Requested-With': 'XMLHttpRequest'}});"
-            "  return await r.text();"
-            "})()"
-        )
-        body = await asyncio.wait_for(tab.evaluate(js, await_promise=True), timeout=30)
-        data = json.loads(body)
-        images = data["result"]["images"]
-
-        cookies: Dict[str, str] = {}
-        try:
-            raw = await asyncio.wait_for(
-                tab.send(cdp.network.get_cookies()), timeout=10
-            )
-            cookies = {c.name: c.value for c in raw}
-        except Exception as err:  # pragma: no cover - best effort
-            logger.warning(f"could not read cookies via CDP: {err}")
-
-        return images, cookies
-    finally:
-        browser.stop()
-
-
 def _encode_page_url(url: str, offset: int) -> str:
     """Carry the scramble offset in the url fragment, like the Tachiyomi ext."""
     if offset and offset > 0:
         return f"{url}#{_SCRAMBLE_TAG}_{offset}"
     return url
-
-
-async def _fetch_in_browser(
-    establish_url: str, ajax_url: str, timeout: float = 45.0
-) -> str:
-    """Navigate to ``establish_url`` (for Cloudflare clearance + cookies), then
-    fetch ``ajax_url`` from inside the page and return the response text.
-
-    Used for endpoints whose URL we know up front (no vrf token), e.g. the
-    chapter list ``/ajax/manga/<id>/chapter/en``.
-    """
-    import nodriver as nd
-
-    profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-    browser = await nd.start(
-        user_data_dir=profile, headless=False, sandbox=False, no_sandbox=True
-    )
-    try:
-        page = await browser.get(establish_url)
-        await page.wait(5)
-        js = (
-            "(async () => {"
-            f"  const r = await fetch({json.dumps(ajax_url)}, "
-            "    {credentials: 'include', "
-            "     headers: {'X-Requested-With': 'XMLHttpRequest'}});"
-            "  return await r.text();"
-            "})()"
-        )
-        text = await asyncio.wait_for(
-            page.evaluate(js, await_promise=True), timeout=timeout
-        )
-        return text
-    finally:
-        browser.stop()
 
 
 # ================================ parser =================================
@@ -224,7 +119,12 @@ class MangafireMangaParser(BaseMangaParser):
         chapter_url = self.volume_url(volume)
         logger.info(f"Fetching page list for {chapter_url}")
         try:
-            images, cookies = asyncio.run(_capture_page_list(chapter_url))
+            body, cookies = BrowserFetcher().capture_xhr(
+                chapter_url,
+                _make_marker_predicate(_AJAX_MARKERS),
+                with_cookies=True,
+            )
+            images = json.loads(body)["result"]["images"]
         except asyncio.TimeoutError:
             raise VolumeDoesntExist(
                 f"Timed out getting page list for {self.manga_url} chapter {volume} "
@@ -317,7 +217,7 @@ class MangafireMangaParser(BaseMangaParser):
         logger.info(f"Chapter list url={ajax_url}")
 
         try:
-            body = asyncio.run(_fetch_in_browser(manga_page, ajax_url))
+            body = BrowserFetcher().fetch_json_in_page(manga_page, ajax_url)
         except asyncio.TimeoutError:
             raise MangaDoesNotExist(
                 f"Timed out fetching chapter list for {self.manga_url}"
@@ -416,71 +316,45 @@ class MangafireSearch(BaseSearchParser):
             key += 1
         return metadata
 
-    async def _search_in_browser(self, timeout: float = 45.0) -> str:
-        import nodriver as nd
-        from nodriver import cdp
+    def _type_query_js(self) -> str:
+        """JS that types the query into the live search box, triggering the
+        vrf'd ajax/manga/search call. Pure -- unit-testable."""
+        return (
+            "(() => {"
+            "  const i = document.querySelector("
+            "    '.search-inner input[name=keyword], input[name=keyword]');"
+            "  if (!i) return false;"
+            f"  i.value = {json.dumps(self.query)};"
+            "  i.dispatchEvent(new Event('input', {bubbles:true}));"
+            "  i.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));"
+            "  return true;"
+            "})()"
+        )
 
-        profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-        browser = await nd.start(
-            user_data_dir=profile, headless=False, sandbox=False, no_sandbox=True
+    def _search_in_browser(self) -> str:
+        """Load the site, type the query, intercept the vrf'd
+        ``ajax/manga/search`` call and return the inner result html.
+
+        The response is JSON shaped ``{"result": {"html": "..."}}`` or
+        ``{"result": "..."}``; unwrap either.
+        """
+        body, _ = BrowserFetcher().capture_xhr(
+            f"{self.base_url}/home",
+            _make_marker_predicate(("ajax/manga/search",)),
+            trigger_js=self._type_query_js(),
         )
         try:
-            tab = await browser.get(f"{self.base_url}/home")
-
-            state: Dict[str, Optional[str]] = {"url": None}
-            found = asyncio.Event()
-
-            async def on_response(evt: cdp.network.ResponseReceived):
-                if state["url"] is None and "ajax/manga/search" in evt.response.url:
-                    state["url"] = evt.response.url
-                    found.set()
-
-            tab.add_handler(cdp.network.ResponseReceived, on_response)
-            await tab.send(cdp.network.enable())
-            await tab.wait(3)
-
-            # type the query into the live search box to trigger the vrf'd call
-            js_type = (
-                "(() => {"
-                "  const i = document.querySelector("
-                "    '.search-inner input[name=keyword], input[name=keyword]');"
-                "  if (!i) return false;"
-                f"  i.value = {json.dumps(self.query)};"
-                "  i.dispatchEvent(new Event('input', {bubbles:true}));"
-                "  i.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));"
-                "  return true;"
-                "})()"
-            )
-            await tab.evaluate(js_type)
-
-            await asyncio.wait_for(found.wait(), timeout=timeout)
-            search_url = state["url"]
-            js_fetch = (
-                "(async () => {"
-                f"  const r = await fetch({json.dumps(search_url)}, "
-                "    {credentials: 'include', "
-                "     headers: {'X-Requested-With': 'XMLHttpRequest'}});"
-                "  return await r.text();"
-                "})()"
-            )
-            body = await asyncio.wait_for(
-                tab.evaluate(js_fetch, await_promise=True), timeout=30
-            )
-            # response is JSON {"result": {"html": "..."}} or {"result": "..."}
-            try:
-                result = json.loads(body)["result"]
-                if isinstance(result, dict):
-                    return result.get("html", "")
-                return result
-            except (ValueError, KeyError):
-                return body
-        finally:
-            browser.stop()
+            result = json.loads(body)["result"]
+            if isinstance(result, dict):
+                return result.get("html", "")
+            return result
+        except (ValueError, KeyError):
+            return body
 
     def search(self, start: int = 1) -> SearchResults:
         logger.info(f"Searching mangafire for: {self.query}")
         try:
-            html_fragment = asyncio.run(self._search_in_browser())
+            html_fragment = self._search_in_browser()
         except asyncio.TimeoutError:
             logger.error(
                 "MangaFire search timed out (could not capture the vrf'd "
