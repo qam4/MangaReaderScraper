@@ -2,8 +2,8 @@
 Tests for the MangaFire parser.
 
 The chapter-list and search fixtures (tests/test_files/mangafire/*.json) are
-REAL responses captured from mangafire.to via mangafire_probe.py, so these
-tests exercise the actual parsing logic against actual data.
+REAL responses captured from mangafire.to via the probe (scraper/probe.py), so
+these tests exercise the actual parsing logic against actual data.
 """
 
 import io

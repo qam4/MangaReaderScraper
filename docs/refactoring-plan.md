@@ -431,7 +431,17 @@ Each phase leaves the tool working.
    `registry._SOURCE_MODULES`. (Minor: collapsing the unions to the abstract
    base surfaces 2 advisory mypy `call-arg` notes on `parser()` construction in
    menu/download — base-vs-subclass `__init__` typing, non-blocking.)
-5. **Smarter probe + "add a source" docs**, MangaFire as the example.
+5. **Smarter probe + "add a source" docs** — ✅ **DONE.** Generalized the
+   MangaFire-specific `mangafire_probe.py` into `scraper/probe.py` (`python -m
+   scraper.probe <url>`): drives nodriver, logs every ajax/API URL, and a pure
+   `analyze_html` surfaces candidate selectors (chapter links, `data-number` /
+   `data-src` elements, the largest `<img>` cluster), dumping
+   `page.html` / `ajax_log.txt` / `candidates.txt` into
+   `tests/test_files/<site>/`. Deleted the old `mangafire_probe.py`. Wrote
+   `docs/adding-a-source.md` (the §4.3 checklist, grounded in the real
+   building blocks: `fetchers`, `selection`, `SearchResult`, `@register_source`).
+   `analyze_html` unit-tested + verified against a real fixture (surfaced 81
+   chapter links from the mangakaka page).
 6. **Engine parsers** — refactor the look-alike sites (manganelo/mangabuddy/…)
    onto shared engine classes. The real workflow multiplier.
 7. **Dead-code removal; CI + test tiering** — ✅ **DONE.** Deps prune (above)
