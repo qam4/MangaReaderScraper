@@ -367,9 +367,20 @@ Each phase leaves the tool working.
    - nodriver's `cdp/network.py` has the §5.5 non-UTF-8 byte that crashes mypy's
      parser; handled with a `follow_imports = skip` override (no source patch
      needed).
-1. **Stop the bleeding** — make heavy imports lazy (move
-   `undetected_chromedriver` out of `utils` top; lazy-import upload in
-   `__main__`). Suite imports on modern Python. Cheapest, biggest relief.
+1. **Stop the bleeding** — ✅ **DONE.** Made the heavy imports lazy:
+   `undetected_chromedriver`, `selenium`, and `cloudscraper` moved out of
+   `utils.py` module top into their respective branches of `get_html_from_url`
+   (matching how `nodriver` was already done); upload backends lazy-imported
+   inside `__main__.upload()`; and `scraper/uploaders/types.py` now guards the
+   `Uploader = Union[...]` alias under `TYPE_CHECKING` (it was the remaining
+   eager path pulling in dropbox/pcloud via `__main__`'s `Uploader` import).
+   Result: `import scraper.__main__` now pulls in **none** of
+   uc/selenium/cloudscraper/dropbox/pcloud. Verified by running the suite in a
+   base-only venv (no `upload` extra): **131 non-upload tests pass with
+   dropbox/pcloud absent** — before this, the eager import broke collection for
+   the whole suite (§3.6/§3.8). No new mypy debt. `requests` kept at module top
+   (lightweight, used throughout, not a problem dep). Full Fetcher abstraction
+   (§5.2) is deferred to Phase 3 — this phase is just the lazy-import relief.
 2. **Domain model** — ✅ **DONE.** Added `scraper/selection.py` with a
    `ChapterId` value object (numeric ordering, preserves raw string for url
    round-trip), `sort_chapter_ids` (the single ordering), and `select_chapters`

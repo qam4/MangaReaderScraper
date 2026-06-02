@@ -7,17 +7,12 @@ import sys
 import subprocess
 import tempfile
 import time
-import undetected_chromedriver as uc  # type: ignore
 from logging import Logger, LoggerAdapter
 from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
-from selenium import webdriver  # type: ignore
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.support.ui import WebDriverWait
 
 import bs4
 import requests  # type: ignore
-import cloudscraper  # type: ignore
 from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry
 
@@ -58,17 +53,25 @@ def get_html_from_url(url: str, type: Optional[str] = "requests") -> bs4.Beautif
         req.raise_for_status()
         text = req.text
     elif type == "cloudscraper":
+        import cloudscraper  # type: ignore
+
         scraper = cloudscraper.create_scraper()
         req = scraper.get(url)
         req.raise_for_status()
         text = req.text
     elif type == "uc":
+        import undetected_chromedriver as uc  # type: ignore
+
         # issue: AssertionError: daemonic processes are not allowed to have children
         driver = uc.Chrome(headless=True, use_subprocess=False)
         driver.get(url)
         time.sleep(10)
         text = driver.page_source
     elif type == "selenium":
+        from selenium import webdriver  # type: ignore
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        from selenium.webdriver.support.ui import WebDriverWait
+
         chrome_service = ChromeService()
         # CREATE_NO_WINDOW hides the console window on Windows; it does not exist
         # on other platforms, so fall back to 0 (no special flags) there.

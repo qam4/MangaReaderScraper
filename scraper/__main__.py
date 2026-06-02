@@ -19,7 +19,6 @@ from scraper.parsers.mangafire import Mangafire
 from scraper.parsers.types import SiteParserClass
 from scraper.uploaders.types import Uploader
 from scraper.bundle import Bundle
-from scraper.uploaders.uploaders import DropboxUploader, PcloudUploader
 from scraper.utils import menu_input, settings
 
 CONFIG = settings()["config"]
@@ -103,6 +102,11 @@ def download_manga(
 
 
 def upload(manga: Manga, service: str) -> Uploader:
+    # Imported lazily so the optional `upload` extra (dropbox/pcloud) is only
+    # required when a user actually uploads. Keeps `import scraper.__main__`
+    # (and thus the whole test suite) working without those packages installed.
+    from scraper.uploaders.uploaders import DropboxUploader, PcloudUploader
+
     services: Dict[str, Type[Uploader]] = {
         "dropbox": DropboxUploader,
         # "mega": MegaUploader,
