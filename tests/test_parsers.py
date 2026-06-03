@@ -7,6 +7,19 @@ from scraper.exceptions import MangaDoesNotExist, MangaParserNotSet
 from tests.helpers import ALL_PARSERS, ALL_SCRAPERS, ALL_SCRAPERS_AND_PARSERS
 
 
+def _fake_curlcffi(status_code):
+    """Build a fake ``curl_cffi`` module whose Session.get returns a response
+    with the given status (and empty body), so fetch_soup's default backend
+    raises the same HTTPError path the parsers handle."""
+    resp = mock.Mock(status_code=status_code, text="", url="http://x")
+    resp.cookies = {}
+    session = mock.Mock()
+    session.get.return_value = resp
+    creq = mock.Mock()
+    creq.Session.return_value = session
+    return mock.Mock(requests=creq)
+
+
 @pytest.mark.parametrize("siteparser", ALL_SCRAPERS)
 def test_manga_not_set_error(siteparser):
     mr = siteparser()
@@ -35,24 +48,21 @@ def test_set_manga_parser(siteparser, mangaparser):
 
 
 @pytest.mark.parametrize("mangaparser", ALL_PARSERS)
-@mock.patch("scraper.utils.requests.get")
-def test_404_errors(mock_request, mangaparser):
-    mock_resp = requests.models.Response()
-    mock_resp.status_code = 404
-    mock_request.return_value = mock_resp
-    parser = mangaparser("blahblahblah")
-    with pytest.raises(MangaDoesNotExist):
-        parser.all_volume_ids()
-    with pytest.raises(MangaDoesNotExist):
-        parser.page_urls("1")
+def test_404_errors(mangaparser):
+    # fetch_soup now defaults to CurlCffiFetcher, so simulate the HTTP error at
+    # the curl_cffi layer (the prior mock of scraper.utils.requests.get only
+    # intercepted the old RequestsFetcher default).
+    with mock.patch.dict("sys.modules", {"curl_cffi": _fake_curlcffi(404)}):
+        parser = mangaparser("blahblahblah")
+        with pytest.raises(MangaDoesNotExist):
+            parser.all_volume_ids()
+        with pytest.raises(MangaDoesNotExist):
+            parser.page_urls("1")
 
 
 @pytest.mark.parametrize("mangaparser", ALL_PARSERS)
-@mock.patch("scraper.utils.requests.get")
-def test_non_404_errors(mock_request, mangaparser):
-    mock_resp = requests.models.Response()
-    mock_resp.status_code = 403
-    mock_request.return_value = mock_resp
-    parser = mangaparser("blahblahblah")
-    with pytest.raises(requests.exceptions.HTTPError):
-        parser.all_volume_ids()
+def test_non_404_errors(mangaparser):
+    with mock.patch.dict("sys.modules", {"curl_cffi": _fake_curlcffi(403)}):
+        parser = mangaparser("blahblahblah")
+        with pytest.raises(requests.exceptions.HTTPError):
+            parser.all_volume_ids()

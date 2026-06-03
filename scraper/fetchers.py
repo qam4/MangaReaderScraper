@@ -9,7 +9,10 @@ until a fetch actually happens. This is what lets the test suite and the CLI
 import without selenium/cloudscraper/nodriver installed.
 
 Backends:
-  * ``RequestsFetcher``      -- plain ``requests`` (lightweight, default)
+  * ``CurlCffiFetcher``      -- ``curl_cffi`` with Chrome TLS/JA3 impersonation
+    (default for ``fetch_soup``; defeats fingerprint-based WAF blocking that
+    plain ``requests`` trips, while keeping the ``requests`` API)
+  * ``RequestsFetcher``      -- plain ``requests`` (lightweight fallback)
   * ``CloudscraperFetcher``  -- ``cloudscraper`` (Cloudflare IUAM bypass)
   * ``BrowserFetcher``       -- ``nodriver`` real browser; also exposes the two
     primitives the MangaFire work needed: ``fetch_json_in_page`` (navigate for
@@ -81,8 +84,12 @@ def fetch_soup(url: str, fetcher: Optional["Fetcher"] = None):
     """
     Fetch ``url`` and return a parsed ``BeautifulSoup`` (lxml).
 
-    Defaults to ``RequestsFetcher``. Raises ``requests.exceptions.HTTPError`` on
-    a non-2xx status (via ``FetchResult.raise_for_status``) so parsers can keep
+    Defaults to ``CurlCffiFetcher`` (Chrome TLS/JA3 impersonation): it speaks the
+    ``requests`` API but presents a real-browser fingerprint, so it transparently
+    clears the fingerprint-based WAF blocking that trips plain ``requests`` while
+    costing nothing extra for sites that don't care. ``RequestsFetcher`` remains
+    available as a lightweight fallback. Raises ``requests.exceptions.HTTPError``
+    on a non-2xx status (via ``FetchResult.raise_for_status``) so parsers keep
     their existing ``except HTTPError ... status_code == 404`` handling. This is
     the migration seam replacing ``utils.get_html_from_url(url)`` for plain-HTTP
     parsers.
@@ -90,7 +97,7 @@ def fetch_soup(url: str, fetcher: Optional["Fetcher"] = None):
     import bs4
 
     if fetcher is None:
-        fetcher = RequestsFetcher()
+        fetcher = CurlCffiFetcher()
     result = fetcher.get(url)
     result.raise_for_status()
     return bs4.BeautifulSoup(result.text, features="lxml")
@@ -99,9 +106,44 @@ def fetch_soup(url: str, fetcher: Optional["Fetcher"] = None):
 # ============================== http backends ============================
 
 
+class CurlCffiFetcher:
+    """
+    ``curl_cffi`` GET with Chrome TLS/JA3 impersonation -- the default backend.
+
+    Presents a real-browser TLS fingerprint, so it clears the fingerprint-based
+    WAF/Cloudflare pre-response blocking that plain ``requests`` trips, while
+    speaking the same ``requests``-style API. This is the same library and
+    ``impersonate="chrome"`` mode the MangaFire parser already uses to pull page
+    images past its CDN. Does not raise on HTTP error -- inspect
+    ``FetchResult.ok`` / ``status`` or call ``raise_for_status()``.
+    """
+
+    def __init__(self, impersonate: str = "chrome") -> None:
+        self.impersonate = impersonate
+
+    def get(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: int = 30,
+    ) -> FetchResult:
+        from curl_cffi import requests as creq  # type: ignore
+
+        session = creq.Session(impersonate=self.impersonate)  # type: ignore[arg-type]
+        resp = session.get(url, headers=headers, timeout=timeout)
+        return FetchResult(
+            url=url,
+            status=resp.status_code,
+            text=resp.text,
+            cookies=dict(resp.cookies),
+            final_url=resp.url,
+        )
+
+
 class RequestsFetcher:
-    """Plain ``requests`` GET. Does not raise on HTTP error -- inspect
-    ``FetchResult.ok`` / ``status`` or call ``raise_for_status()``."""
+    """Plain ``requests`` GET (lightweight fallback). Does not raise on HTTP
+    error -- inspect ``FetchResult.ok`` / ``status`` or call
+    ``raise_for_status()``."""
 
     def get(
         self,

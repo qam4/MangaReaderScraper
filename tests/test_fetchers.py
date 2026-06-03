@@ -15,11 +15,13 @@ import pytest
 from scraper.fetchers import (
     BrowserFetcher,
     CloudscraperFetcher,
+    CurlCffiFetcher,
     Fetcher,
     FetchResult,
     RequestsFetcher,
     _in_page_fetch_js,
     _make_marker_predicate,
+    fetch_soup,
 )
 
 # ============================== FetchResult ==============================
@@ -105,11 +107,63 @@ def test_cloudscraper_fetcher_maps_response():
     assert res.ok
 
 
+def test_curlcffi_fetcher_maps_response():
+    fake = mock.Mock(status_code=200, text="<html>", url="http://x/final")
+    fake.cookies = {"cf": "1"}
+    session = mock.Mock()
+    session.get.return_value = fake
+    creq = mock.Mock()
+    creq.Session.return_value = session
+    fake_module = mock.Mock(requests=creq)
+    with mock.patch.dict("sys.modules", {"curl_cffi": fake_module}):
+        res = CurlCffiFetcher().get("http://x", headers={"H": "v"}, timeout=12)
+    # impersonates a real browser fingerprint by default
+    creq.Session.assert_called_once_with(impersonate="chrome")
+    session.get.assert_called_once_with("http://x", headers={"H": "v"}, timeout=12)
+    assert res.status == 200
+    assert res.text == "<html>"
+    assert res.final_url == "http://x/final"
+    assert res.cookies == {"cf": "1"}
+    assert res.ok
+
+
+def test_curlcffi_fetcher_does_not_raise_on_404():
+    fake = mock.Mock(status_code=404, text="nope", url="http://x")
+    fake.cookies = {}
+    session = mock.Mock()
+    session.get.return_value = fake
+    creq = mock.Mock()
+    creq.Session.return_value = session
+    fake_module = mock.Mock(requests=creq)
+    with mock.patch.dict("sys.modules", {"curl_cffi": fake_module}):
+        res = CurlCffiFetcher().get("http://x")
+    assert res.status == 404
+    assert not res.ok
+
+
 # ============================ protocol check =============================
 
 
 def test_backends_satisfy_fetcher_protocol():
     # runtime_checkable Protocol: each backend has a .get
+    assert isinstance(CurlCffiFetcher(), Fetcher)
     assert isinstance(RequestsFetcher(), Fetcher)
     assert isinstance(CloudscraperFetcher(), Fetcher)
     assert isinstance(BrowserFetcher(), Fetcher)
+
+
+def test_fetch_soup_defaults_to_curlcffi():
+    # fetch_soup with no fetcher should use CurlCffiFetcher (the browser-
+    # fingerprint default), not plain requests.
+    captured = {}
+
+    class _Spy:
+        def get(self, url):
+            captured["url"] = url
+            return FetchResult(url, 200, "<html><body>hi</body></html>")
+
+    with mock.patch("scraper.fetchers.CurlCffiFetcher", return_value=_Spy()) as ctor:
+        soup = fetch_soup("http://x")
+    ctor.assert_called_once_with()
+    assert captured["url"] == "http://x"
+    assert soup.body.text == "hi"
