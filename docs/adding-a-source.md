@@ -13,22 +13,55 @@ Run the probe against a manga page and a search/home page:
 
 ```bash
 python -m scraper.probe https://example.com/manga/<slug>
-python -m scraper.probe https://example.com/home --site example
+python -m scraper.probe https://example.com/home --search "naruto"
 ```
 
 For each URL it drives a real browser (so Cloudflare clears) and writes into
-`tests/test_files/<site>/`:
+`probe_out/<site>/` (gitignored scratch -- promote a curated subset to
+`tests/test_files/<site>/` by hand):
 
 - **`ajax_log.txt`** — every ajax/API/JSON URL the page fired. This alone often
-  hands you the search, chapter-list, and page-list endpoints.
-- **`candidates.txt`** — heuristic selector candidates: chapter-looking links
-  (`chapter-<num>`), elements carrying `data-number` / `data-src`, and the
-  largest `<img>` cluster (usually the reader's page-image container).
-- **`page.html`** — the rendered HTML, for when you need to look closer.
+  hands you the search, chapter-list, and page-list endpoints. Some sites are
+  API-backed (call the JSON directly, MangaFire-style); some are plain HTML.
+  The probe reports what it sees rather than assuming.
+- **`fetch_recommendation.txt`** — fetches the page with plain requests AND a
+  browser, then recommends the *gentlest* strategy that works: `requests` →
+  `nodriver-headless` → `nodriver-headful` → `nodriver-manual` (an interactive
+  captcha you solve once by hand) → `unknown`. Use the cheapest one; don't
+  hammer a site with requests if it's challenged (that's how you get banned).
+- **`candidates.txt`** — heuristic selector candidates (chapter-looking links,
+  `data-number` / `data-src` elements, the largest `<img>` cluster) plus
+  challenge-wall vs. behind-Cloudflare detection. These heuristics are derived
+  from sites we've seen; on a novel layout they may find little — then open
+  `page.html` directly.
+- **`page.html`** — the rendered HTML, for manual inspection.
+
+#### `--find`: locate a selector by content
+
+When the heuristics don't pinpoint the chapter list / image container (sites use
+arbitrary, sometimes obfuscated class names — there is no universal selector),
+use **`--find`** with a string you can *see* on the page (a chapter number, a
+title, a slug):
+
+```bash
+python -m scraper.probe https://example.com/manga/<slug> --find "165"
+```
+
+It writes `find.txt` listing every element whose text or attribute contains the
+string, with the element's selector and its ancestor path, e.g.:
+
+```
+[text] table.listing > tr > td > a.chico
+    'Chapter 165'
+```
+
+→ now you know the chapter anchor is `a.chico` inside `table.listing`. You supply
+the known value (from your eyes); the probe does the tedious locating. It does
+not decide which match is "the right one" — you interpret the short list.
 
 ### 2. Identify the mechanisms
 
-From `ajax_log.txt` and `candidates.txt`, work out three things:
+From `ajax_log.txt`, `candidates.txt` and `find.txt`, work out three things:
 
 - **search**: is there an `ajax/.../search` call (JSON), or is it plain HTML?
 - **chapter list**: a JSON endpoint (like MangaFire's
@@ -37,6 +70,7 @@ From `ajax_log.txt` and `candidates.txt`, work out three things:
   (like MangaFire's `ajax/read/chapter`)?
 
 ### 3. Save fixtures
+
 
 Keep the captured responses you'll parse (the chapter-list JSON, a search
 response, a rendered volume page) under `tests/test_files/<site>/`. These become

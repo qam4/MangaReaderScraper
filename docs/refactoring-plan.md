@@ -483,6 +483,31 @@ Each phase leaves the tool working.
 
 ---
 
+## 6.5 Follow-ups (deliberately not built)
+
+These came out of the probe work but are intentionally deferred until there's a
+concrete site to build them against (right-size the effort; single-user tool).
+
+- **Captcha barge-in / clear-once session (runtime).** The probe already detects
+  when a page needs an interactive captcha (the `nodriver-manual` strategy
+  tier). The matching *runtime* capability — open one headful browser, let the
+  human solve the challenge once, then reuse that cleared session (cookies) for
+  search → manga page → the bulk image grab — belongs in `BrowserFetcher`, not
+  the probe. It's the right model (captchas are session-based; a one-time manual
+  step is fine; only the image grab needs automating) and it's polite rather
+  than evasive (no fighting Cloudflare → no bans). Deferred because it should be
+  built and tested against a real, currently-working site, not speculatively.
+- **mangak.io API parser.** mangabuddy.com now redirects to mangak.io, an
+  API-backed JS app (`/api/*`). The `base_url` was swapped as a stopgap but the
+  HTML selectors are stale; a proper rewrite would target the JSON API
+  (MangaFire-style). The probe already surfaces the `/api/*` endpoints to start
+  from.
+- **Live validation of the browser parsers.** mangago / mangapark / mangabuddy /
+  mangafire browser paths are verified only by mocked tests + types; a real
+  download is the only way to confirm nodriver renders those sites.
+
+---
+
 ## 7. Reference: MangaFire as the worked example
 
 `scraper/parsers/mangafire.py` (this branch) already demonstrates the target

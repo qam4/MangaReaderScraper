@@ -346,6 +346,114 @@ def analyze_html(html: str) -> ProbeReport:
     return report
 
 
+def _element_selector(tag) -> str:
+    """A short, readable selector for a single element: ``tag#id.class1.class2``
+    (id and up to a couple of classes). Pure."""
+    if tag is None or getattr(tag, "name", None) is None:
+        return "?"
+    sel = tag.name
+    tag_id = tag.get("id")
+    if isinstance(tag_id, str) and tag_id:
+        sel += f"#{tag_id}"
+    classes = tag.get("class")
+    if isinstance(classes, str):
+        classes = classes.split()
+    if classes:
+        sel += "".join(f".{c}" for c in classes[:3])
+    return sel
+
+
+def _ancestor_path(tag, depth: int = 3) -> str:
+    """``parent > child > tag`` selector path up to ``depth`` ancestors. Pure."""
+    chain = []
+    cur = tag
+    for _ in range(depth + 1):
+        if cur is None or getattr(cur, "name", None) in (None, "[document]"):
+            break
+        chain.append(_element_selector(cur))
+        cur = cur.parent
+    return " > ".join(reversed(chain))
+
+
+@dataclass
+class FoundMatch:
+    """One place a search string was found in the HTML."""
+
+    where: str  # "text" or an attribute name like "href"
+    selector: str  # the element itself, e.g. a.chico
+    path: str  # ancestor path, e.g. table.listing > tr > td > a.chico
+    snippet: str  # the surrounding text/value, trimmed
+
+
+def find_text(html: str, needle: str, limit: int = 25) -> List[FoundMatch]:
+    """
+    Locate every element whose visible text or an attribute value contains
+    ``needle``, reporting the element's selector + ancestor path. Pure -- no
+    network.
+
+    This is the manual-inspection accelerator: you give a string you can SEE on
+    the page (a chapter number, a title, a slug), and it tells you exactly which
+    element + container it lives in -- so you can write the parser selector
+    without scrolling through hundreds of KB of HTML. It does not guess which
+    match is "the right one"; you interpret the (usually short) list.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    low = needle.lower()
+    matches: List[FoundMatch] = []
+    seen: set = set()
+
+    # 1) attribute values containing the needle (href, src, data-*, alt, ...)
+    for tag in soup.find_all(True):
+        for name, value in tag.attrs.items():
+            val = " ".join(value) if isinstance(value, list) else str(value)
+            if low in val.lower():
+                key = (id(tag), name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(
+                    FoundMatch(
+                        where=name,
+                        selector=_element_selector(tag),
+                        path=_ancestor_path(tag),
+                        snippet=val[:80],
+                    )
+                )
+                if len(matches) >= limit:
+                    return matches
+
+    # 2) the innermost element whose direct text contains the needle
+    for tag in soup.find_all(True):
+        direct = "".join(c for c in tag.find_all(string=True, recursive=False)).strip()
+        if direct and low in direct.lower():
+            key = (id(tag), "text")
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append(
+                FoundMatch(
+                    where="text",
+                    selector=_element_selector(tag),
+                    path=_ancestor_path(tag),
+                    snippet=direct[:80],
+                )
+            )
+            if len(matches) >= limit:
+                break
+    return matches
+
+
+def render_matches(needle: str, matches: List[FoundMatch]) -> str:
+    lines = [f"# Locations of {needle!r}  ({len(matches)} match(es))\n"]
+    if not matches:
+        lines.append("(not found -- check the exact string, or open page.html)")
+        return "\n".join(lines) + "\n"
+    for m in matches:
+        lines.append(f"[{m.where}] {m.path}")
+        lines.append(f"    {m.snippet!r}")
+    return "\n".join(lines) + "\n"
+
+
 def _write(out_dir: Path, name: str, text: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / name).write_text(text, encoding="utf-8", errors="replace")
@@ -395,7 +503,11 @@ def _check_image(img_url: str, referer: str) -> str:
 
 
 async def _probe(
-    url: str, out_dir: Path, wait: float = 8.0, search: Optional[str] = None
+    url: str,
+    out_dir: Path,
+    wait: float = 8.0,
+    search: Optional[str] = None,
+    find: Optional[str] = None,
 ) -> None:
     """Drive a browser, capture ajax URLs + rendered HTML, write the report.
 
@@ -431,6 +543,13 @@ async def _probe(
         report = analyze_html(html)
         if report.looks_like_challenge:
             print("[probe] !! initial load looks like a Cloudflare challenge")
+
+        # --find: locate a user-supplied string (a chapter number, title, slug
+        # you can see on the page) and report its element + container selector.
+        if find:
+            found = find_text(html, find)
+            _write(out_dir, "find.txt", render_matches(find, found))
+            print(f"[probe] --find {find!r}: {len(found)} match(es) -> find.txt")
 
         # Plain-requests fetch of the same URL, to decide whether this page needs
         # a browser at all (vs fetch_soup with RequestsFetcher).
@@ -498,6 +617,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="after loading, type this query into a search box and capture again "
         "(use to see whether the search action triggers a challenge)",
     )
+    ap.add_argument(
+        "--find",
+        help="locate this string (a chapter number, title, slug you can SEE on "
+        "the page) in the HTML and report its element + container selector",
+    )
     args = ap.parse_args(argv)
 
     site = args.site or site_name_from_url(args.url)
@@ -506,7 +630,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     import nodriver as nd
 
-    nd.loop().run_until_complete(_probe(args.url, out_dir, search=args.search))
+    nd.loop().run_until_complete(
+        _probe(args.url, out_dir, search=args.search, find=args.find)
+    )
     print(
         f"\nDone. Inspect {out_dir}/ajax_log.txt and candidates.txt "
         "(and search_*.txt if --search was used), then save the relevant "

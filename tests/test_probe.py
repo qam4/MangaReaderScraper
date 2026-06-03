@@ -2,11 +2,16 @@
 Tests for the probe's pure analysis helpers (no browser needed).
 """
 
+from pathlib import Path
+
 from scraper.probe import (
     ProbeReport,
+    _element_selector,
     analyze_html,
     compare_fetches,
     detect_challenge,
+    find_text,
+    render_matches,
     site_name_from_url,
 )
 
@@ -174,3 +179,56 @@ def test_strategy_headless_when_requests_errors_but_browser_works():
 def test_strategy_unknown_when_both_fail():
     cmp = compare_fetches(None, None, "", requests_error="dns fail")
     assert cmp.strategy() == "unknown"
+
+
+# ============================== find_text ================================
+
+
+def test_find_text_locates_attribute_value():
+    html = '<html><body><a class="chico" href="/x/chapter_55">Ch 55</a></body></html>'
+    matches = find_text(html, "chapter_55")
+    hrefs = [m for m in matches if m.where == "href"]
+    assert hrefs
+    assert "a.chico" in hrefs[0].selector
+    assert "chapter_55" in hrefs[0].snippet
+
+
+def test_find_text_locates_visible_text_and_container():
+    html = (
+        "<table class='listing'><tr><td>"
+        "<a class='chico'>Chapter 165</a>"
+        "</td></tr></table>"
+    )
+    matches = find_text(html, "165")
+    text_hits = [m for m in matches if m.where == "text"]
+    assert text_hits
+    # the innermost element holding the text, with its ancestor container path
+    assert "a.chico" in text_hits[0].selector
+    assert "table.listing" in text_hits[0].path
+
+
+def test_find_text_not_found_is_empty():
+    assert find_text("<html><body>nothing here</body></html>", "999") == []
+    assert "not found" in render_matches("999", []).lower()
+
+
+def test_find_text_against_real_fixture():
+    # locate a known chapter number in the real mangakaka page and confirm it
+    # points at a chapter anchor inside a container -- the manual-inspection win
+    html = Path("tests/test_files/mangakaka/dragonball_super_page.html").read_text(
+        encoding="utf-8"
+    )
+    matches = find_text(html, "chapter_55")
+    assert matches
+    # at least one match is a chapter href on an <a>
+    assert any(m.where == "href" and "a" in m.selector for m in matches)
+
+
+def test_element_selector_formats_id_and_classes():
+    from bs4 import BeautifulSoup
+
+    tag = BeautifulSoup("<div id='Read' class='a b c d'></div>", "lxml").find("div")
+    sel = _element_selector(tag)
+    assert sel.startswith("div#Read")
+    # caps classes at 3
+    assert sel.count(".") == 3
