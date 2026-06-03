@@ -133,36 +133,44 @@ def test_analyze_large_cf_page_is_not_a_challenge():
     assert report.cloudflare_infra  # still noted as behind CF
 
 
-# ========================= compare_fetches ==============================
+# ========================= compare_fetches / strategy ====================
 
 
-def test_recommend_plain_requests_when_equivalent():
+def test_strategy_requests_when_equivalent():
     page = "<html><body>" + "x" * 5000 + "</body></html>"
     cmp = compare_fetches(page, 200, page)
+    assert cmp.strategy() == "requests"
     assert "RequestsFetcher" in cmp.recommend()
 
 
-def test_recommend_browser_when_requests_challenged():
+def test_strategy_headless_when_requests_challenged_but_browser_clears():
     challenge = "<title>Just a moment...</title>"
     real = "<html><body>" + "x" * 5000 + "</body></html>"
     cmp = compare_fetches(challenge, 403, real)
-    assert "BrowserFetcher" in cmp.recommend()
+    assert cmp.strategy() == "nodriver-headless"
 
 
-def test_recommend_browser_when_dynamic():
+def test_strategy_headless_when_dynamic():
     sparse = "<html><body></body></html>"
     rich = "<html><body>" + "x" * 5000 + "</body></html>"
     cmp = compare_fetches(sparse, 200, rich)
     assert cmp.dynamic
-    assert "JS-rendered" in cmp.recommend()
+    assert cmp.strategy() == "nodriver-headless"
 
 
-def test_recommend_browser_when_requests_errors():
-    cmp = compare_fetches(None, None, "<html></html>", requests_error="dns fail")
-    assert "BrowserFetcher" in cmp.recommend()
-
-
-def test_recommend_browser_plus_captcha_when_challenge_persists():
+def test_strategy_manual_when_challenge_persists_in_browser():
     challenge = "<title>Just a moment...</title>"
     cmp = compare_fetches(challenge, 403, challenge)
-    assert "captcha" in cmp.recommend().lower()
+    assert cmp.strategy() == "nodriver-manual"
+    assert "BARGE-IN" in cmp.recommend()
+
+
+def test_strategy_headless_when_requests_errors_but_browser_works():
+    real = "<html><body>" + "x" * 5000 + "</body></html>"
+    cmp = compare_fetches(None, None, real, requests_error="dns fail")
+    assert cmp.strategy() == "nodriver-headless"
+
+
+def test_strategy_unknown_when_both_fail():
+    cmp = compare_fetches(None, None, "", requests_error="dns fail")
+    assert cmp.strategy() == "unknown"

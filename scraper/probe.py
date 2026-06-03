@@ -7,20 +7,25 @@ can be written against actual markup/endpoints instead of guesses
 It drives a real browser (nodriver, headful so Cloudflare clears) and, for the
 given URL:
 
-  * logs **every ajax URL** the page fires (this alone often hands you the
-    search / chapter-list / page-list API);
-  * heuristically **surfaces candidate selectors** from the rendered HTML --
-    chapter-looking links (``chapter-<num>``), the largest ``<img>`` cluster,
-    and elements carrying ``data-number`` / ``data-src``;
-  * dumps the rendered HTML + an ``ajax_log.txt`` + a ``candidates.txt`` report
-    into ``tests/test_files/<site>/`` (site name derived from the URL host).
+  * logs **every ajax/API/JSON URL** the page fires (this alone often hands you
+    the search / chapter-list / page-list API; some sites are API-backed, some
+    are plain HTML -- the probe reports what it sees rather than assuming);
+  * recommends a **fetch strategy** by trying the page with plain requests vs a
+    browser: requests / nodriver-headless / nodriver-headful / nodriver-manual
+    (interactive captcha needing user barge-in) / unknown;
+  * heuristically surfaces candidate selectors and flags Cloudflare challenge
+    walls vs. mere CF infrastructure;
+  * dumps the rendered ``page.html`` + ``ajax_log.txt`` + ``candidates.txt`` +
+    ``fetch_recommendation.txt`` into ``probe_out/<site>/`` (gitignored scratch;
+    promote a curated subset to ``tests/test_files/<site>/`` by hand).
 
-The selector analysis (``analyze_html``) is pure and unit-tested; the browser
-driving is best-effort and only runs when invoked.
+The analysis functions (``analyze_html``, ``detect_challenge``,
+``compare_fetches``) are pure and unit-tested; the browser driving runs only
+when invoked.
 
 Usage:
   python -m scraper.probe https://mangafire.to/manga/<slug>
-  python -m scraper.probe https://mangafire.to/home --site mangafire
+  python -m scraper.probe https://mangafire.to/home --search "naruto"
 """
 
 from __future__ import annotations
@@ -173,25 +178,69 @@ class FetchComparison:
     # raw requests HTML? -> the page is JS-rendered / dynamic
     dynamic: bool = False
 
-    def recommend(self) -> str:
-        """A one-line fetcher recommendation for this page."""
-        if self.requests_error or self.requests_status is None:
-            return "BrowserFetcher (plain requests errored)"
-        if self.requests_challenge and not self.browser_challenge:
-            return "BrowserFetcher (requests hits a challenge; browser clears it)"
-        if self.requests_challenge and self.browser_challenge:
-            return (
-                "BrowserFetcher + manual/captcha step (challenge persists even in "
-                "a browser -- e.g. an interactive captcha)"
-            )
-        if self.requests_status != 200:
-            return f"BrowserFetcher (requests returned {self.requests_status})"
+    def strategy(self) -> str:
+        """
+        Pick the cheapest fetch strategy that works for this page, as a stable
+        token. The ladder, cheapest -> most invasive:
+
+          requests          - plain requests is enough (static HTML, no block)
+          cloudscraper       - requests blocked/non-200 but no full browser
+                               needed (try the CloudscraperFetcher tier first)
+          nodriver-headless  - needs a real browser engine, but content renders
+                               without a visible window / interaction
+          nodriver-headful   - needs a visible browser (challenge clears with a
+                               real window but no human action)
+          nodriver-manual    - an interactive captcha remains; needs the user to
+                               barge in and solve it in a headful window
+          unknown            - couldn't fetch either way (network/dns error)
+        """
+        if self.requests_error and self.browser_len == 0:
+            return "unknown"
+        # plain requests got real content, no challenge -> cheapest tier wins
+        if (
+            not self.requests_error
+            and self.requests_status == 200
+            and not self.requests_challenge
+            and not self.dynamic
+        ):
+            return "requests"
+        # browser still shows a challenge wall -> a human must solve it
+        if self.browser_challenge:
+            return "nodriver-manual"
+        # requests blocked/challenged but the browser cleared it cleanly
+        if self.requests_challenge or self.requests_status not in (200, None):
+            return "nodriver-headless"
+        # requests fine status but content is JS-rendered -> needs a browser
         if self.dynamic:
-            return "BrowserFetcher (content is JS-rendered; requests HTML is sparse)"
-        return "fetch_soup / RequestsFetcher (plain requests is enough)"
+            return "nodriver-headless"
+        # requests errored outright but the browser worked
+        if self.requests_error:
+            return "nodriver-headless"
+        return "requests"
+
+    def recommend(self) -> str:
+        """Human-readable recommendation for the chosen strategy."""
+        return {
+            "requests": "fetch_soup / RequestsFetcher (plain requests is enough)",
+            "cloudscraper": "CloudscraperFetcher (requests blocked; no full browser needed)",
+            "nodriver-headless": (
+                "BrowserFetcher headless (needs a real browser engine; "
+                "renders without a visible window)"
+            ),
+            "nodriver-headful": (
+                "BrowserFetcher headful (needs a visible browser window to clear "
+                "the challenge, but no human action)"
+            ),
+            "nodriver-manual": (
+                "BrowserFetcher headful + USER BARGE-IN (an interactive captcha "
+                "remains; the user must solve it in the window, then scraping "
+                "continues with the cleared session)"
+            ),
+            "unknown": "could not fetch the page either way (network/dns error)",
+        }[self.strategy()]
 
     def render(self, label: str) -> str:
-        lines = [f"# Fetch comparison: {label}\n"]
+        lines = [f"# Fetch strategy: {label}\n"]
         if self.requests_error:
             lines.append(f"requests: ERROR {self.requests_error}")
         else:
@@ -208,7 +257,8 @@ class FetchComparison:
             f"dynamic (browser >> requests content): {'YES' if self.dynamic else 'no'}"
         )
         lines.append("")
-        lines.append(f"-> recommended fetcher: {self.recommend()}")
+        lines.append(f"-> strategy: {self.strategy()}")
+        lines.append(f"-> {self.recommend()}")
         return "\n".join(lines) + "\n"
 
 
@@ -434,7 +484,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("url", help="page URL to probe (manga page, home, search, ...)")
     ap.add_argument(
         "--site",
-        help="fixtures folder name (default: derived from the URL host)",
+        help="output subfolder name (default: derived from the URL host)",
+    )
+    ap.add_argument(
+        "--out",
+        default="probe_out",
+        help="base output dir (default: probe_out/, which is gitignored). "
+        "Probe captures are exploratory scratch -- promote a curated subset to "
+        "tests/test_files/<site>/ by hand once you know what to keep.",
     )
     ap.add_argument(
         "--search",
@@ -444,7 +501,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     site = args.site or site_name_from_url(args.url)
-    out_dir = Path("tests/test_files") / site
+    out_dir = Path(args.out) / site
     print(f"[probe] site={site} -> {out_dir}")
 
     import nodriver as nd

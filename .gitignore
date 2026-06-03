@@ -110,3 +110,6 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# scraper probe scratch output (promote curated captures to tests/test_files/ by hand)
+probe_out/
