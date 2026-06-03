@@ -82,6 +82,10 @@ ignore = ["E203", "E501", "E701"]
 known-third-party = ["tabulate", "bs4", "requests", "pytest", "urllib3"]
 
 [tool.pytest.ini_options]
+# Only collect the real suite. Without this, a bare `pytest` collects from the
+# rootdir and would import any stray test-pattern script elsewhere in the tree
+# (e.g. a scratch probe file at the repo root that launches a browser at import).
+testpaths = ["tests"]
 # A per-test timeout so a mis-targeted mock that falls through to a real network
 # call fails fast instead of hanging CI (see refactoring-plan §5.7). Tune as needed.
 addopts = "--cov scraper --timeout=60"
