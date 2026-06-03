@@ -1,7 +1,7 @@
 # MangaReaderScraper
 
-Search and download manga from the command line, save as PDF or CBZ, optionally
-bundle into Kindle-ready MOBI volumes, and optionally upload to cloud storage.
+Search and download manga from the command line, save as PDF or CBZ, and
+optionally bundle into Kindle-ready MOBI volumes.
 
 ![](docs/demo.gif)
 
@@ -36,8 +36,7 @@ git clone https://github.com/qam4/MangaReaderScraper
 cd MangaReaderScraper
 
 # Create the venv and install runtime + dev deps.
-# Add the optional cloud-upload backends with the `upload` extra.
-uv sync --extra upload
+uv sync
 ```
 
 Run the CLI through uv:
@@ -45,6 +44,11 @@ Run the CLI through uv:
 ```bash
 uv run manga-scraper --help
 ```
+
+`uv run` isn't required — it just runs the command inside the project's venv
+without you having to activate it. If you prefer, activate the venv and call
+`manga-scraper` directly (`.venv\Scripts\activate` on Windows, then
+`manga-scraper --help`).
 
 Common dev commands:
 
@@ -125,8 +129,7 @@ usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
                      [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT]
                      [--filetype {pdf,cbz}]
                      [--source {mangabuddy,mangafast,mangafire,mangago,mangakaka,manganato,manganelo,mangapark,mangareader}]
-                     [--upload {dropbox,pcloud,mega}]
-                     [--override_name OVERRIDE_NAME] [--remove] [--version]
+                     [--override_name OVERRIDE_NAME] [--version]
                      [--bundle BUNDLE]
 ```
 
@@ -138,14 +141,13 @@ usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
 | `--output` | `-o` | Directory to save downloads (defaults to config `manga_directory`) |
 | `--filetype` | `-f` | `pdf` or `cbz` (defaults to config `filetype`) |
 | `--source` | `-z` | Site to scrape from (defaults to config `source`) |
-| `--upload` | `-u` | Upload to a cloud service: `dropbox` or `pcloud` |
-| `--override_name` | `-n` | Rename the manga for all saved/uploaded files |
-| `--remove` | `-r` | Delete local volumes after a successful upload (requires `--upload`) |
+| `--override_name` | `-n` | Rename the manga for all saved files |
 | `--bundle` | | Chapters per volume; bundles the download into MOBI (forces `cbz`) |
 | `--version` | `-v` | Print the installed version |
 
-> **Note:** `mega` appears in the `--upload` choices but the Mega backend is
-> currently disabled — use `dropbox` or `pcloud`.
+> **Note:** the CLI also exposes `--upload` / `--remove` flags for cloud storage,
+> but those backends are unmaintained and partially broken. They are intentionally
+> left undocumented here.
 
 ## Bundling to MOBI (`--bundle`)
 
@@ -154,10 +156,12 @@ The `--bundle` option groups chapters into volumes and converts each to **MOBI**
 the base install, because it shells out to a patched Kindle Comic Converter:
 
 1. **Fetch the KCC fork** (a git submodule -- a fork patched for correct
-   multithreading / tmp-folder handling that upstream KCC lacks):
+   multithreading / tmp-folder handling that upstream KCC lacks). A plain
+   `git clone` does not pull submodules, so fetch it explicitly:
    ```bash
    git submodule update --init
    ```
+   (Or clone the repo with `git clone --recurse-submodules` in the first place.)
 2. **Install it editable** so the `kcc-c2e` CLI is on your PATH:
    ```bash
    uv pip install -e kcc/
@@ -195,34 +199,6 @@ source = mangareader
 
 # default filetype to store mangas as
 filetype = pdf
-
-# root cloud directory to upload the manga to
-upload_root = /
-```
-
-## Uploading
-
-Cloud upload backends require the `upload` extra (`uv sync --extra upload`) and
-credentials in the config file.
-
-### Dropbox
-
-Follow this [guide](https://blogs.dropbox.com/developers/2014/05/generate-an-access-token-for-your-own-account/)
-to create a token, then add it to `~/.config/mangascraper.ini`:
-
-```ini
-[dropbox]
-token = hdkd87799jjjj
-```
-
-### pCloud
-
-Add your email and password to the config file:
-
-```ini
-[pcloud]
-email = email@email.com
-password = notapassword123
 ```
 
 ## How fetching works (briefly)
