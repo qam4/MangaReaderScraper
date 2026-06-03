@@ -200,6 +200,13 @@ class Bundle:
         # check if the mobi file needs an update
         if self.is_obsolete(volume_mobi_path, [volume_cbz_path]):
             logger.info(f"Creating {volume_mobi_path}...")
+            if shutil.which("kcc-c2e") is None:
+                raise RuntimeError(
+                    "kcc-c2e not found on PATH -- MOBI bundling needs the KCC "
+                    "fork installed. See the README 'Bundling to MOBI' section: "
+                    "`git submodule update --init` then `uv pip install -e kcc/` "
+                    "(and the vendored kindlegen for the MOBI step)."
+                )
             command = [
                 "kcc-c2e",
                 "-u",

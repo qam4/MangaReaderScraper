@@ -19,15 +19,19 @@ logger = logging.getLogger(__name__)
 
 class MangabuddyMangaParser(BaseMangaParser):
     """
-    Scrapes & parses a specific manga page on https://www.mangabuddy.com
-    Images are CLOUDFLARE protected, bypassing using headers = {"Referer": "https://mangabuddy.com/"}
+    Scrapes & parses a specific manga page.
+
+    NOTE: mangabuddy.com now redirects to mangak.io, which is an API-backed
+    JS app (probe showed /api/manifest, /api/site-config, ...). The HTML
+    selectors below (chapter-list, chapter-image) are from the old mangabuddy
+    layout and are very likely STALE -- this parser needs a rewrite against the
+    mangak.io API (see docs/adding-a-source.md; use `scraper probe`). base_url
+    swapped to mangak.io as a stopgap.
     """
 
-    def __init__(
-        self, manga_url: str, base_url: str = "https://www.mangabuddy.com"
-    ) -> None:
+    def __init__(self, manga_url: str, base_url: str = "https://mangak.io") -> None:
         super().__init__(manga_url, base_url)
-        self.headers = {"Referer": "https://mangabuddy.com/"}
+        self.headers = {"Referer": "https://mangak.io/"}
 
     def _scrape_volume(self, volume: str) -> BeautifulSoup:
         """
@@ -113,9 +117,7 @@ class MangabuddySearch(BaseSearchParser):
     Parses search queries
     """
 
-    def __init__(
-        self, query: str, base_url: str = "https://www.mangabuddy.com"
-    ) -> None:
+    def __init__(self, query: str, base_url: str = "https://mangak.io") -> None:
         super().__init__(query, base_url)
 
     def _extract_text(self, result: Tag) -> SearchResult:
@@ -165,15 +167,15 @@ class MangabuddySearch(BaseSearchParser):
 @register_source("mangabuddy")
 class Mangabuddy(BaseSiteParser):
     """
-    Seems to be the same as mangabuddy.com
-
-    Can probably use this class for mangabuddy too
+    Scraper & parser for mangak.io (formerly mangabuddy.com, which now redirects
+    there). The underlying parsers' HTML selectors are likely stale -- mangak.io
+    is API-backed; this needs a rewrite. Kept registered under "mangabuddy".
     """
 
     def __init__(self, manga_url: Optional[str] = None) -> None:
         super().__init__(
             manga_url=manga_url,
-            base_url="https://www.mangabuddy.com",
+            base_url="https://mangak.io",
             manga_parser=MangabuddyMangaParser,
             search_parser=MangabuddySearch,
         )

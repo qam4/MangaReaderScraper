@@ -34,6 +34,30 @@ uv run mypy scraper           # type check
 uv run ruff check ./scraper ./tests    # lint
 uv run ruff format ./scraper ./tests   # format
 ```
+
+## Bundling to MOBI (`--bundle`)
+
+The `--bundle` option groups chapters into volumes and converts each to **MOBI**
+(preferred over EPUB for Kindle manga quality). This requires extra setup beyond
+the base install, because it shells out to a patched Kindle Comic Converter:
+
+1. **Fetch the KCC fork** (a git submodule -- a fork patched for correct
+   multithreading / tmp-folder handling that upstream KCC lacks):
+   ```bash
+   git submodule update --init
+   ```
+2. **Install it editable** so the `kcc-c2e` CLI is on your PATH:
+   ```bash
+   uv pip install -e kcc/
+   ```
+3. **kindlegen** does the final CBZ/EPUB -> MOBI step. Amazon discontinued and
+   no longer distributes it, so a Windows build (`kindlegen.exe`) is vendored at
+   the repo root. On other platforms you must supply your own `kindlegen` on
+   PATH.
+
+Without these, `--bundle` raises a clear error (it never silently produces
+nothing). Plain PDF/CBZ downloads need none of this.
+
 ## usage
 $ manga-scraper --help
 usage: manga-scraper [-h] [--manga [MANGA [MANGA ...]]] [--search [SEARCH [SEARCH ...]]] [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT] [--filetype {pdf,cbz}] [--source {manganelo,mangareader,mangafast,mangakaka,manganato}]
