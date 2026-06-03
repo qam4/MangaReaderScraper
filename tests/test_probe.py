@@ -2,7 +2,13 @@
 Tests for the probe's pure analysis helpers (no browser needed).
 """
 
-from scraper.probe import ProbeReport, analyze_html, site_name_from_url
+from scraper.probe import (
+    ProbeReport,
+    analyze_html,
+    compare_fetches,
+    detect_challenge,
+    site_name_from_url,
+)
 
 # ========================= site_name_from_url ============================
 
@@ -76,3 +82,58 @@ def test_report_render_is_readable():
     text = report.render()
     assert "Candidate selectors" in text
     assert "/chapter-1" in text
+
+
+# ========================= detect_challenge ==============================
+
+
+def test_detect_challenge_flags_cloudflare_markers():
+    assert detect_challenge("<title>Just a moment...</title>")
+    assert detect_challenge("<div class='cf-challenge'>")
+    assert detect_challenge("please enable javascript and cookies to continue")
+    assert "turnstile" in detect_challenge("<script src='turnstile'></script>")
+
+
+def test_detect_challenge_clean_page():
+    assert detect_challenge("<html><body><h1>Dragon Ball</h1></body></html>") == []
+
+
+def test_analyze_flags_challenge_in_report():
+    report = analyze_html("<html><title>Just a moment...</title></html>")
+    assert report.looks_like_challenge
+    assert "CHALLENGE DETECTED" in report.render()
+
+
+# ========================= compare_fetches ==============================
+
+
+def test_recommend_plain_requests_when_equivalent():
+    page = "<html><body>" + "x" * 5000 + "</body></html>"
+    cmp = compare_fetches(page, 200, page)
+    assert "RequestsFetcher" in cmp.recommend()
+
+
+def test_recommend_browser_when_requests_challenged():
+    challenge = "<title>Just a moment...</title>"
+    real = "<html><body>" + "x" * 5000 + "</body></html>"
+    cmp = compare_fetches(challenge, 403, real)
+    assert "BrowserFetcher" in cmp.recommend()
+
+
+def test_recommend_browser_when_dynamic():
+    sparse = "<html><body></body></html>"
+    rich = "<html><body>" + "x" * 5000 + "</body></html>"
+    cmp = compare_fetches(sparse, 200, rich)
+    assert cmp.dynamic
+    assert "JS-rendered" in cmp.recommend()
+
+
+def test_recommend_browser_when_requests_errors():
+    cmp = compare_fetches(None, None, "<html></html>", requests_error="dns fail")
+    assert "BrowserFetcher" in cmp.recommend()
+
+
+def test_recommend_browser_plus_captcha_when_challenge_persists():
+    challenge = "<title>Just a moment...</title>"
+    cmp = compare_fetches(challenge, 403, challenge)
+    assert "captcha" in cmp.recommend().lower()

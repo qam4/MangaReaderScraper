@@ -50,9 +50,22 @@ class ProbeReport:
     data_src_samples: List[str] = field(default_factory=list)
     largest_img_container: Optional[str] = None
     img_container_count: int = 0
+    challenge_markers: List[str] = field(default_factory=list)
+
+    @property
+    def looks_like_challenge(self) -> bool:
+        return bool(self.challenge_markers)
 
     def render(self) -> str:
         lines = ["# Candidate selectors (heuristic)\n"]
+        if self.challenge_markers:
+            lines.append(
+                "!! CLOUDFLARE / BOT CHALLENGE DETECTED -- the captured HTML is "
+                "the challenge page, not the real content. Markers:"
+            )
+            for m in self.challenge_markers:
+                lines.append(f"  {m}")
+            lines.append("")
         lines.append(f"chapter-looking links: {len(self.chapter_links)}")
         for href in self.chapter_links[:10]:
             lines.append(f"  {href}")
@@ -74,6 +87,119 @@ class ProbeReport:
                 f"(likely the page-image container)"
             )
         return "\n".join(lines) + "\n"
+
+
+# Substrings that, when present in a page's HTML, indicate a Cloudflare / bot
+# challenge (Turnstile, the JS interstitial, managed challenge) rather than the
+# real content. Case-insensitive.
+_CHALLENGE_MARKERS = (
+    "just a moment",
+    "cf-challenge",
+    "challenge-platform",
+    "__cf_chl",
+    "cf_chl_opt",
+    "turnstile",
+    "/cdn-cgi/challenge-platform",
+    "checking if the site connection is secure",
+    "enable javascript and cookies to continue",
+    "attention required",
+)
+
+
+def detect_challenge(html: str) -> List[str]:
+    """
+    Return the Cloudflare/bot-challenge markers found in ``html`` (empty if none).
+
+    This is what tells you *whether* a captured page is the real content or a
+    challenge wall -- the key question when a site like mangabuddy gates search
+    behind a captcha. Pure -- no network.
+    """
+    low = html.lower()
+    return [m for m in _CHALLENGE_MARKERS if m in low]
+
+
+@dataclass
+class FetchComparison:
+    """
+    Outcome of fetching a page two ways (plain requests vs a real browser), used
+    to decide which fetcher a parser should declare for that page.
+    """
+
+    requests_status: Optional[int] = None
+    requests_challenge: bool = False
+    requests_len: int = 0
+    requests_error: Optional[str] = None
+    browser_challenge: bool = False
+    browser_len: int = 0
+    # does the rendered (browser) HTML have substantially more content than the
+    # raw requests HTML? -> the page is JS-rendered / dynamic
+    dynamic: bool = False
+
+    def recommend(self) -> str:
+        """A one-line fetcher recommendation for this page."""
+        if self.requests_error or self.requests_status is None:
+            return "BrowserFetcher (plain requests errored)"
+        if self.requests_challenge and not self.browser_challenge:
+            return "BrowserFetcher (requests hits a challenge; browser clears it)"
+        if self.requests_challenge and self.browser_challenge:
+            return (
+                "BrowserFetcher + manual/captcha step (challenge persists even in "
+                "a browser -- e.g. an interactive captcha)"
+            )
+        if self.requests_status != 200:
+            return f"BrowserFetcher (requests returned {self.requests_status})"
+        if self.dynamic:
+            return "BrowserFetcher (content is JS-rendered; requests HTML is sparse)"
+        return "fetch_soup / RequestsFetcher (plain requests is enough)"
+
+    def render(self, label: str) -> str:
+        lines = [f"# Fetch comparison: {label}\n"]
+        if self.requests_error:
+            lines.append(f"requests: ERROR {self.requests_error}")
+        else:
+            lines.append(
+                f"requests: status={self.requests_status} "
+                f"len={self.requests_len} "
+                f"challenge={'YES' if self.requests_challenge else 'no'}"
+            )
+        lines.append(
+            f"browser:  len={self.browser_len} "
+            f"challenge={'YES' if self.browser_challenge else 'no'}"
+        )
+        lines.append(
+            f"dynamic (browser >> requests content): {'YES' if self.dynamic else 'no'}"
+        )
+        lines.append("")
+        lines.append(f"-> recommended fetcher: {self.recommend()}")
+        return "\n".join(lines) + "\n"
+
+
+def compare_fetches(
+    requests_html: Optional[str],
+    requests_status: Optional[int],
+    browser_html: str,
+    requests_error: Optional[str] = None,
+    dynamic_ratio: float = 1.5,
+) -> FetchComparison:
+    """
+    Build a FetchComparison from the two fetch outcomes. Pure -- no network.
+
+    ``dynamic`` is true when the browser-rendered HTML is at least
+    ``dynamic_ratio``x larger than the plain-requests HTML (a strong sign the
+    page builds its content with JS, so requests alone would miss it).
+    """
+    cmp = FetchComparison(
+        requests_status=requests_status,
+        requests_error=requests_error,
+        browser_len=len(browser_html),
+        browser_challenge=bool(detect_challenge(browser_html)),
+    )
+    if requests_html is not None:
+        cmp.requests_len = len(requests_html)
+        cmp.requests_challenge = bool(detect_challenge(requests_html))
+        if cmp.requests_len and len(browser_html) > cmp.requests_len * dynamic_ratio:
+            cmp.dynamic = True
+    return cmp
 
 
 def site_name_from_url(url: str) -> str:
@@ -99,6 +225,7 @@ def analyze_html(html: str) -> ProbeReport:
     """
     soup = BeautifulSoup(html, "lxml")
     report = ProbeReport()
+    report.challenge_markers = detect_challenge(html)
 
     seen_links = set()
     for a in soup.find_all("a", href=True):
@@ -135,8 +262,60 @@ def _write(out_dir: Path, name: str, text: str) -> None:
     print(f"  wrote {out_dir / name}  ({len(text)} chars)")
 
 
-async def _probe(url: str, out_dir: Path, wait: float = 8.0) -> None:
-    """Drive a browser, capture ajax URLs + rendered HTML, write the report."""
+def _plain_requests_get(url: str):
+    """GET ``url`` with plain requests. Returns (html, status, error)."""
+    import requests  # type: ignore
+
+    try:
+        resp = requests.get(url, timeout=20)
+        return resp.text, resp.status_code, None
+    except Exception as err:  # pragma: no cover - network/dns failures
+        return None, None, str(err)
+
+
+def _check_image(img_url: str, referer: str) -> str:
+    """
+    Probe an image URL to see whether the CDN is protected: try plain requests
+    (no headers), then plain requests with a Referer. Reports status + content
+    type so you can tell if images need curl_cffi/browser cookies + Referer.
+    """
+    import requests  # type: ignore
+
+    lines = [f"# Image check: {img_url}\n"]
+    for label, headers in (
+        ("plain", {}),
+        ("with Referer", {"Referer": referer}),
+    ):
+        try:
+            resp = requests.get(img_url, headers=headers, timeout=20)
+            ctype = resp.headers.get("content-type", "?")
+            ok = resp.status_code == 200 and ctype.startswith("image")
+            lines.append(
+                f"{label}: status={resp.status_code} content-type={ctype} "
+                f"{'OK (real image)' if ok else 'NOT an image -> likely protected'}"
+            )
+        except Exception as err:  # pragma: no cover - network failures
+            lines.append(f"{label}: ERROR {err}")
+    lines.append("")
+    lines.append(
+        "If neither returns a real image, the CDN needs browser cookies + "
+        "Referer (curl_cffi with Chrome impersonation, like the MangaFire parser)."
+    )
+    return "\n".join(lines) + "\n"
+
+
+async def _probe(
+    url: str, out_dir: Path, wait: float = 8.0, search: Optional[str] = None
+) -> None:
+    """Drive a browser, capture ajax URLs + rendered HTML, write the report.
+
+    If ``search`` is given, after the page loads we type the query into a
+    search box and capture again -- so you can see whether the *search action*
+    (rather than the initial load) is what trips a Cloudflare challenge. The
+    report flags challenge markers in the captured HTML either way.
+    """
+    import json as _json
+
     import nodriver as nd
     from nodriver import cdp
 
@@ -159,8 +338,53 @@ async def _probe(url: str, out_dir: Path, wait: float = 8.0) -> None:
 
         html = await tab.get_content()
         _write(out_dir, "page.html", html)
+        report = analyze_html(html)
+        if report.looks_like_challenge:
+            print("[probe] !! initial load looks like a Cloudflare challenge")
+
+        # Plain-requests fetch of the same URL, to decide whether this page needs
+        # a browser at all (vs fetch_soup with RequestsFetcher).
+        req_html, req_status, req_err = _plain_requests_get(url)
+        cmp = compare_fetches(req_html, req_status, html, requests_error=req_err)
+        _write(out_dir, "fetch_recommendation.txt", cmp.render(url))
+        print(f"[probe] fetcher recommendation: {cmp.recommend()}")
+
+        # Chapter stage: if the page has page-images, check whether the image CDN
+        # itself is protected (plain requests vs browser cookies + Referer).
+        if report.data_src_samples:
+            img_url = report.data_src_samples[0]
+            _write(out_dir, "image_check.txt", _check_image(img_url, url))
+
+        if search:
+            print(f"[probe] typing search query: {search!r}")
+            js_type = (
+                "(() => {"
+                "  const i = document.querySelector("
+                "    'input[type=search], input[name=keyword], input[name=q], "
+                "     input[name=search], .search-inner input, input[type=text]');"
+                "  if (!i) return 'NO_INPUT';"
+                f"  i.value = {_json.dumps(search)};"
+                "  i.dispatchEvent(new Event('input', {bubbles:true}));"
+                "  i.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));"
+                "  if (i.form) i.form.requestSubmit && i.form.requestSubmit();"
+                "  return 'OK:' + (i.name || i.type);"
+                "})()"
+            )
+            box = await tab.evaluate(js_type)
+            print(f"[probe] search box: {box}")
+            await tab.wait(wait)
+            search_html = await tab.get_content()
+            _write(out_dir, "search_page.html", search_html)
+            search_report = analyze_html(search_html)
+            _write(out_dir, "search_candidates.txt", search_report.render())
+            if search_report.looks_like_challenge and not report.looks_like_challenge:
+                print(
+                    "[probe] !! challenge appeared AFTER the search action "
+                    "(the search request is what triggers it)"
+                )
+
         _write(out_dir, "ajax_log.txt", "\n".join(ajax_urls) or "(no ajax calls seen)")
-        _write(out_dir, "candidates.txt", analyze_html(html).render())
+        _write(out_dir, "candidates.txt", report.render())
     finally:
         browser.stop()
 
@@ -172,6 +396,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--site",
         help="fixtures folder name (default: derived from the URL host)",
     )
+    ap.add_argument(
+        "--search",
+        help="after loading, type this query into a search box and capture again "
+        "(use to see whether the search action triggers a challenge)",
+    )
     args = ap.parse_args(argv)
 
     site = args.site or site_name_from_url(args.url)
@@ -180,10 +409,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     import nodriver as nd
 
-    nd.loop().run_until_complete(_probe(args.url, out_dir))
+    nd.loop().run_until_complete(_probe(args.url, out_dir, search=args.search))
     print(
-        f"\nDone. Inspect {out_dir}/ajax_log.txt and candidates.txt, then save the "
-        "relevant captures as fixtures and write the parser against them."
+        f"\nDone. Inspect {out_dir}/ajax_log.txt and candidates.txt "
+        "(and search_*.txt if --search was used), then save the relevant "
+        "captures as fixtures and write the parser against them."
     )
     return 0
 
