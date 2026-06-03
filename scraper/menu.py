@@ -1,10 +1,10 @@
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional
 
 from tabulate import tabulate  # type: ignore
 
 from scraper.exceptions import InvalidOption
 from scraper.new_types import SearchResults
-from scraper.parsers.types import SiteParser
+from scraper.parsers.types import SiteParser, SiteParserClass
 from scraper.utils import menu_input
 
 
@@ -15,12 +15,12 @@ class Menu:
 
     def __init__(
         self,
-        options: Dict[str, Dict[str, str]],
+        options: Dict[str, Any],
         choices: Optional[str] = None,
         parent: Optional["Menu"] = None,
     ) -> None:
         self.parent: Menu = parent
-        self.options: Dict[str, Dict[str, str]] = self._add_parent_to_options(options)
+        self.options: Dict[str, Any] = self._add_parent_to_options(options)
         self.choices: str = self._add_back_to_choices(choices)
 
     def handle_options(self) -> Any:
@@ -39,9 +39,7 @@ class Menu:
                 f"{', '.join(self.options.keys())}"
             )
 
-    def _add_parent_to_options(
-        self, options: Dict[str, Any]
-    ) -> Dict[str, Dict[str, str]]:
+    def _add_parent_to_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
         """
         Modify options to include parent menu
         """
@@ -74,7 +72,7 @@ class Menu:
 
 
 class SearchMenu(Menu):
-    def __init__(self, query: List[str], parser: Type[SiteParser]) -> None:
+    def __init__(self, query: List[str], parser: SiteParserClass) -> None:
         self.parser: SiteParser = parser()
         self.search_results: SearchResults = self._search(query)
         choices: str = self.table()

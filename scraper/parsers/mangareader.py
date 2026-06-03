@@ -14,6 +14,7 @@ from bs4.element import Tag
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
 
@@ -97,9 +98,9 @@ class MangaReaderSearch(BaseSearchParser):
         Extract the desired text from a HTML search result
         """
         manga_name = result.find("div", {"class": "d57"})
-        title = manga_name.text
-        manga_url = manga_name.find("a").get("href")  # type: ignore[attr-defined]
-        chapters = result.find("div", {"class": "d58"}).text
+        title = text(manga_name)
+        manga_url = attr(manga_name.find("a"), "href")  # type: ignore[union-attr]
+        chapters = text(result.find("div", {"class": "d58"}))
         return SearchResult(
             title=title.replace("\n", ""),
             manga_url=manga_url[1:],

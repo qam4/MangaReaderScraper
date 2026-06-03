@@ -25,13 +25,16 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Type, TypeVar
 
 from scraper.parsers.base import BaseSiteParser
+from scraper.parsers.types import SiteParserClass
 
 logger = logging.getLogger(__name__)
 
-_REGISTRY: Dict[str, Type[BaseSiteParser]] = {}
+_REGISTRY: Dict[str, SiteParserClass] = {}
+
+_T = TypeVar("_T", bound=Type[BaseSiteParser])
 
 # Parser modules to import so their @register_source decorators run. Adding a
 # new site means adding its module here (one line) -- still far less than the
@@ -54,10 +57,13 @@ _loaded = False
 def register_source(name: str):
     """Class decorator registering a ``BaseSiteParser`` subclass under ``name``."""
 
-    def decorator(cls: Type[BaseSiteParser]) -> Type[BaseSiteParser]:
+    def decorator(cls: _T) -> _T:
         if name in _REGISTRY and _REGISTRY[name] is not cls:
             logger.warning("Overriding already-registered source %r", name)
-        _REGISTRY[name] = cls
+        # Concrete parsers expose __init__(self, manga_url=None) and so satisfy
+        # SiteParserClass; the abstract BaseSiteParser base signature doesn't, so
+        # mypy can't see it through the TypeVar bound. Safe by construction.
+        _REGISTRY[name] = cls  # type: ignore[assignment]
         cls.source_name = name  # type: ignore[attr-defined]
         return cls
 
@@ -77,7 +83,7 @@ def load_sources() -> None:
     _loaded = True
 
 
-def get_source(name: str) -> Optional[Type[BaseSiteParser]]:
+def get_source(name: str) -> Optional[SiteParserClass]:
     """Return the site-parser class for ``name``, or ``None`` if unknown."""
     load_sources()
     return _REGISTRY.get(name)

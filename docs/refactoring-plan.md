@@ -471,6 +471,15 @@ Each phase leaves the tool working.
    deleted `.flake8`; updated CI, pre-commit, and README. ruff caught a real
    latent bug the old stack missed: a duplicate `"volumes"` dict key in
    `__main__.change_args_to_search` (F601). Lockfile 63 → 55 packages.
+   **mypy is now clean (0 errors, was 35 at the Phase 0 baseline).** Added a
+   small `scraper/parsers/_html.py` (`attr`/`text`) that narrows bs4's
+   `Tag.get()` / `Tag.text` (`str | AttributeValueList`) to `str` at the call
+   site, killing the bulk of the noise; typed parser construction via a
+   `SiteParserClass` `Protocol` (the concrete `(manga_url=None)` constructor),
+   resolving the registry/menu/download `call-arg` notes. Fixed several latent
+   wrong-argument bugs found along the way (`_extract_number` annotated `Tag`
+   but called with an href string in mangapark/mangago/mangabuddy). The mypy CI
+   step can drop `continue-on-error` now.
 
 ---
 

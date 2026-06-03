@@ -24,6 +24,7 @@ from bs4.element import Tag
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ class KakalotMangaParser(BaseMangaParser):
         if volume_html:
             container = volume_html.find("div", {"class": "container-chapter-reader"})
             all_img_tags = container.find_all("img")  # type: ignore[union-attr]
-            all_page_urls = [img.get(self.page_img_attr) for img in all_img_tags]
+            all_page_urls = [attr(img, self.page_img_attr) for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
         return None
 
@@ -99,8 +100,7 @@ class KakalotMangaParser(BaseMangaParser):
             manga_html = fetch_soup(url)
             volume_tags = manga_html.find_all("li", {"class": "a-h"})
             volume_ids = set(
-                self._extract_number(vol.find("a").get("href"))  # type: ignore[union-attr]
-                for vol in volume_tags
+                self._extract_number(attr(vol.find("a"), "href")) for vol in volume_tags
             )
             logger.debug(f"volume_ids={volume_ids}")
             return volume_ids
@@ -131,10 +131,10 @@ class KakalotSearchParser(BaseSearchParser):
         super().__init__(query, base_url or self.base_url)
 
     def _title(self, result: Tag) -> str:
-        return result.find("img").get("alt")  # type: ignore[union-attr]
+        return attr(result.find("img"), "alt")
 
     def _slug(self, result: Tag) -> str:
-        manga_url = result.find("a").get("href")  # type: ignore[union-attr]
+        manga_url = attr(result.find("a"), "href")
         return Path(manga_url).stem.split("/")[-1]
 
     def _chapters(self, result: Tag) -> str:
@@ -146,7 +146,7 @@ class KakalotSearchParser(BaseSearchParser):
         anchor = last.find("a")  # type: ignore[union-attr]
         if not anchor:
             return ""
-        return anchor.get("href").split("_")[-1]
+        return attr(anchor, "href").split("_")[-1]
 
     def _extract_text(self, result: Tag) -> SearchResult:
         return SearchResult(

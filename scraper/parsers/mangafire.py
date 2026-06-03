@@ -31,6 +31,7 @@ from PIL import Image
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import BrowserFetcher, _make_marker_predicate
 from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
 from scraper.selection import sort_chapter_ids
@@ -232,13 +233,13 @@ class MangafireMangaParser(BaseMangaParser):
             )
 
         fragment = BeautifulSoup(result_html, "lxml")
-        volume_ids = set()
+        volume_ids: set[str] = set()
         for tag in fragment.find_all(attrs={"data-number": True}):
-            volume_ids.add(tag["data-number"])
+            volume_ids.add(attr(tag, "data-number"))
         # fallback: pull chapter numbers out of hrefs
         if not volume_ids:
             for a in fragment.find_all("a", href=re.compile(r"chapter-[\d.]+")):
-                m = re.search(r"chapter-([\d.]+)", a.get("href", ""))
+                m = re.search(r"chapter-([\d.]+)", attr(a, "href"))
                 if m:
                     volume_ids.add(m.group(1))
 
@@ -288,7 +289,7 @@ class MangafireSearch(BaseSearchParser):
         key = start
         seen = set()
         for unit in soup.select("a.unit"):
-            m = re.search(r"/manga/([^/?#]+)", unit.get("href", ""))
+            m = re.search(r"/manga/([^/?#]+)", attr(unit, "href"))
             if not m:
                 continue
             slug = m.group(1)

@@ -27,10 +27,6 @@ jobs:
         run: uv run ruff format --check ./scraper ./tests
 
       - name: Type check (mypy)
-        # Non-blocking: the bs4 upgrade surfaced latent type errors in the
-        # parsers (Tag.get() typed as str | AttributeValueList). Kept visible so
-        # the count trends down, not up.
-        continue-on-error: true
         run: uv run mypy scraper
 
       - name: Tests

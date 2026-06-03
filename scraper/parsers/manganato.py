@@ -12,6 +12,7 @@ from typing import Optional
 
 from bs4.element import Tag
 
+from scraper.parsers._html import attr
 from scraper.parsers.base import BaseSiteParser
 from scraper.parsers.kakalot import KakalotMangaParser, KakalotSearchParser
 from scraper.registry import register_source
@@ -35,14 +36,14 @@ class ManganatoSearch(KakalotSearchParser):
     result_div_class = "search-story-item"
 
     def _slug(self, result: Tag) -> str:
-        manga_url = result.find("a").get("href")  # type: ignore[union-attr]
+        manga_url = attr(result.find("a"), "href")
         return Path(manga_url).stem.split("-")[-1]
 
     def _chapters(self, result: Tag) -> str:
         last = result.find("a", {"class": "item-chapter a-h text-nowrap"})
         if not last:
             return ""
-        return last.get("href").split("-")[-1]  # type: ignore[union-attr]
+        return attr(last, "href").split("-")[-1]
 
 
 @register_source("manganato")

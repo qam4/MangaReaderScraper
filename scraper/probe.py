@@ -35,6 +35,8 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
+from scraper.parsers._html import attr
+
 # a chapter-looking href fragment, e.g. /read/x/en/chapter-28.22 or chapter_55
 _CHAPTER_HREF = re.compile(r"chapter[-_/]([\d.]+)", re.I)
 
@@ -100,7 +102,7 @@ def analyze_html(html: str) -> ProbeReport:
 
     seen_links = set()
     for a in soup.find_all("a", href=True):
-        href = a["href"]
+        href = attr(a, "href")
         if _CHAPTER_HREF.search(href) and href not in seen_links:
             seen_links.add(href)
             report.chapter_links.append(href)
@@ -109,7 +111,7 @@ def analyze_html(html: str) -> ProbeReport:
         report.data_number_samples.append(str(tag)[:120])
 
     for tag in soup.find_all(attrs={"data-src": True}):
-        report.data_src_samples.append(tag.get("data-src"))
+        report.data_src_samples.append(attr(tag, "data-src"))
 
     # largest <img> cluster: the parent tag holding the most <img> children
     parent_counts: Counter = Counter()

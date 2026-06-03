@@ -10,6 +10,7 @@ from bs4.element import Tag
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import BrowserFetcher, fetch_soup
 from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
 
@@ -65,16 +66,13 @@ class MangabuddyMangaParser(BaseMangaParser):
             logger.debug(f"items={items}")
             all_img_tags = [item.find("img") for item in items]  # type: ignore[union-attr]
             logger.debug(f"all_img_tags={all_img_tags}")
-            all_page_urls = [img.get("src") for img in all_img_tags]  # type: ignore[union-attr]
+            all_page_urls = [attr(img, "src") for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
         return None
 
-    def _extract_number(self, vol_tag: Tag) -> str:
-        """
-        Sanitises a number from scraped chapter tag
-        """
-        vol_text = vol_tag.split("/")[-1]
-        return vol_text
+    def _extract_number(self, href: str) -> str:
+        """Sanitise a chapter number from a chapter href (last path part)."""
+        return href.split("/")[-1]
 
     def all_volume_ids(self) -> Iterable[str]:
         """
@@ -95,7 +93,7 @@ class MangabuddyMangaParser(BaseMangaParser):
                 reversed(
                     list(
                         dict.fromkeys(
-                            self._extract_number(vol.find("a").get("href"))
+                            self._extract_number(attr(vol.find("a"), "href"))
                             for vol in volume_tags
                         )
                     )
@@ -125,9 +123,9 @@ class MangabuddySearch(BaseSearchParser):
         Extract the desired text from a HTML search result
         """
         logging.debug(f"result={result}")
-        manga_title = result.find("img").get("alt")  # type: ignore[attr-defined]
+        manga_title = attr(result.find("img"), "alt")
         logger.debug(f"manga_title={manga_title}")
-        manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
+        manga_url = attr(result.find("a"), "href")
         logger.debug(f"manga_url={manga_url}")
         manga_url_short = Path(manga_url).stem.split("/")[-1]
         last_chapter = result.find("span", {"class": "latest-chapter"})

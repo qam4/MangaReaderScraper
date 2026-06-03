@@ -10,6 +10,7 @@ from bs4.element import Tag
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import BrowserFetcher, fetch_soup
 from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
 
@@ -67,20 +68,18 @@ class MangagoMangaParser(BaseMangaParser):
 
             all_img_tags = container.find_all("img")  # type: ignore[attr-defined]
             logger.info(f"all_img_tags[0]={all_img_tags[0]}")
-            all_page_urls = [img.get("src") for img in all_img_tags]
+            all_page_urls = [attr(img, "src") for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
         return None
 
-    def _extract_number(self, vol_tag: Tag) -> str:
-        """
-        Sanitises a number from scraped chapter tag
-        """
-        logger.info(f"vol_tag={vol_tag}")
+    def _extract_number(self, href: str) -> str:
+        """Sanitise a chapter number from a chapter href."""
+        logger.info(f"href={href}")
         base = f"{self.base_url}/read-manga/{self.manga_url}/"
-        if vol_tag.startswith(base):
-            vol_text = vol_tag[len(base) :].rstrip("/")
+        if href.startswith(base):
+            vol_text = href[len(base) :].rstrip("/")
         else:
-            raise ValueError(f"vol_tag does not start with expected base: {base}")
+            raise ValueError(f"href does not start with expected base: {base}")
         logger.info(f"vol_text={vol_text}")
         return vol_text
 
@@ -115,8 +114,7 @@ class MangagoMangaParser(BaseMangaParser):
             )
             # logger.info(volume_tags)
             volume_ids = set(
-                self._extract_number(vol.find("a").get("href"))
-                for vol in volume_tags  # type: ignore[union-attr]
+                self._extract_number(attr(vol.find("a"), "href")) for vol in volume_tags
             )
             logger.info(f"volume_ids={volume_ids}")
             return volume_ids
@@ -139,18 +137,18 @@ class MangagoSearch(BaseSearchParser):
         """
         Extract the desired text from a HTML search result
         """
-        manga_title = result.find("a").text.strip()
+        manga_title = text(result.find("a")).strip()
         logger.info(f"manga_title={manga_title}")
-        manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
+        manga_url = attr(result.find("a"), "href")
         logger.info(f"manga_url={manga_url}")
         manga_url_short = Path(manga_url).stem.split("/")[-1]
         # fred: last capters are in "row-5 gray"
         last_chapter = result.find("a", {"class": "chico"})
         logger.info(f"last_chapter={last_chapter}")
         if last_chapter:
-            chapters = last_chapter.find("span").text  # type: ignore[attr-defined]
+            chapters = text(last_chapter.find("span"))  # type: ignore[arg-type]
         else:
-            chapters = 0
+            chapters = ""
         logger.info(f"chapters={chapters}")
         return SearchResult(
             title=manga_title,

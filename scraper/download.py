@@ -4,10 +4,10 @@ Downloads manga page images
 
 import logging
 from logging import LoggerAdapter
-from typing import List, Optional, Type
+from typing import List, Optional
 
 from scraper.manga import Manga, MangaBuilder
-from scraper.parsers.types import SiteParser
+from scraper.parsers.types import SiteParserClass
 from scraper.utils import download_timer, get_adapter
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class Download:
     Downloads the manga in the desired format
     """
 
-    def __init__(self, manga_url: str, filetype: str, parser: Type[SiteParser]) -> None:
+    def __init__(self, manga_url: str, filetype: str, parser: SiteParserClass) -> None:
         self.manga_url: str = manga_url
         self.factory: MangaBuilder = MangaBuilder(
             parser=parser(manga_url), filetype=filetype

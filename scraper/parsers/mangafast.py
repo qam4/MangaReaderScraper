@@ -9,6 +9,7 @@ from bs4.element import Tag
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
 from scraper.selection import ChapterId
@@ -39,12 +40,12 @@ class MangaFastMangaParser(BaseMangaParser):
 
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         volume_html = self._scrape_volume(volume)
-        img_tags = volume_html.find("div", id="Read").find_all("img")  # type: ignore[attr-defined]
+        img_tags = volume_html.find("div", id="Read").find_all("img")  # type: ignore[union-attr]
         img_urls: List[Tuple[int, str]] = []
         for page_num, url_tag in enumerate(img_tags, 1):
-            url = url_tag.get("data-src")
+            url = attr(url_tag, "data-src")
             if page_num == 1:
-                url = url_tag.get("src")
+                url = attr(url_tag, "src")
             img_urls.append((page_num, url))
         return img_urls
 
@@ -71,9 +72,9 @@ class MangaFastSearch(BaseSearchParser):
         super().__init__(query, base_url)
 
     def _extract_text(self, result: Tag) -> SearchResult:
-        title = result.find("h3").text.strip()
-        manga_url = result.find("a").get("href")  # type: ignore[attr-defined]
-        chapters = result.find("b").text
+        title = text(result.find("h3")).strip()
+        manga_url = attr(result.find("a"), "href")
+        chapters = text(result.find("b"))
         return SearchResult(
             title=title,
             manga_url=manga_url.split("/")[-2],
