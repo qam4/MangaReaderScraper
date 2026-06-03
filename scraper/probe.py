@@ -51,6 +51,8 @@ class ProbeReport:
     largest_img_container: Optional[str] = None
     img_container_count: int = 0
     challenge_markers: List[str] = field(default_factory=list)
+    cloudflare_infra: List[str] = field(default_factory=list)
+    page_size: int = 0
 
     @property
     def looks_like_challenge(self) -> bool:
@@ -58,10 +60,17 @@ class ProbeReport:
 
     def render(self) -> str:
         lines = ["# Candidate selectors (heuristic)\n"]
+        lines.append(f"page size: {self.page_size} chars")
+        if self.cloudflare_infra:
+            lines.append(
+                "behind Cloudflare (infra markers present: "
+                f"{', '.join(self.cloudflare_infra)}) -- informational, not a block"
+            )
+        lines.append("")
         if self.challenge_markers:
             lines.append(
-                "!! CLOUDFLARE / BOT CHALLENGE DETECTED -- the captured HTML is "
-                "the challenge page, not the real content. Markers:"
+                "!! CHALLENGE WALL DETECTED -- the captured HTML looks like a "
+                "challenge/interstitial, not the real content. Markers:"
             )
             for m in self.challenge_markers:
                 lines.append(f"  {m}")
@@ -89,33 +98,62 @@ class ProbeReport:
         return "\n".join(lines) + "\n"
 
 
-# Substrings that, when present in a page's HTML, indicate a Cloudflare / bot
-# challenge (Turnstile, the JS interstitial, managed challenge) rather than the
-# real content. Case-insensitive.
-_CHALLENGE_MARKERS = (
+# Strong markers: phrases that only appear on an actual challenge/interstitial
+# wall (the page is NOT the real content). Case-insensitive.
+_STRONG_CHALLENGE_MARKERS = (
     "just a moment",
-    "cf-challenge",
+    "checking your browser",
+    "checking if the site connection is secure",
+    "verify you are human",
+    "verifying you are human",
+    "attention required",
+    "enable javascript and cookies to continue",
+)
+
+# Weak markers: Cloudflare's always-on infrastructure, injected into EVERY page
+# of a CF-fronted site (not just challenge walls). Their presence means "behind
+# Cloudflare", NOT "blocked" -- so they only count as a challenge on a small page
+# (a real wall is tiny; real content is large).
+_WEAK_CHALLENGE_MARKERS = (
     "challenge-platform",
+    "/cdn-cgi/challenge-platform",
     "__cf_chl",
     "cf_chl_opt",
     "turnstile",
-    "/cdn-cgi/challenge-platform",
-    "checking if the site connection is secure",
-    "enable javascript and cookies to continue",
-    "attention required",
 )
+
+# A real challenge wall is small; real content behind CF is large. Below this
+# size, weak markers are treated as a likely wall.
+_CHALLENGE_SIZE_HINT = 100_000
 
 
 def detect_challenge(html: str) -> List[str]:
     """
-    Return the Cloudflare/bot-challenge markers found in ``html`` (empty if none).
+    Return challenge markers indicating the page is a Cloudflare/bot **wall**
+    (not the real content). Pure -- no network.
 
-    This is what tells you *whether* a captured page is the real content or a
-    challenge wall -- the key question when a site like mangabuddy gates search
-    behind a captcha. Pure -- no network.
+    Strong interstitial phrases always count. Cloudflare's always-on
+    infrastructure (challenge-platform script, __cf_chl, turnstile) appears on
+    normal pages too, so it only counts when the page is also small
+    (``< _CHALLENGE_SIZE_HINT`` chars) -- a real wall is tiny, real content is
+    large. This avoids flagging every CF-fronted site as "blocked".
     """
     low = html.lower()
-    return [m for m in _CHALLENGE_MARKERS if m in low]
+    strong = [m for m in _STRONG_CHALLENGE_MARKERS if m in low]
+    if strong:
+        return strong
+    if len(html) < _CHALLENGE_SIZE_HINT:
+        weak = [m for m in _WEAK_CHALLENGE_MARKERS if m in low]
+        if weak:
+            return weak
+    return []
+
+
+def cloudflare_infrastructure(html: str) -> List[str]:
+    """Weak CF markers present regardless of page size -- informational only
+    ('this site sits behind Cloudflare'), not a block signal."""
+    low = html.lower()
+    return [m for m in _WEAK_CHALLENGE_MARKERS if m in low]
 
 
 @dataclass
@@ -225,7 +263,9 @@ def analyze_html(html: str) -> ProbeReport:
     """
     soup = BeautifulSoup(html, "lxml")
     report = ProbeReport()
+    report.page_size = len(html)
     report.challenge_markers = detect_challenge(html)
+    report.cloudflare_infra = cloudflare_infrastructure(html)
 
     seen_links = set()
     for a in soup.find_all("a", href=True):

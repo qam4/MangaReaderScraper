@@ -87,21 +87,50 @@ def test_report_render_is_readable():
 # ========================= detect_challenge ==============================
 
 
-def test_detect_challenge_flags_cloudflare_markers():
-    assert detect_challenge("<title>Just a moment...</title>")
-    assert detect_challenge("<div class='cf-challenge'>")
+def test_detect_challenge_flags_strong_markers_any_size():
+    # strong interstitial phrases count regardless of page size
+    big = "<title>Just a moment...</title>" + "x" * 200_000
+    assert detect_challenge(big)
     assert detect_challenge("please enable javascript and cookies to continue")
-    assert "turnstile" in detect_challenge("<script src='turnstile'></script>")
+    assert detect_challenge("Verify you are human")
+
+
+def test_weak_markers_flag_only_on_small_pages():
+    # CF infra on a TINY page -> likely a wall
+    assert detect_challenge("<script src='/cdn-cgi/challenge-platform'></script>")
+    # same infra on a LARGE page -> real content behind CF, NOT a block
+    big = "<script src='/cdn-cgi/challenge-platform'></script>" + "x" * 200_000
+    assert detect_challenge(big) == []
 
 
 def test_detect_challenge_clean_page():
     assert detect_challenge("<html><body><h1>Dragon Ball</h1></body></html>") == []
 
 
+def test_cloudflare_infrastructure_is_informational():
+    from scraper.probe import cloudflare_infrastructure
+
+    big = "<script src='/cdn-cgi/challenge-platform'></script>" + "x" * 200_000
+    # not a challenge, but we still surface that the site is behind CF
+    assert detect_challenge(big) == []
+    assert cloudflare_infrastructure(big)
+
+
 def test_analyze_flags_challenge_in_report():
     report = analyze_html("<html><title>Just a moment...</title></html>")
     assert report.looks_like_challenge
-    assert "CHALLENGE DETECTED" in report.render()
+    assert "CHALLENGE WALL DETECTED" in report.render()
+
+
+def test_analyze_large_cf_page_is_not_a_challenge():
+    html = (
+        "<html><body>"
+        + "x" * 200_000
+        + ("<script src='/cdn-cgi/challenge-platform'></script></body></html>")
+    )
+    report = analyze_html(html)
+    assert not report.looks_like_challenge
+    assert report.cloudflare_infra  # still noted as behind CF
 
 
 # ========================= compare_fetches ==============================
