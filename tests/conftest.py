@@ -14,6 +14,28 @@ from scraper.menu import Menu
 from tests.helpers import MockedMangaReaderParser, get_bs4_tree, get_images
 
 
+@pytest.fixture(autouse=True)
+def _no_real_browser():
+    """
+    Safety net: make any *unmocked* browser launch fail loudly instead of
+    silently opening a real Chrome during the test run.
+
+    Every BrowserFetcher path is supposed to be mocked; if a test misses one,
+    we want an immediate error pointing at the gap -- not a browser window (and
+    a 45s timeout). Patches the lazy entry points used by the fetcher/probe.
+    """
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError(
+            "A test tried to launch a real browser (nodriver.start). "
+            "Mock BrowserFetcher / nodriver in this test."
+        )
+
+    # BrowserFetcher._start and the probe both call nodriver.start; block both.
+    with mock.patch("scraper.fetchers.BrowserFetcher._start", side_effect=_boom):
+        yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def mocked_pool_imap():
     """
