@@ -497,14 +497,26 @@ concrete site to build them against (right-size the effort; single-user tool).
   step is fine; only the image grab needs automating) and it's polite rather
   than evasive (no fighting Cloudflare → no bans). Deferred because it should be
   built and tested against a real, currently-working site, not speculatively.
-- **mangak.io API parser.** mangabuddy.com now redirects to mangak.io, an
-  API-backed JS app (`/api/*`). The `base_url` was swapped as a stopgap but the
-  HTML selectors are stale; a proper rewrite would target the JSON API
-  (MangaFire-style). The probe already surfaces the `/api/*` endpoints to start
-  from.
-- **Live validation of the browser parsers.** mangago / mangapark / mangabuddy /
-  mangafire browser paths are verified only by mocked tests + types; a real
-  download is the only way to confirm nodriver renders those sites.
+- **mangak.io API parser.** ✅ **DONE.** Rewritten as an open-API client
+  (`scraper/parsers/mangabuddy.py`, registered `mangabuddy`): search +
+  chapter-list via `api.mangak.io` with `CurlCffiFetcher`, page images from the
+  chapter page's `__NEXT_DATA__` (no public image API — verified by intercepting
+  every XHR). curl_cffi clears the Cloudflare page wall, so it runs **fully
+  browserless**; `BrowserFetcher` remains a logged fallback. See
+  docs/adding-a-source.md "Open-API site" for the worked example.
+- **Per-run browser session reuse (optimization, deferred).** `BrowserFetcher`
+  starts and stops a fresh browser per call, so a site that *does* need the
+  browser (e.g. a future Cloudflare-walled site curl_cffi can't clear) pays the
+  ~6-13s startup once **per chapter**, and chapters download in parallel via a
+  process pool. Reusing one cleared browser session across a whole run would cut
+  that, but it's a non-trivial change (session sharing across the multiprocess
+  pool) and pairs naturally with the captcha barge-in item above. Not worth it
+  until a browser-bound site actually makes multi-chapter runs feel slow —
+  mangak.io is browserless, so it's moot there.
+- **Live validation of the browser parsers.** mangago / mangapark / mangafire
+  browser paths are verified only by mocked tests + types; a real download is
+  the only way to confirm nodriver renders those sites. (mangabuddy/mangak.io is
+  now live-verified end to end — and browserless.)
 
 ---
 

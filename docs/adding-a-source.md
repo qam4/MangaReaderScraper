@@ -24,11 +24,27 @@ For each URL it drives a real browser (so Cloudflare clears) and writes into
   hands you the search, chapter-list, and page-list endpoints. Some sites are
   API-backed (call the JSON directly, MangaFire-style); some are plain HTML.
   The probe reports what it sees rather than assuming.
+- **`api_index.txt`** + **`api_*.json`** — the JSON *response bodies* of those
+  API calls, dumped to disk so you can read the actual shape (field names for
+  title/slug/chapters/images) instead of reverse-engineering markup. The index
+  maps each dump file back to its source URL. This is usually where you find the
+  search and chapter-list APIs and learn their exact schema.
+- **`api_backends.txt`** — for each captured API endpoint, the probe re-hits it
+  with **plain requests** *and* **curl_cffi** (Chrome impersonation) and reports
+  whether each got real JSON. This tells you whether the API is reachable
+  without a browser: if curl_cffi shows "JSON OK", the parser can use
+  `CurlCffiFetcher` (no browser) for that endpoint. (Note: curl_cffi's TLS
+  impersonation is far stronger than plain requests and often clears Cloudflare
+  walls that `fetch_recommendation.txt` -- which only tries plain requests --
+  flags as needing a browser. Always check `api_backends.txt` before assuming a
+  site needs nodriver.)
 - **`fetch_recommendation.txt`** — fetches the page with plain requests AND a
   browser, then recommends the *gentlest* strategy that works: `requests` →
   `nodriver-headless` → `nodriver-headful` → `nodriver-manual` (an interactive
   captcha you solve once by hand) → `unknown`. Use the cheapest one; don't
   hammer a site with requests if it's challenged (that's how you get banned).
+  This compares *plain requests* vs a browser -- so it can under-sell curl_cffi;
+  cross-check `api_backends.txt`.
 - **`candidates.txt`** — heuristic selector candidates (chapter-looking links,
   `data-number` / `data-src` elements, the largest `<img>` cluster) plus
   challenge-wall vs. behind-Cloudflare detection. These heuristics are derived
@@ -61,13 +77,24 @@ not decide which match is "the right one" — you interpret the short list.
 
 ### 2. Identify the mechanisms
 
-From `ajax_log.txt`, `candidates.txt` and `find.txt`, work out three things:
+From `ajax_log.txt`, `api_index.txt` / `api_*.json`, `api_backends.txt`,
+`candidates.txt` and `find.txt`, work out three things:
 
-- **search**: is there an `ajax/.../search` call (JSON), or is it plain HTML?
-- **chapter list**: a JSON endpoint (like MangaFire's
-  `/ajax/manga/<id>/chapter/en`) or chapter links in the HTML?
-- **page images**: in the HTML (`data-src` lazy images), or behind an ajax call
-  (like MangaFire's `ajax/read/chapter`)?
+- **search**: is there a JSON search API (e.g. `api.example/titles/search`, or
+  an `ajax/.../search` call), or is it plain HTML? Check `api_*.json` for the
+  response shape.
+- **chapter list**: a JSON endpoint (like mangak.io's `/titles/<id>/chapters`
+  or MangaFire's `/ajax/manga/<id>/chapter/en`) or chapter links in the HTML?
+- **page images**: a JSON endpoint, embedded in the page's Next.js
+  `__NEXT_DATA__` (like mangak.io), `data-src` lazy images, or behind an ajax
+  call (like MangaFire's `ajax/read/chapter`)? If you can't find an image
+  endpoint in `ajax_log.txt`, the site likely server-renders them into the page
+  — read them from the HTML/embedded JSON.
+
+Then check `api_backends.txt` to pick the fetcher: an open API → `CurlCffiFetcher`
+(no browser); a Cloudflare-walled page that curl_cffi still clears → also
+`CurlCffiFetcher`; only reach for `BrowserFetcher` when curl_cffi is genuinely
+challenged.
 
 ### 3. Save fixtures
 
@@ -79,18 +106,36 @@ both your reference *and* your test inputs.
 ### 4. Write the parser
 
 Create `scraper/parsers/<site>.py` with a `<Site>MangaParser`,
-`<Site>Search`, and `<Site>` site parser. Two patterns to copy:
+`<Site>Search`, and `<Site>` site parser. Three patterns to copy:
 
-- **JSON/ajax site** → copy `mangafire.py`. It drives the browser via
-  `BrowserFetcher` (`capture_xhr` to intercept a vrf-gated call,
+- **Open-API site (best case)** → copy `mangabuddy.py` (mangak.io). The site is
+  a JS app backed by a public JSON API (`api.mangak.io/titles/search`,
+  `/titles/<id>/chapters`). Hit it directly with `CurlCffiFetcher` — no browser.
+  Worked example end to end:
+  - search returns `{data:{items:[{id, slug, name, stats.chapters_count,
+    latest_chapters:[…]}]}}`;
+  - `--manga <slug>` only gives the slug, so resolve slug → API `(id, cv)` via
+    the search endpoint, then call `/titles/<id>/chapters?cv=<cv>`;
+  - the page-image list had **no** public endpoint (verified by intercepting
+    every XHR) — it lives in the chapter page's server-rendered Next.js
+    `__NEXT_DATA__`. `page_urls` fetches the page with `CurlCffiFetcher` and
+    parses that embedded JSON, falling back to `BrowserFetcher` only if
+    curl_cffi is challenged.
+  - **gotcha:** the API's `chapter_number` is a sequence counter, not the
+    displayed number — parse the real number from the chapter *name*
+    (`"Chapter 700.5"` → `700.5`), or `--volumes` ranges will be wrong.
+- **JSON/ajax site behind a vrf token** → copy `mangafire.py`. It drives the
+  browser via `BrowserFetcher` (`capture_xhr` to intercept a vrf-gated call,
   `fetch_json_in_page` for a known endpoint).
 - **plain-HTML site** → copy `mangareader.py` / `mangakaka.py`. They use
-  `fetch_soup(url)` (plain requests) — or `fetch_soup(url, BrowserFetcher())`
-  for a JS-rendered page (see `mangabuddy.py` / `mangapark.py`).
+  `fetch_soup(url)` (curl_cffi by default) — or `fetch_soup(url,
+  BrowserFetcher())` for a JS-rendered page.
 
 Use the shared building blocks:
-- `scraper.fetchers` — `fetch_soup`, `RequestsFetcher`, `CloudscraperFetcher`,
-  `BrowserFetcher`. Never call a browser/HTTP library directly.
+- `scraper.fetchers` — `fetch_soup`, `CurlCffiFetcher` (the default, Chrome TLS
+  impersonation), `RequestsFetcher`, `CloudscraperFetcher`, `BrowserFetcher`.
+  Prefer the cheapest one `api_backends.txt` says works; never call a
+  browser/HTTP library directly.
 - `scraper.selection.sort_chapter_ids` — for ordering `all_volume_ids`. Don't
   roll your own `sorted(key=float)` / string compare.
 - `scraper.new_types.SearchResult` — return these from search, not raw dicts.
