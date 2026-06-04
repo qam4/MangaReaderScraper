@@ -133,17 +133,6 @@ def _chapter_map_from_payload(payload: dict) -> Dict[str, str]:
     return mapping
 
 
-def _build_id_from_html(html: str) -> Optional[str]:
-    """Scrape the Next.js ``buildId`` from a chapter page's HTML.
-
-    It lives in the ``__NEXT_DATA__`` script as ``"buildId":"<hash>"``. The
-    build id changes on every site redeploy, so it must be read live rather than
-    hardcoded. Pure and unit-tested.
-    """
-    match = re.search(r'"buildId"\s*:\s*"([^"]+)"', html)
-    return match.group(1) if match else None
-
-
 def _images_from_chapter_payload(payload: dict) -> List[str]:
     """Extract the ordered page-image urls from a chapter payload.
 
@@ -273,37 +262,50 @@ class MangabuddyMangaParser(BaseMangaParser):
             raise VolumeDoesntExist(f"Chapter {volume} not found for {self.manga_url}")
         return f"{self.base_url}/{self.manga_url}/{slug}"
 
+    def _images_from_page_html(self, html: str) -> List[str]:
+        """Pull the ordered page-image urls out of a chapter page's HTML via its
+        embedded ``__NEXT_DATA__`` payload. Empty list if absent/unparseable."""
+        next_data = _next_data_from_html(html)
+        if next_data is None:
+            return []
+        return _images_from_chapter_payload(next_data)
+
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] for every page in a chapter.
 
-        mangak.io server-renders the chapter page with the full image list in
-        its ``__NEXT_DATA__`` payload, so a single browser fetch of the page is
-        enough -- we parse the embedded JSON and read
-        ``initialChapter.images``. (The page host is Cloudflare-walled, hence
-        the browser.) If the embedded payload is missing images, we fall back to
-        the ``_next/data`` endpoint, scraping the current ``buildId``.
+        The image list lives only in the chapter page's server-rendered
+        ``__NEXT_DATA__`` (mangak.io has no public image-list API -- confirmed by
+        intercepting every XHR the reader fires). The page host is behind
+        Cloudflare, so:
+
+          1. try ``CurlCffiFetcher`` first (Chrome TLS impersonation, no browser
+             -- much less invasive and far faster), and
+          2. only if that comes back without the embedded payload (challenged)
+             fall back to a real browser, which clears Cloudflare.
+
+        Both outcomes are logged so it's never a mystery which path ran.
         """
         chapter_url = self.volume_url(volume)
-        slug = self._chapter_slugs[volume]
 
-        fetcher = BrowserFetcher()
-        page = fetcher.get(chapter_url)
-
+        # 1. cheap path: curl_cffi with Chrome impersonation
         images: List[str] = []
-        next_data = _next_data_from_html(page.text)
-        if next_data is not None:
-            images = _images_from_chapter_payload(next_data)
+        try:
+            resp = CurlCffiFetcher().get(chapter_url, headers=self.headers)
+            if resp.ok:
+                images = self._images_from_page_html(resp.text)
+        except Exception as err:
+            logger.debug(f"curl_cffi page fetch failed for {chapter_url}: {err}")
 
-        # fallback: hit the _next/data endpoint with the live buildId
-        if not images:
-            build_id = _build_id_from_html(page.text)
-            if build_id:
-                data_url = (
-                    f"{self.base_url}/_next/data/{build_id}/{self.manga_url}/"
-                    f"{slug}.json?slug={self.manga_url}&chapter-slug={slug}"
-                )
-                body = fetcher.fetch_json_in_page(chapter_url, data_url)
-                images = _images_from_chapter_payload(json.loads(body))
+        if images:
+            logger.info(f"page list via curl_cffi (no browser): {chapter_url}")
+        else:
+            # 2. fallback: drive a browser to clear Cloudflare
+            logger.info(
+                f"curl_cffi did not yield the page payload; "
+                f"falling back to browser for {chapter_url}"
+            )
+            page = BrowserFetcher().get(chapter_url)
+            images = self._images_from_page_html(page.text)
 
         if not images:
             raise VolumeDoesntExist(

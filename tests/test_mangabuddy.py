@@ -22,7 +22,6 @@ from scraper.parsers.mangabuddy import (
     Mangabuddy,
     MangabuddyMangaParser,
     MangabuddySearch,
-    _build_id_from_html,
     _chapter_map_from_payload,
     _chapter_number_from_name,
     _images_from_chapter_payload,
@@ -103,14 +102,6 @@ def test_next_data_from_html_parses_embedded_json():
 def test_next_data_from_html_missing_returns_none():
     assert _next_data_from_html("<html><body>no next data</body></html>") is None
     assert _next_data_from_html('<script id="__NEXT_DATA__">not json</script>') is None
-
-
-def test_build_id_from_html():
-    html = (
-        '<script id="__NEXT_DATA__">{"buildId":"OPsvqfupCJTheB3Vjj-jF","x":1}</script>'
-    )
-    assert _build_id_from_html(html) == "OPsvqfupCJTheB3Vjj-jF"
-    assert _build_id_from_html("<html>no build id</html>") is None
 
 
 def test_parse_search_items_real_shape():
@@ -206,23 +197,23 @@ def test_volume_url_unknown_chapter_raises():
 # ============================== page urls ================================
 
 
-def test_page_urls_reads_images_from_embedded_next_data():
-    # single browser fetch: images come straight from the page's __NEXT_DATA__,
-    # no _next/data round-trip needed
+def test_page_urls_uses_curl_cffi_when_it_clears_the_page():
+    # curl_cffi gets the page HTML with embedded __NEXT_DATA__ -> NO browser
     parser = MangabuddyMangaParser("naruto")
     parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
 
-    fake_fetcher = mock.Mock()
-    fake_fetcher.get.return_value = FetchResult("u", 200, CHAPTER_PAGE_HTML)
-
-    with mock.patch(
-        "scraper.parsers.mangabuddy.BrowserFetcher", return_value=fake_fetcher
+    browser = mock.Mock()
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            return_value=FetchResult("u", 200, CHAPTER_PAGE_HTML),
+        ) as curl_get,
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
     ):
         pages = parser.page_urls("1")
 
-    # only the page itself was fetched; the _next/data fallback was NOT used
-    fake_fetcher.get.assert_called_once()
-    fake_fetcher.fetch_json_in_page.assert_not_called()
+    curl_get.assert_called_once()
+    browser.get.assert_not_called()  # browser never spun up
     assert pages[0] == (
         1,
         "https://rx.qvzrd.org/r/p/44a9873d/c7332944/7358c3b60772.webp",
@@ -230,33 +221,37 @@ def test_page_urls_reads_images_from_embedded_next_data():
     assert len(pages) == 4
 
 
-def test_page_urls_falls_back_to_next_data_endpoint():
-    # if the page HTML has no embedded images, fall back to _next/data via buildId
+def test_page_urls_falls_back_to_browser_when_curl_is_challenged():
+    # curl_cffi returns a challenge page (no __NEXT_DATA__) -> browser fallback
     parser = MangabuddyMangaParser("naruto")
     parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
-    html = '<script id="__NEXT_DATA__">{"buildId":"BID123","props":{}}</script>'
 
-    fake_fetcher = mock.Mock()
-    fake_fetcher.get.return_value = FetchResult("u", 200, html)
-    fake_fetcher.fetch_json_in_page.return_value = CHAPTER_PAGE_JSON
-
-    with mock.patch(
-        "scraper.parsers.mangabuddy.BrowserFetcher", return_value=fake_fetcher
+    browser = mock.Mock()
+    browser.get.return_value = FetchResult("u", 200, CHAPTER_PAGE_HTML)
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            return_value=FetchResult("u", 403, "<html>Just a moment...</html>"),
+        ),
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
     ):
         pages = parser.page_urls("1")
 
-    data_url = fake_fetcher.fetch_json_in_page.call_args[0][1]
-    assert "/_next/data/BID123/naruto/vol-1-chapter-1-uzumaki-naruto.json" in data_url
+    browser.get.assert_called_once()  # fell back to the browser
     assert len(pages) == 4
 
 
 def test_page_urls_no_images_anywhere_raises():
     parser = MangabuddyMangaParser("naruto")
     parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
-    fake_fetcher = mock.Mock()
-    fake_fetcher.get.return_value = FetchResult("u", 200, "<html>no build</html>")
-    with mock.patch(
-        "scraper.parsers.mangabuddy.BrowserFetcher", return_value=fake_fetcher
+    browser = mock.Mock()
+    browser.get.return_value = FetchResult("u", 200, "<html>no payload</html>")
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            return_value=FetchResult("u", 200, "<html>no payload</html>"),
+        ),
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
     ):
         with pytest.raises(VolumeDoesntExist):
             parser.page_urls("1")
