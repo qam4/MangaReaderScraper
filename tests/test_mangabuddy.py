@@ -26,6 +26,7 @@ from scraper.parsers.mangabuddy import (
     _chapter_map_from_payload,
     _chapter_number_from_name,
     _images_from_chapter_payload,
+    _next_data_from_html,
     _parse_search_items,
     _query_from_slug,
 )
@@ -34,6 +35,7 @@ FIXTURES = Path("tests/test_files/mangabuddy")
 SEARCH_JSON = (FIXTURES / "search_naruto.json").read_text(encoding="utf-8")
 CHAPTERS_JSON = (FIXTURES / "chapters_naruto.json").read_text(encoding="utf-8")
 CHAPTER_PAGE_JSON = (FIXTURES / "chapter_page.json").read_text(encoding="utf-8")
+CHAPTER_PAGE_HTML = (FIXTURES / "chapter_page.html").read_text(encoding="utf-8")
 
 
 def _ok(text):
@@ -74,11 +76,33 @@ def test_chapter_map_uses_name_number_not_api_sequence():
     assert mapping["1"] == "vol-1-chapter-1-uzumaki-naruto"
 
 
-def test_images_from_chapter_payload():
+def test_images_from_chapter_payload_next_data_shape():
+    # the _next/data shape: pageProps at top level
     payload = json.loads(CHAPTER_PAGE_JSON)
     images = _images_from_chapter_payload(payload)
     assert len(images) == 4
     assert images[0].endswith("7358c3b60772.webp")
+
+
+def test_images_from_chapter_payload_next_data_html_shape():
+    # the __NEXT_DATA__ shape: props.pageProps
+    payload = _next_data_from_html(CHAPTER_PAGE_HTML)
+    images = _images_from_chapter_payload(payload)
+    assert len(images) == 4
+    assert images[0].endswith("7358c3b60772.webp")
+
+
+def test_next_data_from_html_parses_embedded_json():
+    data = _next_data_from_html(CHAPTER_PAGE_HTML)
+    assert data["buildId"] == "OPsvqfupCJTheB3Vjj-jF"
+    assert data["props"]["pageProps"]["initialChapter"]["slug"] == (
+        "vol-1-chapter-1-uzumaki-naruto"
+    )
+
+
+def test_next_data_from_html_missing_returns_none():
+    assert _next_data_from_html("<html><body>no next data</body></html>") is None
+    assert _next_data_from_html('<script id="__NEXT_DATA__">not json</script>') is None
 
 
 def test_build_id_from_html():
@@ -182,10 +206,35 @@ def test_volume_url_unknown_chapter_raises():
 # ============================== page urls ================================
 
 
-def test_page_urls_reads_images_from_next_data():
+def test_page_urls_reads_images_from_embedded_next_data():
+    # single browser fetch: images come straight from the page's __NEXT_DATA__,
+    # no _next/data round-trip needed
     parser = MangabuddyMangaParser("naruto")
     parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
-    html = '<script id="__NEXT_DATA__">{"buildId":"BID123"}</script>'
+
+    fake_fetcher = mock.Mock()
+    fake_fetcher.get.return_value = FetchResult("u", 200, CHAPTER_PAGE_HTML)
+
+    with mock.patch(
+        "scraper.parsers.mangabuddy.BrowserFetcher", return_value=fake_fetcher
+    ):
+        pages = parser.page_urls("1")
+
+    # only the page itself was fetched; the _next/data fallback was NOT used
+    fake_fetcher.get.assert_called_once()
+    fake_fetcher.fetch_json_in_page.assert_not_called()
+    assert pages[0] == (
+        1,
+        "https://rx.qvzrd.org/r/p/44a9873d/c7332944/7358c3b60772.webp",
+    )
+    assert len(pages) == 4
+
+
+def test_page_urls_falls_back_to_next_data_endpoint():
+    # if the page HTML has no embedded images, fall back to _next/data via buildId
+    parser = MangabuddyMangaParser("naruto")
+    parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
+    html = '<script id="__NEXT_DATA__">{"buildId":"BID123","props":{}}</script>'
 
     fake_fetcher = mock.Mock()
     fake_fetcher.get.return_value = FetchResult("u", 200, html)
@@ -196,17 +245,12 @@ def test_page_urls_reads_images_from_next_data():
     ):
         pages = parser.page_urls("1")
 
-    # built the _next/data url with the scraped buildId + slug
     data_url = fake_fetcher.fetch_json_in_page.call_args[0][1]
     assert "/_next/data/BID123/naruto/vol-1-chapter-1-uzumaki-naruto.json" in data_url
-    assert pages[0] == (
-        1,
-        "https://rx.qvzrd.org/r/p/44a9873d/c7332944/7358c3b60772.webp",
-    )
     assert len(pages) == 4
 
 
-def test_page_urls_no_build_id_raises():
+def test_page_urls_no_images_anywhere_raises():
     parser = MangabuddyMangaParser("naruto")
     parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
     fake_fetcher = mock.Mock()

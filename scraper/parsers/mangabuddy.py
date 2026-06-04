@@ -145,11 +145,39 @@ def _build_id_from_html(html: str) -> Optional[str]:
 
 
 def _images_from_chapter_payload(payload: dict) -> List[str]:
-    """Extract the ordered page-image urls from a ``_next/data`` chapter payload
-    (``pageProps.initialChapter.images``). Pure and unit-tested."""
-    chapter = payload.get("pageProps", {}).get("initialChapter", {})
+    """Extract the ordered page-image urls from a chapter payload.
+
+    Handles both shapes we've seen:
+      * the page's ``__NEXT_DATA__`` -> ``props.pageProps.initialChapter.images``
+      * the ``_next/data`` json     -> ``pageProps.initialChapter.images``
+    Pure and unit-tested.
+    """
+    page_props = payload.get("pageProps")
+    if page_props is None:
+        page_props = payload.get("props", {}).get("pageProps", {})
+    chapter = page_props.get("initialChapter", {}) if page_props else {}
     images = chapter.get("images") or []
     return [url for url in images if isinstance(url, str)]
+
+
+def _next_data_from_html(html: str) -> Optional[dict]:
+    """Parse the Next.js ``__NEXT_DATA__`` JSON embedded in a page's HTML.
+
+    mangak.io server-renders the chapter page with the full payload (including
+    ``initialChapter.images``) inside ``<script id="__NEXT_DATA__">``, so we can
+    read the image list straight from the page HTML -- no second request to the
+    ``_next/data`` endpoint, and no dependency on the deploy ``buildId``. Returns
+    ``None`` if the script isn't present or doesn't parse. Pure/unit-tested.
+    """
+    match = re.search(
+        r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL
+    )
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except ValueError:
+        return None
 
 
 # ================================ parser =================================
@@ -248,28 +276,35 @@ class MangabuddyMangaParser(BaseMangaParser):
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] for every page in a chapter.
 
-        Fetches the Next.js ``_next/data`` chapter JSON (driving a browser
-        because the page host is Cloudflare-walled), reading the current
-        ``buildId`` from the page first.
+        mangak.io server-renders the chapter page with the full image list in
+        its ``__NEXT_DATA__`` payload, so a single browser fetch of the page is
+        enough -- we parse the embedded JSON and read
+        ``initialChapter.images``. (The page host is Cloudflare-walled, hence
+        the browser.) If the embedded payload is missing images, we fall back to
+        the ``_next/data`` endpoint, scraping the current ``buildId``.
         """
         chapter_url = self.volume_url(volume)
         slug = self._chapter_slugs[volume]
 
         fetcher = BrowserFetcher()
         page = fetcher.get(chapter_url)
-        build_id = _build_id_from_html(page.text)
-        if not build_id:
-            raise VolumeDoesntExist(
-                f"Could not find buildId on {chapter_url} "
-                "(page blocked or layout changed)"
-            )
 
-        data_url = (
-            f"{self.base_url}/_next/data/{build_id}/{self.manga_url}/{slug}.json"
-            f"?slug={self.manga_url}&chapter-slug={slug}"
-        )
-        body = fetcher.fetch_json_in_page(chapter_url, data_url)
-        images = _images_from_chapter_payload(json.loads(body))
+        images: List[str] = []
+        next_data = _next_data_from_html(page.text)
+        if next_data is not None:
+            images = _images_from_chapter_payload(next_data)
+
+        # fallback: hit the _next/data endpoint with the live buildId
+        if not images:
+            build_id = _build_id_from_html(page.text)
+            if build_id:
+                data_url = (
+                    f"{self.base_url}/_next/data/{build_id}/{self.manga_url}/"
+                    f"{slug}.json?slug={self.manga_url}&chapter-slug={slug}"
+                )
+                body = fetcher.fetch_json_in_page(chapter_url, data_url)
+                images = _images_from_chapter_payload(json.loads(body))
+
         if not images:
             raise VolumeDoesntExist(
                 f"No page images found for {self.manga_url} chapter {volume}"
