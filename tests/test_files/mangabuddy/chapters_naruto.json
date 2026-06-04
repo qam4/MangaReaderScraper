@@ -1,0 +1,55 @@
+{
+  "success": true,
+  "data": {
+    "chapters": [
+      {
+        "id": "WYXlbzbY",
+        "url": "/naruto/chapter-700-5-uzumaki-naruto",
+        "name": "Chapter 700.5 : Uzumaki Naruto",
+        "slug": "chapter-700-5-uzumaki-naruto",
+        "chapter_number": 748,
+        "cv": 1780511268548
+      },
+      {
+        "id": "W2WlnBK8",
+        "url": "/naruto/vol-72-chapter-700-1-book-of-thunder",
+        "name": "Vol.72 Chapter 700.1 : Book Of Thunder",
+        "slug": "vol-72-chapter-700-1-book-of-thunder",
+        "chapter_number": 747,
+        "cv": 1566698880000
+      },
+      {
+        "id": "98vX4gMD",
+        "url": "/naruto/vol-72-chapter-700-uzumaki-naruto",
+        "name": "Vol.72 Chapter 700 : Uzumaki Naruto!!",
+        "slug": "vol-72-chapter-700-uzumaki-naruto",
+        "chapter_number": 746,
+        "cv": 1566698880000
+      },
+      {
+        "id": "p2q06qdD",
+        "url": "/naruto/vol-72-chapter-699-5-after-the-last",
+        "name": "Vol.72 Chapter 699.5 : After The Last",
+        "slug": "vol-72-chapter-699-5-after-the-last",
+        "chapter_number": 745,
+        "cv": 1566698880000
+      },
+      {
+        "id": "98vX4gM2",
+        "url": "/naruto/vol-1-chapter-1-uzumaki-naruto",
+        "name": "Vol.1 Chapter 1 : Uzumaki Naruto",
+        "slug": "vol-1-chapter-1-uzumaki-naruto",
+        "chapter_number": 2,
+        "cv": 1566698880000
+      },
+      {
+        "id": "9YJM1WW8",
+        "url": "/naruto/vol-1-chapter-0-naruto-pilot-manga",
+        "name": "Vol.1 Chapter 0 : Naruto Pilot Manga",
+        "slug": "vol-1-chapter-0-naruto-pilot-manga",
+        "chapter_number": 1,
+        "cv": 1566698880000
+      }
+    ]
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "VYPXkPYz",
+        "url": "/naruto",
+        "name": "Naruto",
+        "match_field": "name",
+        "slug": "naruto",
+        "cover": "https://rx.resmk.org/covers/0b72878c8bcc.webp",
+        "status": "completed",
+        "rating": 4.2,
+        "stats": {
+          "views": 7161766,
+          "bookmarks_count": 1756,
+          "chapters_count": 748
+        },
+        "cv": 1780511268548,
+        "latest_chapters": [
+          {
+            "id": "WYXlbzbY",
+            "url": "/naruto/chapter-700-5-uzumaki-naruto",
+            "name": "Chapter 700.5 : Uzumaki Naruto",
+            "slug": "chapter-700-5-uzumaki-naruto",
+            "chapter_number": 748
+          }
+        ]
+      },
+      {
+        "id": "z8dq0noY",
+        "url": "/naruto-the-seventh-hokage-reborn",
+        "name": "NARUTO : The Seventh Hokage Reborn",
+        "match_field": "name",
+        "slug": "naruto-the-seventh-hokage-reborn",
+        "cover": "https://rx.resmk.org/covers/83f9c763a5c0.webp",
+        "status": "ongoing",
+        "rating": 5,
+        "stats": {
+          "views": 45188,
+          "bookmarks_count": 113,
+          "chapters_count": 27
+        },
+        "cv": 1779831354364,
+        "latest_chapters": [
+          {
+            "id": "WYXk0Ox8",
+            "url": "/naruto-the-seventh-hokage-reborn/chapter-17",
+            "name": "Chapter 17",
+            "slug": "chapter-17",
+            "chapter_number": 27
+          }
+        ]
+      }
+    ]
+  }
+}
