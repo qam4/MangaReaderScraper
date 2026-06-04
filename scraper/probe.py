@@ -11,7 +11,9 @@ given URL:
     the search / chapter-list / page-list API; some sites are API-backed, some
     are plain HTML -- the probe reports what it sees rather than assuming) and
     **dumps the JSON response bodies** of those calls so you can read the actual
-    API shape instead of reverse-engineering Tailwind-class-soup markup;
+    API shape instead of reverse-engineering Tailwind-class-soup markup, then
+    **re-tries those endpoints with plain requests + curl_cffi** to tell you
+    whether the API is reachable without a browser (``api_backends.txt``);
   * recommends a **fetch strategy** by trying the page with plain requests vs a
     browser: requests / nodriver-headless / nodriver-headful / nodriver-manual
     (interactive captcha needing user barge-in) / unknown;
@@ -548,6 +550,90 @@ def _plain_requests_get(url: str):
         return None, None, str(err)
 
 
+def looks_like_json(text: Optional[str]) -> bool:
+    """True if ``text`` plausibly parses as a JSON object/array. Pure helper,
+    unit-tested -- used to decide whether a backend got the real API payload
+    rather than a Cloudflare HTML interstitial."""
+    if not text:
+        return False
+    import json as _json
+
+    stripped = text.lstrip()
+    if not stripped or stripped[0] not in "{[":
+        return False
+    try:
+        _json.loads(stripped)
+        return True
+    except Exception:
+        return False
+
+
+def summarize_backend_probe(label: str, status, error, body) -> str:
+    """Render one line describing how a backend fared against an API URL. Pure
+    and unit-tested. ``status``/``error``/``body`` are what the backend returned
+    (status None + error set means it raised; body is the response text)."""
+    if error:
+        return f"  {label}: ERROR {error}"
+    is_json = looks_like_json(body)
+    blen = len(body) if body else 0
+    verdict = "JSON OK" if (status == 200 and is_json) else "no JSON (blocked?)"
+    return f"  {label}: status={status} len={blen} json={is_json} -> {verdict}"
+
+
+def _check_api_backends(api_urls: List[str], max_urls: int = 3) -> str:
+    """For a few captured API URLs, try plain requests and curl_cffi (Chrome
+    impersonation) and report whether each returns real JSON without a browser.
+
+    This answers the key parser question: can the site's API be hit with a
+    cheap HTTP client (curl_cffi/requests), or does it need a full browser?
+    Only the data-looking endpoints are worth checking, so the caller passes a
+    filtered list; we cap how many we hit to stay polite.
+    """
+    import requests  # type: ignore
+
+    # only real data endpoints, de-duped, capped
+    candidates = [u for u in dict.fromkeys(api_urls) if is_api_like_url(u)][:max_urls]
+    if not candidates:
+        return "(no API-looking endpoints to check)\n"
+
+    lines = [
+        "# Can the API be reached WITHOUT a browser?",
+        "# (tries plain requests + curl_cffi Chrome impersonation per endpoint)",
+        "",
+    ]
+    for url in candidates:
+        lines.append(url)
+        # plain requests
+        try:
+            resp = requests.get(url, timeout=20)
+            lines.append(
+                summarize_backend_probe(
+                    "requests   ", resp.status_code, None, resp.text
+                )
+            )
+        except Exception as err:
+            lines.append(summarize_backend_probe("requests   ", None, str(err), None))
+        # curl_cffi with Chrome impersonation
+        try:
+            from curl_cffi import requests as creq  # type: ignore
+
+            cresp = creq.Session(impersonate="chrome").get(url, timeout=20)
+            lines.append(
+                summarize_backend_probe(
+                    "curl_cffi  ", cresp.status_code, None, cresp.text
+                )
+            )
+        except Exception as err:
+            lines.append(summarize_backend_probe("curl_cffi  ", None, str(err), None))
+        lines.append("")
+    lines.append(
+        "If curl_cffi shows 'JSON OK', the parser can use CurlCffiFetcher (no "
+        "browser) for these endpoints. If both are blocked but the browser "
+        "captured a body, the parser needs BrowserFetcher."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _check_image(img_url: str, referer: str) -> str:
     """
     Probe an image URL to see whether the CDN is protected: try plain requests
@@ -865,6 +951,11 @@ async def _probe(
         _write(out_dir, "ajax_log.txt", "\n".join(ajax_urls) or "(no ajax calls seen)")
         _write(out_dir, "candidates.txt", report.render())
         _dump_api_bodies(out_dir, api_bodies, api_misses)
+
+        # Backend reachability: can the captured API endpoints be hit without a
+        # browser (plain requests / curl_cffi)? Decides the parser's fetcher.
+        api_seen = [u for (u, _b) in api_bodies] + api_misses
+        _write(out_dir, "api_backends.txt", _check_api_backends(api_seen))
     finally:
         browser.stop()
 
@@ -906,8 +997,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     print(
         f"\nDone. Inspect {out_dir}/ajax_log.txt + api_index.txt (and the "
-        "api_*.json dumps) and candidates.txt (and search_*.txt if --search was "
-        "used), then save the relevant captures as fixtures and write the parser "
+        "api_*.json dumps), api_backends.txt (can the API be hit without a "
+        "browser?) and candidates.txt (and search_*.txt if --search was used), "
+        "then save the relevant captures as fixtures and write the parser "
         "against them."
     )
     return 0

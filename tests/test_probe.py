@@ -14,8 +14,10 @@ from scraper.probe import (
     find_text,
     is_api_like_url,
     is_json_mime,
+    looks_like_json,
     render_matches,
     site_name_from_url,
+    summarize_backend_probe,
 )
 
 # ========================= site_name_from_url ============================
@@ -325,3 +327,39 @@ def test_dump_api_bodies_misses_only(tmp_path):
     index = (tmp_path / "api_index.txt").read_text(encoding="utf-8")
     assert "no API/JSON response bodies captured" in index
     assert "https://x/api/evicted" in index
+
+
+# ===================== API backend reachability ==========================
+
+
+def test_looks_like_json_accepts_objects_and_arrays():
+    assert looks_like_json('{"a": 1}')
+    assert looks_like_json("  [1, 2, 3]  ")  # leading whitespace tolerated
+    assert looks_like_json('{"data": {"items": []}}')
+
+
+def test_looks_like_json_rejects_html_and_junk():
+    assert not looks_like_json("<html><title>Just a moment...</title></html>")
+    assert not looks_like_json("")
+    assert not looks_like_json(None)
+    assert not looks_like_json("{not valid json")
+
+
+def test_summarize_backend_probe_reports_json_ok():
+    line = summarize_backend_probe("requests", 200, None, '{"data": {"items": []}}')
+    assert "status=200" in line
+    assert "json=True" in line
+    assert "JSON OK" in line
+
+
+def test_summarize_backend_probe_flags_blocked_html():
+    line = summarize_backend_probe("requests", 403, None, "<html>nope</html>")
+    assert "status=403" in line
+    assert "json=False" in line
+    assert "blocked" in line
+
+
+def test_summarize_backend_probe_reports_error():
+    line = summarize_backend_probe("curl_cffi", None, "dns fail", None)
+    assert "ERROR" in line
+    assert "dns fail" in line
