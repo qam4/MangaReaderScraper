@@ -304,3 +304,24 @@ def test_dump_api_bodies_handles_empty(tmp_path):
     _dump_api_bodies(tmp_path, [])
     index = (tmp_path / "api_index.txt").read_text(encoding="utf-8")
     assert "no API/JSON response bodies captured" in index
+
+
+def test_dump_api_bodies_records_misses(tmp_path):
+    from scraper.probe import _dump_api_bodies
+
+    # bodies captured + an endpoint we saw but couldn't read
+    bodies = [("https://x/api/search?q=n", '{"a":1}')]
+    misses = ["https://x/api/evicted", "https://x/api/evicted"]  # dup collapses
+    _dump_api_bodies(tmp_path, bodies, misses)
+    index = (tmp_path / "api_index.txt").read_text(encoding="utf-8")
+    assert "could not read a body" in index
+    assert index.count("https://x/api/evicted") == 1
+
+
+def test_dump_api_bodies_misses_only(tmp_path):
+    from scraper.probe import _dump_api_bodies
+
+    _dump_api_bodies(tmp_path, [], ["https://x/api/evicted"])
+    index = (tmp_path / "api_index.txt").read_text(encoding="utf-8")
+    assert "no API/JSON response bodies captured" in index
+    assert "https://x/api/evicted" in index

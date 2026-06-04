@@ -465,22 +465,30 @@ def _write(out_dir: Path, name: str, text: str) -> None:
     print(f"  wrote {out_dir / name}  ({len(text)} chars)")
 
 
-def _dump_api_bodies(out_dir: Path, api_bodies: List[Tuple[str, str]]) -> None:
+def _dump_api_bodies(
+    out_dir: Path,
+    api_bodies: List[Tuple[str, str]],
+    api_misses: Optional[List[str]] = None,
+) -> None:
     """Write each captured API response body to its own file, plus an index.
 
     JSON bodies are pretty-printed for readability; anything that doesn't parse
     is written verbatim. The index maps each dump file back to its source URL so
     you can see at a glance which endpoint served what (e.g. spot the search API
-    among the home-page boot calls).
+    among the home-page boot calls). ``api_misses`` lists endpoints we saw but
+    couldn't read a body for -- recorded so they aren't hidden.
     """
     import json as _json
 
+    misses = list(dict.fromkeys(api_misses or []))
+
     if not api_bodies:
-        _write(
-            out_dir,
-            "api_index.txt",
-            "(no API/JSON response bodies captured)\n",
-        )
+        lines = ["(no API/JSON response bodies captured)"]
+        if misses:
+            lines.append("")
+            lines.append("# saw these data endpoints but could not read a body:")
+            lines.extend(misses)
+        _write(out_dir, "api_index.txt", "\n".join(lines) + "\n")
         return
 
     index_lines = [f"# {len(api_bodies)} API/JSON response(s) captured\n"]
@@ -492,7 +500,41 @@ def _dump_api_bodies(out_dir: Path, api_bodies: List[Tuple[str, str]]) -> None:
             pretty = body  # not JSON (or truncated) -- keep raw
         _write(out_dir, fname, pretty)
         index_lines.append(f"{fname}\t<- {url}  ({len(body)} chars)")
+    if misses:
+        index_lines.append("")
+        index_lines.append("# saw these data endpoints but could not read a body:")
+        index_lines.extend(misses)
     _write(out_dir, "api_index.txt", "\n".join(index_lines) + "\n")
+
+
+async def _refetch_misses(tab, misses, api_bodies) -> int:
+    """Re-fetch endpoints we couldn't read from the CDP buffer, from inside the
+    page (credentialed, same-origin). Appends recovered (url, body) pairs to
+    ``api_bodies`` and returns how many were recovered. Best effort."""
+    import json as _json
+
+    already = {u for u, _ in api_bodies}
+    recovered = 0
+    for url in dict.fromkeys(misses):
+        if url in already:
+            continue
+        js = (
+            "(async () => {"
+            f"  try {{ const r = await fetch({_json.dumps(url)}, "
+            "      {credentials: 'include', "
+            "       headers: {'X-Requested-With': 'XMLHttpRequest'}});"
+            "    return await r.text(); } catch (e) { return null; }"
+            "})()"
+        )
+        try:
+            body = await tab.evaluate(js, await_promise=True)
+        except Exception as err:  # pragma: no cover - browser timing
+            logger.debug(f"in-page refetch failed for {url}: {err}")
+            continue
+        if isinstance(body, str) and body:
+            api_bodies.append((url, body))
+            recovered += 1
+    return recovered
 
 
 def _plain_requests_get(url: str):
@@ -637,7 +679,9 @@ async def _drive_search(
     except Exception:
         pass
     await box.send_keys(query)
-    await tab.wait(1)
+    # Let any debounced live-search XHR fire and complete before we capture.
+    # (Many SPA search boxes query as you type, with no navigation at all.)
+    await tab.wait(3)
 
     # 3. press a real Enter key (keyDown + keyUp with the proper key codes)
     for kind in ("keyDown", "keyUp"):
@@ -719,12 +763,14 @@ async def _probe(
     browser = await nd.start(headless=False, sandbox=False, no_sandbox=True)
     try:
         ajax_urls: List[str] = []
-        # request_id -> url for responses worth dumping (API-like path or JSON
-        # mime). Populated on ResponseReceived; bodies fetched on LoadingFinished
-        # (the body buffer isn't ready before then). api_bodies collects
-        # (url, body) once retrieved.
-        api_targets: dict = {}
+        # Captured XHR/Fetch responses. We track ALL of them by resource type
+        # (not URL guesswork), because a live-search endpoint often has a plain
+        # path (e.g. /search?q=...) with no /api/ or .json marker. request_id ->
+        # (url, mime). Bodies pulled on LoadingFinished; misses are recorded so
+        # the index shows what we saw-but-couldn't-read rather than hiding it.
+        data_targets: dict = {}
         api_bodies: List[Tuple[str, str]] = []
+        api_misses: List[str] = []
         tab = await browser.get("about:blank")
 
         async def on_request(evt: cdp.network.RequestWillBeSent):
@@ -733,28 +779,36 @@ async def _probe(
                 ajax_urls.append(u)
 
         async def on_response(evt: cdp.network.ResponseReceived):
-            # Mark responses to capture: API-looking URL, or any JSON mime-type
-            # (catches API calls served from non-obvious paths).
+            # Mark XHR/Fetch responses (the ones a JS app uses for data), plus
+            # anything with a JSON mime-type regardless of resource type.
+            rtype = getattr(evt.type_, "value", str(evt.type_))
             url_ = evt.response.url
-            if is_api_like_url(url_) or is_json_mime(evt.response.mime_type):
-                api_targets[evt.request_id] = url_
+            is_data = rtype in ("XHR", "Fetch") or is_json_mime(evt.response.mime_type)
+            if is_data:
+                data_targets[evt.request_id] = (url_, evt.response.mime_type)
+                if url_ not in ajax_urls:
+                    ajax_urls.append(url_)
 
         async def on_loading_finished(evt: cdp.network.LoadingFinished):
             # Body buffer is ready now; pull it for any marked request. Best
-            # effort -- a redirect/navigation can evict the buffer, so tolerate
-            # failures rather than aborting the probe.
-            target_url = api_targets.pop(evt.request_id, None)
-            if target_url is None:
+            # effort -- a redirect/SPA cache can evict the buffer, so record a
+            # miss rather than dropping the endpoint silently.
+            target = data_targets.pop(evt.request_id, None)
+            if target is None:
                 return
+            target_url, _mime = target
             try:
                 body, _b64 = await tab.send(
                     cdp.network.get_response_body(evt.request_id)
                 )
             except Exception as err:  # pragma: no cover - browser timing
                 logger.debug(f"could not read body for {target_url}: {err}")
+                api_misses.append(target_url)
                 return
             if body:
                 api_bodies.append((target_url, body))
+            else:
+                api_misses.append(target_url)
 
         tab.add_handler(cdp.network.RequestWillBeSent, on_request)
         tab.add_handler(cdp.network.ResponseReceived, on_response)
@@ -800,9 +854,17 @@ async def _probe(
         # a moment to finish so their bodies get captured.
         await tab.wait(2)
 
+        # Fallback: for endpoints we saw but couldn't read from the CDP buffer
+        # (SPA caches / evicted buffers), re-fetch them from inside the page
+        # (credentialed, same-origin) so we still get the JSON. De-duplicated.
+        if api_misses:
+            recovered = await _refetch_misses(tab, api_misses, api_bodies)
+            if recovered:
+                print(f"[probe] recovered {recovered} body(ies) via in-page refetch")
+
         _write(out_dir, "ajax_log.txt", "\n".join(ajax_urls) or "(no ajax calls seen)")
         _write(out_dir, "candidates.txt", report.render())
-        _dump_api_bodies(out_dir, api_bodies)
+        _dump_api_bodies(out_dir, api_bodies, api_misses)
     finally:
         browser.stop()
 
