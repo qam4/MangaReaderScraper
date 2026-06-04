@@ -8,9 +8,12 @@ from scraper.probe import (
     ProbeReport,
     _element_selector,
     analyze_html,
+    api_dump_filename,
     compare_fetches,
     detect_challenge,
     find_text,
+    is_api_like_url,
+    is_json_mime,
     render_matches,
     site_name_from_url,
 )
@@ -232,3 +235,72 @@ def test_element_selector_formats_id_and_classes():
     assert sel.startswith("div#Read")
     # caps classes at 3
     assert sel.count(".") == 3
+
+
+# ===================== API response-body capture =========================
+
+
+def test_is_api_like_url_matches_ajax_api_json():
+    assert is_api_like_url("https://site/api/search?q=naruto")
+    assert is_api_like_url("https://site/ajax/manga/read/123")
+    assert is_api_like_url("https://site/data/list.json")
+    # query string is ignored when deciding
+    assert is_api_like_url("https://site/api/v2/manga?id=9&page=2")
+
+
+def test_is_api_like_url_rejects_plain_pages_and_assets():
+    assert not is_api_like_url("https://site/manga/dragon-ball")
+    assert not is_api_like_url("https://site/home")
+    assert not is_api_like_url("https://site/static/app.js")
+
+
+def test_is_json_mime():
+    assert is_json_mime("application/json")
+    assert is_json_mime("application/json; charset=utf-8")
+    assert is_json_mime("text/json")
+    assert is_json_mime("application/vnd.api+json")
+    assert not is_json_mime("text/html")
+    assert not is_json_mime("")
+    assert not is_json_mime(None)
+
+
+def test_api_dump_filename_is_safe_and_indexed():
+    assert (
+        api_dump_filename(3, "https://mangak.io/api/search?q=naruto")
+        == "api_03_search.json"
+    )
+    # trailing slash + nested path -> last meaningful segment
+    assert api_dump_filename(1, "https://x/api/manga/list/") == "api_01_list.json"
+    # already-.json path is preserved (not doubled)
+    assert api_dump_filename(12, "https://x/data/v2.json") == "api_12_v2.json"
+    # empty path falls back to a default name
+    assert api_dump_filename(2, "https://x") == "api_02_response.json"
+
+
+def test_dump_api_bodies_writes_files_and_index(tmp_path):
+    from scraper.probe import _dump_api_bodies
+
+    bodies = [
+        ("https://x/api/search?q=naruto", '{"results":[{"title":"Naruto"}]}'),
+        ("https://x/api/manifest", "not-json-raw"),
+    ]
+    _dump_api_bodies(tmp_path, bodies)
+
+    index = (tmp_path / "api_index.txt").read_text(encoding="utf-8")
+    assert "2 API/JSON response" in index
+    assert "api_01_search.json" in index
+    assert "api_02_manifest.json" in index
+
+    # JSON body is pretty-printed (indented), raw body kept verbatim
+    search = (tmp_path / "api_01_search.json").read_text(encoding="utf-8")
+    assert '"title": "Naruto"' in search  # space after colon == indented json
+    raw = (tmp_path / "api_02_manifest.json").read_text(encoding="utf-8")
+    assert raw == "not-json-raw"
+
+
+def test_dump_api_bodies_handles_empty(tmp_path):
+    from scraper.probe import _dump_api_bodies
+
+    _dump_api_bodies(tmp_path, [])
+    index = (tmp_path / "api_index.txt").read_text(encoding="utf-8")
+    assert "no API/JSON response bodies captured" in index

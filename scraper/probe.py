@@ -9,7 +9,9 @@ given URL:
 
   * logs **every ajax/API/JSON URL** the page fires (this alone often hands you
     the search / chapter-list / page-list API; some sites are API-backed, some
-    are plain HTML -- the probe reports what it sees rather than assuming);
+    are plain HTML -- the probe reports what it sees rather than assuming) and
+    **dumps the JSON response bodies** of those calls so you can read the actual
+    API shape instead of reverse-engineering Tailwind-class-soup markup;
   * recommends a **fetch strategy** by trying the page with plain requests vs a
     browser: requests / nodriver-headless / nodriver-headful / nodriver-manual
     (interactive captcha needing user barge-in) / unknown;
@@ -31,16 +33,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
 from scraper.parsers._html import attr
+
+logger = logging.getLogger(__name__)
 
 # a chapter-looking href fragment, e.g. /read/x/en/chapter-28.22 or chapter_55
 _CHAPTER_HREF = re.compile(r"chapter[-_/]([\d.]+)", re.I)
@@ -460,6 +465,36 @@ def _write(out_dir: Path, name: str, text: str) -> None:
     print(f"  wrote {out_dir / name}  ({len(text)} chars)")
 
 
+def _dump_api_bodies(out_dir: Path, api_bodies: List[Tuple[str, str]]) -> None:
+    """Write each captured API response body to its own file, plus an index.
+
+    JSON bodies are pretty-printed for readability; anything that doesn't parse
+    is written verbatim. The index maps each dump file back to its source URL so
+    you can see at a glance which endpoint served what (e.g. spot the search API
+    among the home-page boot calls).
+    """
+    import json as _json
+
+    if not api_bodies:
+        _write(
+            out_dir,
+            "api_index.txt",
+            "(no API/JSON response bodies captured)\n",
+        )
+        return
+
+    index_lines = [f"# {len(api_bodies)} API/JSON response(s) captured\n"]
+    for i, (url, body) in enumerate(api_bodies, start=1):
+        fname = api_dump_filename(i, url)
+        try:
+            pretty = _json.dumps(_json.loads(body), indent=2, ensure_ascii=False)
+        except Exception:
+            pretty = body  # not JSON (or truncated) -- keep raw
+        _write(out_dir, fname, pretty)
+        index_lines.append(f"{fname}\t<- {url}  ({len(body)} chars)")
+    _write(out_dir, "api_index.txt", "\n".join(index_lines) + "\n")
+
+
 def _plain_requests_get(url: str):
     """GET ``url`` with plain requests. Returns (html, status, error)."""
     import requests  # type: ignore
@@ -502,6 +537,168 @@ def _check_image(img_url: str, referer: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def is_api_like_url(url: str) -> bool:
+    """True if ``url`` looks like a JSON/AJAX API endpoint (by path shape).
+
+    Pure and unit-tested. Mirrors the request-capture filter so the
+    request-URL log and the response-body capture agree on what counts.
+    """
+    u = url.split("?", 1)[0].lower()
+    return "ajax" in u or "/api/" in u or u.endswith(".json")
+
+
+def is_json_mime(mime: Optional[str]) -> bool:
+    """True if a response mime-type denotes JSON. Pure and unit-tested."""
+    if not mime:
+        return False
+    m = mime.lower()
+    return "json" in m  # application/json, text/json, *+json
+
+
+def api_dump_filename(index: int, url: str) -> str:
+    """Build a stable, filesystem-safe filename for a captured API body.
+
+    e.g. (3, "https://mangak.io/api/search?q=naruto") -> "api_03_search.json".
+    Pure and unit-tested.
+    """
+    path = urlparse(url).path
+    last = path.rstrip("/").split("/")[-1] if path else ""
+    slug = re.sub(r"[^A-Za-z0-9._-]", "_", last) or "response"
+    if not slug.endswith(".json"):
+        slug += ".json"
+    return f"api_{index:02d}_{slug}"
+
+
+# CSS selectors we try, in order, to locate a site's search input.
+_SEARCH_INPUT_SELECTORS = (
+    "input[type=search]",
+    "input[name=keyword]",
+    "input[name=q]",
+    "input[name=search]",
+    ".search-inner input",
+    "header input[type=text]",
+    "input[type=text]",
+)
+
+
+async def _drive_search(
+    tab,
+    cdp,
+    query: str,
+    wait: float,
+    home_html: str,
+    home_report,
+    ajax_urls: List[str],
+    out_dir: Path,
+) -> None:
+    """Type ``query`` into the site's search box and submit it *for real*.
+
+    The earlier version only set ``input.value`` and called
+    ``form.requestSubmit()``, which silently did nothing on sites that navigate
+    on Enter or run JS-driven (debounced) search -- the captured "search page"
+    came back identical to the home page. Here we focus a real input, send real
+    keystrokes, press a real Enter, and fall back to clicking a submit control.
+    Crucially we then *verify* something actually changed (URL navigated, ajax
+    fired, or the HTML differs) and report honestly when it did not.
+    """
+    print(f"[probe] typing search query: {query!r}")
+
+    # 1. locate a search input via the candidate selectors
+    box = None
+    used_selector = None
+    for selector in _SEARCH_INPUT_SELECTORS:
+        try:
+            box = await tab.select(selector, timeout=2)
+        except Exception:
+            box = None
+        if box:
+            used_selector = selector
+            break
+
+    if not box:
+        print("[probe] search box: NOT FOUND (no input matched known selectors)")
+        _write(
+            out_dir,
+            "search_page.html",
+            "(no search input found; selectors tried:\n"
+            + "\n".join(_SEARCH_INPUT_SELECTORS)
+            + ")\n",
+        )
+        return
+
+    print(f"[probe] search box: found via {used_selector!r}")
+
+    url_before = await tab.evaluate("location.href")
+    ajax_before = len(ajax_urls)
+
+    # 2. type real keystrokes (focus + per-char char events)
+    try:
+        await box.clear_input()
+    except Exception:
+        pass
+    await box.send_keys(query)
+    await tab.wait(1)
+
+    # 3. press a real Enter key (keyDown + keyUp with the proper key codes)
+    for kind in ("keyDown", "keyUp"):
+        await tab.send(
+            cdp.input_.dispatch_key_event(
+                type_=kind,
+                key="Enter",
+                code="Enter",
+                windows_virtual_key_code=13,
+                native_virtual_key_code=13,
+            )
+        )
+    await tab.wait(wait)
+
+    # 4. if nothing moved, fall back to clicking a submit-looking control
+    url_after = await tab.evaluate("location.href")
+    if url_after == url_before and len(ajax_urls) == ajax_before:
+        clicked = await tab.evaluate(
+            "(() => {"
+            "  const b = document.querySelector("
+            "    'button[type=submit], .search-inner button, "
+            "     form[action*=search] button, button[class*=search]');"
+            "  if (b) { b.click(); return true; } return false;"
+            "})()"
+        )
+        if clicked is True:
+            print("[probe] Enter did nothing; clicked a submit control instead")
+            await tab.wait(wait)
+            url_after = await tab.evaluate("location.href")
+
+    # 5. capture and analyze the result
+    search_html = await tab.get_content()
+    _write(out_dir, "search_page.html", search_html)
+    search_report = analyze_html(search_html)
+    _write(out_dir, "search_candidates.txt", search_report.render())
+
+    # 6. report honestly whether the search action actually did anything
+    navigated = url_after != url_before
+    ajax_fired = len(ajax_urls) > ajax_before
+    html_changed = search_html != home_html
+    if navigated:
+        print(f"[probe] search navigated to {url_after}")
+    elif ajax_fired:
+        print("[probe] search fired ajax (likely API-backed in-page results)")
+    elif html_changed:
+        print("[probe] search did not navigate, but the DOM changed in place")
+    else:
+        print(
+            "[probe] !! search produced NO change (URL, ajax, and HTML are all "
+            "identical to the home page) -- the search box was found but the "
+            "query never took effect. The site may need a different submit "
+            "mechanism, or be blocking automated input."
+        )
+
+    if search_report.looks_like_challenge and not home_report.looks_like_challenge:
+        print(
+            "[probe] !! challenge appeared AFTER the search action "
+            "(the search request is what triggers it)"
+        )
+
+
 async def _probe(
     url: str,
     out_dir: Path,
@@ -516,22 +713,52 @@ async def _probe(
     (rather than the initial load) is what trips a Cloudflare challenge. The
     report flags challenge markers in the captured HTML either way.
     """
-    import json as _json
-
     import nodriver as nd
     from nodriver import cdp
 
     browser = await nd.start(headless=False, sandbox=False, no_sandbox=True)
     try:
         ajax_urls: List[str] = []
+        # request_id -> url for responses worth dumping (API-like path or JSON
+        # mime). Populated on ResponseReceived; bodies fetched on LoadingFinished
+        # (the body buffer isn't ready before then). api_bodies collects
+        # (url, body) once retrieved.
+        api_targets: dict = {}
+        api_bodies: List[Tuple[str, str]] = []
         tab = await browser.get("about:blank")
 
         async def on_request(evt: cdp.network.RequestWillBeSent):
             u = evt.request.url
-            if "ajax" in u or "/api/" in u or u.endswith(".json"):
+            if is_api_like_url(u):
                 ajax_urls.append(u)
 
+        async def on_response(evt: cdp.network.ResponseReceived):
+            # Mark responses to capture: API-looking URL, or any JSON mime-type
+            # (catches API calls served from non-obvious paths).
+            url_ = evt.response.url
+            if is_api_like_url(url_) or is_json_mime(evt.response.mime_type):
+                api_targets[evt.request_id] = url_
+
+        async def on_loading_finished(evt: cdp.network.LoadingFinished):
+            # Body buffer is ready now; pull it for any marked request. Best
+            # effort -- a redirect/navigation can evict the buffer, so tolerate
+            # failures rather than aborting the probe.
+            target_url = api_targets.pop(evt.request_id, None)
+            if target_url is None:
+                return
+            try:
+                body, _b64 = await tab.send(
+                    cdp.network.get_response_body(evt.request_id)
+                )
+            except Exception as err:  # pragma: no cover - browser timing
+                logger.debug(f"could not read body for {target_url}: {err}")
+                return
+            if body:
+                api_bodies.append((target_url, body))
+
         tab.add_handler(cdp.network.RequestWillBeSent, on_request)
+        tab.add_handler(cdp.network.ResponseReceived, on_response)
+        tab.add_handler(cdp.network.LoadingFinished, on_loading_finished)
         await tab.send(cdp.network.enable())
 
         print(f"[probe] opening {url}")
@@ -565,35 +792,17 @@ async def _probe(
             _write(out_dir, "image_check.txt", _check_image(img_url, url))
 
         if search:
-            print(f"[probe] typing search query: {search!r}")
-            js_type = (
-                "(() => {"
-                "  const i = document.querySelector("
-                "    'input[type=search], input[name=keyword], input[name=q], "
-                "     input[name=search], .search-inner input, input[type=text]');"
-                "  if (!i) return 'NO_INPUT';"
-                f"  i.value = {_json.dumps(search)};"
-                "  i.dispatchEvent(new Event('input', {bubbles:true}));"
-                "  i.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));"
-                "  if (i.form) i.form.requestSubmit && i.form.requestSubmit();"
-                "  return 'OK:' + (i.name || i.type);"
-                "})()"
+            await _drive_search(
+                tab, cdp, search, wait, html, report, ajax_urls, out_dir
             )
-            box = await tab.evaluate(js_type)
-            print(f"[probe] search box: {box}")
-            await tab.wait(wait)
-            search_html = await tab.get_content()
-            _write(out_dir, "search_page.html", search_html)
-            search_report = analyze_html(search_html)
-            _write(out_dir, "search_candidates.txt", search_report.render())
-            if search_report.looks_like_challenge and not report.looks_like_challenge:
-                print(
-                    "[probe] !! challenge appeared AFTER the search action "
-                    "(the search request is what triggers it)"
-                )
+
+        # Give any in-flight API responses (esp. those kicked off by the search)
+        # a moment to finish so their bodies get captured.
+        await tab.wait(2)
 
         _write(out_dir, "ajax_log.txt", "\n".join(ajax_urls) or "(no ajax calls seen)")
         _write(out_dir, "candidates.txt", report.render())
+        _dump_api_bodies(out_dir, api_bodies)
     finally:
         browser.stop()
 
@@ -634,9 +843,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         _probe(args.url, out_dir, search=args.search, find=args.find)
     )
     print(
-        f"\nDone. Inspect {out_dir}/ajax_log.txt and candidates.txt "
-        "(and search_*.txt if --search was used), then save the relevant "
-        "captures as fixtures and write the parser against them."
+        f"\nDone. Inspect {out_dir}/ajax_log.txt + api_index.txt (and the "
+        "api_*.json dumps) and candidates.txt (and search_*.txt if --search was "
+        "used), then save the relevant captures as fixtures and write the parser "
+        "against them."
     )
     return 0
 
