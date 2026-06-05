@@ -11,7 +11,9 @@ from scraper.probe import (
     FieldMapEntry,
     PathMatch,
     ProbeReport,
+    Recommendation,
     SiblingWarning,
+    StagePlan,
     _element_selector,
     analyze_html,
     api_dump_filename,
@@ -32,6 +34,7 @@ from scraper.probe import (
     sibling_mismatch_check,
     site_name_from_url,
     summarize_backend_probe,
+    synthesize_recommendation,
     write_field_map,
 )
 
@@ -985,3 +988,204 @@ def test_main_map_by_example_rejects_bad_token(tmp_path):
                 "noequals",
             ]
         )
+
+
+# ============== synthesize_recommendation (Phase 1, task 3) ==============
+# Phase 1 distils the capture artifacts (ajax log, api_backends verdicts,
+# captured bodies, page HTML) into ONE advisory recommendation. These tests use
+# crafted inputs mirroring real captures: an open-API mangak.io-like site, a
+# challenged-everywhere site, a plain-HTML site with no API, plus API-served
+# images and empty/defensive inputs. Pure -- no browser/network (Req 1.6,
+# Property 7); advisory framing is asserted (Property 6, Req 1.5).
+
+
+def _stage(rec: Recommendation, name: str) -> StagePlan:
+    """The single StagePlan named ``name`` (fails loudly if absent)."""
+    by_name = {s.name: s for s in rec.stages}
+    assert name in by_name, f"expected a {name} stage, got {sorted(by_name)}"
+    return by_name[name]
+
+
+def _next_data_html(images: list[str]) -> str:
+    """A minimal chapter page whose embedded ``__NEXT_DATA__`` carries an images
+    array under ``props.pageProps.initialChapter.images`` (the mangabuddy shape
+    that ``_images_from_chapter_payload`` reads)."""
+    payload = {"props": {"pageProps": {"initialChapter": {"images": images}}}}
+    return (
+        '<html><body><script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(payload)
+        + "</script></body></html>"
+    )
+
+
+def test_synthesize_open_api_site_curl_cffi_with_embedded_images():
+    # Req 1.2 + 1.4 (mangak.io-like): the search + chapters endpoints answer
+    # curl_cffi (JSON without a browser), and there is NO image-list endpoint --
+    # the images live embedded in the page __NEXT_DATA__.
+    search_url = "https://api.mangak.io/titles/search?q=naruto"
+    chapters_url = "https://api.mangak.io/titles/123/chapters?cv=ABC"
+    search_body = json.dumps(
+        {"data": {"items": [{"id": "abc", "slug": "naruto", "name": "Naruto"}]}}
+    )
+    chapters_body = json.dumps(
+        {"data": {"chapters": [{"slug": "chapter-1", "name": "Chapter 1"}]}}
+    )
+    page_html = _next_data_html(
+        ["https://cdn.example/x/1.webp", "https://cdn.example/x/2.webp"]
+    )
+
+    rec = synthesize_recommendation(
+        ajax_urls=[search_url, chapters_url],
+        api_backends={search_url: "curl_cffi", chapters_url: "curl_cffi"},
+        api_bodies=[(search_url, search_body), (chapters_url, chapters_body)],
+        page_html=page_html,
+    )
+
+    # Req 1.2: an open JSON API reachable without a browser -> prefer curl_cffi
+    assert rec.api_open is True
+    assert rec.default_fetcher == "curl_cffi"
+
+    # search + chapters point at the real endpoints with the curl_cffi fetcher
+    search = _stage(rec, "search")
+    assert search.mechanism == search_url
+    assert search.fetcher == "curl_cffi"
+    chapters = _stage(rec, "chapters")
+    assert chapters.mechanism == chapters_url
+    assert chapters.fetcher == "curl_cffi"
+
+    # Req 1.4: images are EMBEDDED in the page payload, NOT API-served
+    images = _stage(rec, "images")
+    assert "__NEXT_DATA__" in images.mechanism
+    assert "__NEXT_DATA__" in images.note
+    assert "EMBEDDED" in images.note
+    assert "embedded" in images.note.lower()
+    assert images.fetcher == "curl_cffi"
+
+    # Property 6 / Req 1.1, 1.5: advisory framing + hosts + every stage surface
+    text = rec.render()
+    assert "advisory" in text.lower()
+    assert "SUGGESTIONS" in text
+    assert "api.mangak.io" in text
+    assert "open JSON API found: yes" in text
+    assert "suggested default fetcher: curl_cffi" in text
+    for name in ("search", "chapters", "images"):
+        assert f"[{name}]" in text
+    assert search_url in text
+    assert chapters_url in text
+
+
+def test_synthesize_challenged_everywhere_site_needs_browser():
+    # Req 1.3: every endpoint is blocked to non-browser clients, but the browser
+    # captured a body -> the recommendation falls back to BrowserFetcher, and
+    # the stage whose blocked endpoint has a captured body is "browser".
+    search_url = "https://api.walled.example/titles/search?q=x"
+    chapters_url = "https://api.walled.example/titles/9/chapters?cv=Z"
+    chapters_body = json.dumps({"data": {"chapters": [{"slug": "c1", "name": "Ch 1"}]}})
+
+    rec = synthesize_recommendation(
+        ajax_urls=[search_url, chapters_url],
+        api_backends={search_url: "blocked", chapters_url: "blocked"},
+        api_bodies=[(chapters_url, chapters_body)],
+        page_html=None,
+    )
+
+    assert rec.api_open is False
+    assert rec.default_fetcher == "browser"
+
+    # the chapters endpoint is blocked but a browser captured its body -> browser
+    chapters = _stage(rec, "chapters")
+    assert chapters.mechanism == chapters_url
+    assert chapters.fetcher == "browser"
+
+
+def test_synthesize_no_api_html_site_degrades_gracefully():
+    # A plain-HTML site: no API-like endpoints, no backends, no bodies, and a
+    # page with no embedded images. Every stage degrades to a clear "(no ...)"
+    # mechanism without raising.
+    rec = synthesize_recommendation(
+        ajax_urls=[
+            "https://plainmanga.example/manga/dragon-ball",
+            "https://plainmanga.example/home",
+        ],
+        api_backends={},
+        api_bodies=[],
+        page_html="<html><body><h1>Dragon Ball</h1></body></html>",
+    )
+
+    assert rec.api_open is False
+    assert rec.default_fetcher == "unknown"
+
+    assert _stage(rec, "search").mechanism == "(no search endpoint seen)"
+    assert _stage(rec, "chapters").mechanism == "(no chapters endpoint seen)"
+    assert _stage(rec, "images").mechanism == "(no image source identified)"
+    # render is still produced without raising
+    assert "advisory" in rec.render().lower()
+
+
+def test_synthesize_api_served_images_from_captured_body():
+    # Req 1.4 (first branch): a captured body that IS an array of image URLs at
+    # an /api/...images... endpoint -> the images stage is marked API-served.
+    images_url = "https://cdn-api.example/api/book/1/images"
+    images_body = json.dumps(["https://cdn/1.jpg", "https://cdn/2.jpg"])
+
+    rec = synthesize_recommendation(
+        ajax_urls=[images_url],
+        api_backends={images_url: "curl_cffi"},
+        api_bodies=[(images_url, images_body)],
+        page_html=None,
+    )
+
+    images = _stage(rec, "images")
+    assert images.mechanism == images_url
+    assert images.fetcher == "curl_cffi"
+    assert "API-served" in images.note
+
+
+def test_synthesize_empty_inputs_are_defensive():
+    # Req 1.6 / design "Error handling": fully empty inputs never raise; the
+    # result is honest about having nothing (api_open False, unknown fetcher),
+    # and still emits the three stage plans.
+    rec = synthesize_recommendation([], {}, [], None)
+
+    assert rec.api_open is False
+    assert rec.default_fetcher == "unknown"
+    assert [s.name for s in rec.stages] == ["search", "chapters", "images"]
+    # render must not raise on the empty case either
+    assert "(none seen)" in rec.render()
+
+
+def test_recommendation_render_surfaces_all_fields():
+    # Req 1.1, 1.5 / Property 6: render() surfaces the host(s), the open-API
+    # verdict, the default fetcher, and each stage's name + mechanism, framed as
+    # advisory suggestions -- and never raises on an empty Recommendation().
+    rec = Recommendation(
+        hosts=["api.mangak.io"],
+        api_open=True,
+        default_fetcher="curl_cffi",
+        stages=[
+            StagePlan("search", "api.mangak.io/titles/search", "curl_cffi"),
+            StagePlan("chapters", "api.mangak.io/titles/9/chapters", "curl_cffi"),
+            StagePlan(
+                "images", "embedded in page __NEXT_DATA__", "curl_cffi", note="hint"
+            ),
+        ],
+    )
+    text = rec.render()
+
+    # advisory header + framing
+    assert "Recommended approach (advisory)" in text
+    assert "SUGGESTIONS" in text
+    # host list + open-API verdict + default fetcher
+    assert "api.mangak.io" in text
+    assert "open JSON API found: yes" in text
+    assert "suggested default fetcher: curl_cffi" in text
+    # each stage's name + mechanism
+    assert "[search] api.mangak.io/titles/search" in text
+    assert "[chapters] api.mangak.io/titles/9/chapters" in text
+    assert "[images] embedded in page __NEXT_DATA__" in text
+
+    # empty instance renders without raising and is honest about the gaps
+    empty = Recommendation().render()
+    assert "(none seen)" in empty
+    assert "open JSON API found: no" in empty
+    assert "no stage candidates identified" in empty

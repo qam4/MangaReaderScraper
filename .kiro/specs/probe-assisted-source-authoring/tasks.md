@@ -14,18 +14,18 @@ commit-checklist.
 
 ### Phase 1 — Recommendation synthesis
 
-- [~] 1. Add `StagePlan` and `Recommendation` dataclasses (with `render()`) to
+- [x] 1. Add `StagePlan` and `Recommendation` dataclasses (with `render()`) to
   `scraper/probe.py`.
   - _Requirements: 1.1, 1.5_
-- [~] 2. Implement `synthesize_recommendation(ajax_urls, api_backends,
+- [x] 2. Implement `synthesize_recommendation(ajax_urls, api_backends,
   api_bodies, page_html)` deciding `api_open`, `default_fetcher`, and the three
   stage plans from the artifacts.
   - _Requirements: 1.2, 1.3, 1.4_
-- [~] 3. Unit-test the synthesizer: open-API site (mangak.io-like) → curl_cffi
+- [x] 3. Unit-test the synthesizer: open-API site (mangak.io-like) → curl_cffi
   + embedded-images note; challenged-everywhere site → browser; no-API HTML
   site. Use crafted inputs mirroring real captures.
   - _Requirements: 1.6_
-- [~] 4. Wire `_probe` to build the api_backends map + parsed bodies in-memory
+- [x] 4. Wire `_probe` to build the api_backends map + parsed bodies in-memory
   and write `recommendation.txt`; update the module docstring and the final
   "Done" hint. Update `docs/adding-a-source.md` to list `recommendation.txt`.
   - _Requirements: 1.1, 7.2_
@@ -90,7 +90,7 @@ commit-checklist.
 
 ### Cross-cutting
 
-- [~] 19. Verify no phase adds site hammering; ensure all new logic is pure +
+- [x] 19. Verify no phase adds site hammering; ensure all new logic is pure +
   unit-tested with no network/browser; confirm `probe_out/` stays gitignored.
   - _Requirements: 7.1, 7.3, 7.4_
 

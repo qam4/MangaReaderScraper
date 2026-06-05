@@ -50,6 +50,13 @@ For each URL it drives a real browser (so Cloudflare clears) and writes into
   challenge-wall vs. behind-Cloudflare detection. These heuristics are derived
   from sites we've seen; on a novel layout they may find little — then open
   `page.html` directly.
+- **`recommendation.txt`** — a synthesized, **advisory** single summary of the
+  recommended approach: the host(s) seen, whether an open JSON API was found,
+  the suggested default fetcher, and the candidate search / chapter-list / image
+  mechanisms (each with a suggested fetcher and any gotcha note). It reads the
+  artifacts above for you so you don't have to cross-read five files — **read it
+  first**, then cross-check it against the detailed files. It phrases everything
+  as suggestions to confirm against the live site, not as decisions.
 - **`page.html`** — the rendered HTML, for manual inspection.
 
 (A `--map-by-example` run additionally writes **`field_map.txt`** — see below.)

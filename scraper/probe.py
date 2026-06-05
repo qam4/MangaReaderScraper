@@ -19,9 +19,17 @@ given URL:
     (interactive captcha needing user barge-in) / unknown;
   * heuristically surfaces candidate selectors and flags Cloudflare challenge
     walls vs. mere CF infrastructure;
+  * **synthesizes a single advisory ``recommendation.txt``** -- it reads its own
+    capture artifacts (ajax log, backend verdicts, captured bodies, page HTML)
+    and distils them into one recommended approach (host(s) seen, whether an
+    open JSON API was found, the suggested fetcher, and per-stage search /
+    chapter-list / image mechanisms), so you read one summary first instead of
+    cross-reading five files. It is *advisory* -- conclusions are phrased as
+    suggestions to confirm against the live site, never as decisions;
   * dumps the rendered ``page.html`` + ``ajax_log.txt`` + ``candidates.txt`` +
-    ``fetch_recommendation.txt`` into ``probe_out/<site>/`` (gitignored scratch;
-    promote a curated subset to ``tests/test_files/<site>/`` by hand).
+    ``fetch_recommendation.txt`` + ``recommendation.txt`` into
+    ``probe_out/<site>/`` (gitignored scratch; promote a curated subset to
+    ``tests/test_files/<site>/`` by hand).
 
 The analysis functions (``analyze_html``, ``detect_challenge``,
 ``compare_fetches``) are pure and unit-tested; the browser driving runs only
@@ -41,13 +49,16 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
 from scraper.parsers._html import attr
-from scraper.parsers.mangabuddy import _next_data_from_html
+from scraper.parsers.mangabuddy import (
+    _images_from_chapter_payload,
+    _next_data_from_html,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -461,6 +472,364 @@ def render_matches(needle: str, matches: List[FoundMatch]) -> str:
         lines.append(f"[{m.where}] {m.path}")
         lines.append(f"    {m.snippet!r}")
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 -- recommendation synthesis: read the probe's own capture artifacts
+# (ajax log, api_backends verdicts, captured bodies, page HTML) and distil them
+# into ONE recommended approach, so the developer does not have to cross-read
+# five files to choose a fetcher and a per-stage strategy. The output is
+# deliberately *advisory* -- it phrases conclusions as suggestions to confirm
+# against the live site, never as decisions (Req 1.5, Property 6). The dataclass
+# ``render()`` below is pure string building (Property 7); ``_probe`` is the
+# only thing that writes it to ``recommendation.txt``.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StagePlan:
+    """A suggested mechanism + fetcher for one parser stage.
+
+    One of the three stages a parser implements -- ``"search"``,
+    ``"chapters"``, or ``"images"``. ``mechanism`` is human-readable text for
+    the candidate endpoint/source (e.g. ``api.mangak.io/titles/search`` or
+    ``embedded in page __NEXT_DATA__``); ``fetcher`` is the suggested fetcher
+    token (``"curl_cffi"`` | ``"browser"`` | ``"requests"`` | ``"unknown"``);
+    ``note`` carries optional gotcha hints (e.g. embedded-vs-API). Advisory
+    only -- the developer confirms against the live site.
+    """
+
+    name: str
+    mechanism: str
+    fetcher: str
+    note: str = ""
+
+
+@dataclass
+class Recommendation:
+    """A synthesized, advisory summary of how to approach a probed site.
+
+    Ties together the host(s) seen, whether an open JSON API was found, the
+    recommended default fetcher, and the per-stage suggestions (search /
+    chapter-list / images). :meth:`render` produces the ``recommendation.txt``
+    text; it surfaces every field (Req 1.1) and frames the whole thing as
+    suggestions to confirm, not decisions (Req 1.5, Property 6). Pure -- the
+    dataclass carries no IO (Property 7).
+    """
+
+    hosts: List[str] = field(default_factory=list)
+    api_open: bool = False
+    default_fetcher: str = "unknown"
+    stages: List[StagePlan] = field(default_factory=list)
+
+    def render(self) -> str:
+        """Render the advisory recommendation text. Pure -- string building
+        only, robust to empty hosts/stages (never raises)."""
+        lines = [
+            "# Recommended approach (advisory)\n",
+            "These are SUGGESTIONS synthesized from the captured artifacts, not "
+            "decisions -- confirm each against the live site before writing the "
+            "parser.",
+            "",
+            "host(s) seen: " + (", ".join(self.hosts) if self.hosts else "(none seen)"),
+            f"open JSON API found: {'yes' if self.api_open else 'no'}",
+            f"suggested default fetcher: {self.default_fetcher}",
+            "",
+            "per-stage suggestions:",
+        ]
+        if not self.stages:
+            lines.append(
+                "  (no stage candidates identified -- inspect the captures by hand)"
+            )
+        else:
+            for stage in self.stages:
+                lines.append("")
+                lines.append(f"[{stage.name}] {stage.mechanism}")
+                lines.append(f"    suggested fetcher: {stage.fetcher}")
+                if stage.note:
+                    lines.append(f"    note: {stage.note}")
+        return "\n".join(lines) + "\n"
+
+
+# Image file extensions a page-image URL plausibly ends in. Used to recognise a
+# captured body that is an array of image URLs (an API-served image list).
+_IMAGE_EXTS = (".webp", ".jpg", ".jpeg", ".png", ".gif", ".avif", ".bmp")
+
+# How deep to look inside a captured JSON body for an array of image URLs. Real
+# API/embedded payloads are shallow; the bound keeps the search terminating on
+# pathological input (matches the bounded-traversal style of Phase 2).
+_MAX_IMAGE_SEARCH_DEPTH = 25
+
+
+def _is_working_backend(verdict: Optional[str]) -> bool:
+    """True if a backend ``verdict`` means a non-browser client got the API.
+
+    The ``api_backends`` map records, per endpoint, the cheapest backend that
+    returned real JSON, or ``"blocked"`` when none did. Any non-empty verdict
+    other than ``"blocked"`` therefore means *some* HTTP client worked (we stay
+    tolerant of undocumented tokens rather than hard-coding the two we expect).
+    Pure -- no IO.
+    """
+    return bool(verdict) and verdict != "blocked"
+
+
+def _pick_default_fetcher(
+    api_backends: Dict[str, str],
+    api_bodies: List[Tuple[str, str]],
+) -> str:
+    """Suggest the cheapest fetcher that worked across the data endpoints.
+
+    Ranked cheapest -> most invasive: ``requests`` < ``curl_cffi`` < ``browser``
+    (Req 1.2, 1.3). If any endpoint answered plain ``requests`` we suggest that;
+    else if any answered ``curl_cffi`` we suggest that; else if every endpoint
+    is blocked but the browser captured a body we suggest ``browser`` (Req 1.3);
+    else ``unknown``. Tolerant of undocumented working verdicts (surfaced as-is).
+    Pure -- no IO.
+    """
+    verdicts = list(api_backends.values())
+    if any(v == "requests" for v in verdicts):
+        return "requests"
+    if any(v == "curl_cffi" for v in verdicts):
+        return "curl_cffi"
+    for verdict in verdicts:
+        if _is_working_backend(verdict):
+            return verdict
+    if api_bodies:
+        return "browser"
+    return "unknown"
+
+
+def _verdict_to_fetcher(verdict: Optional[str], body_exists: bool) -> str:
+    """Map one endpoint's ``api_backends`` verdict to a StagePlan fetcher token.
+
+    ``"requests"`` -> ``"requests"``, ``"curl_cffi"`` -> ``"curl_cffi"``; a
+    blocked/missing verdict becomes ``"browser"`` when a body was captured for
+    that endpoint (so a browser is required, Req 1.3) and ``"unknown"`` when not
+    even the browser got it. Undocumented working tokens pass through. Pure.
+    """
+    if verdict == "requests":
+        return "requests"
+    if verdict == "curl_cffi":
+        return "curl_cffi"
+    if _is_working_backend(verdict):
+        return verdict  # type: ignore[return-value]  # non-None per the guard
+    return "browser" if body_exists else "unknown"
+
+
+def _url_haystack(url: str) -> str:
+    """Lower-cased ``host + path`` of a URL, for keyword pattern-matching. Pure."""
+    parsed = urlparse(url)
+    return (parsed.netloc + parsed.path).lower()
+
+
+def _find_endpoint(
+    urls: List[str],
+    include: Tuple[str, ...],
+    exclude: Tuple[str, ...] = (),
+) -> Optional[str]:
+    """First URL whose host+path contains an ``include`` keyword and none of the
+    ``exclude`` keywords.
+
+    ``include`` is checked in priority order: every URL is tried against the
+    first keyword before moving on to the next, so a more-specific keyword
+    (``chapter``) wins over a looser fallback (``titles``). ``exclude`` keeps the
+    looser fallback from latching onto a sibling endpoint (e.g. ``/titles/search``
+    is not the chapter list even though it contains ``titles``). Pure -- no IO.
+    """
+    for keyword in include:
+        for url in urls:
+            hay = _url_haystack(url)
+            if keyword in hay and not any(bad in hay for bad in exclude):
+                return url
+    return None
+
+
+def _hosts_seen(urls: List[str]) -> List[str]:
+    """Distinct hosts across ``urls``, in first-seen order. Pure -- no IO."""
+    hosts: List[str] = []
+    for url in urls:
+        netloc = urlparse(url).netloc
+        if netloc and netloc not in hosts:
+            hosts.append(netloc)
+    return hosts
+
+
+def _endpoint_stage(
+    name: str,
+    url: Optional[str],
+    api_backends: Dict[str, str],
+    body_urls: Set[str],
+) -> StagePlan:
+    """Build a StagePlan for an endpoint-backed stage (search / chapters).
+
+    ``mechanism`` is the matched endpoint URL (or a "(no … endpoint seen)" note
+    when nothing matched); ``fetcher`` is that endpoint's backend verdict mapped
+    to a fetcher token. Advisory only. Pure -- no IO.
+    """
+    if url is None:
+        return StagePlan(
+            name=name, mechanism=f"(no {name} endpoint seen)", fetcher="unknown"
+        )
+    fetcher = _verdict_to_fetcher(api_backends.get(url), url in body_urls)
+    return StagePlan(name=name, mechanism=url, fetcher=fetcher)
+
+
+def _looks_like_image_url(value: object) -> bool:
+    """True if ``value`` is a string whose URL path ends in an image extension
+    (``.webp`` / ``.jpg`` / ``.png`` / ...). Pure -- no IO."""
+    if not isinstance(value, str):
+        return False
+    return urlparse(value).path.lower().endswith(_IMAGE_EXTS)
+
+
+def _safe_json(body: str) -> object:
+    """Parse a captured body to JSON, or ``None`` if it does not parse.
+
+    Reuses :func:`looks_like_json` as a cheap pre-check, then ``json.loads``
+    inside a guard so a non-JSON (e.g. Cloudflare HTML) body is skipped rather
+    than raising (design "Error handling"). Pure -- no IO.
+    """
+    if not looks_like_json(body):
+        return None
+    try:
+        return json.loads(body)
+    except ValueError:
+        return None
+
+
+def _find_image_array(obj: object, depth: int = 0) -> Optional[List[str]]:
+    """Return the first array of image-looking URL strings found within ``obj``.
+
+    Walks dicts/lists to a bounded depth; a list whose string elements are all
+    image URLs is taken to be a page-image list (the API-served images case,
+    Req 1.4). Returns ``None`` when no such array is present. Pure -- no IO.
+    """
+    if depth > _MAX_IMAGE_SEARCH_DEPTH:
+        return None
+    if isinstance(obj, list):
+        strings = [x for x in obj if isinstance(x, str)]
+        if strings and all(_looks_like_image_url(x) for x in strings):
+            return strings
+        for child in obj:
+            found = _find_image_array(child, depth + 1)
+            if found:
+                return found
+    elif isinstance(obj, dict):
+        for child in obj.values():
+            found = _find_image_array(child, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _images_stage(
+    api_backends: Dict[str, str],
+    api_bodies: List[Tuple[str, str]],
+    body_urls: Set[str],
+    page_html: Optional[str],
+) -> StagePlan:
+    """Decide the suggested image mechanism for the ``images`` stage (Req 1.4).
+
+    Three cases, in order of preference:
+      1. a captured body is an array of image-looking URLs -> API-served images
+         (mechanism = that endpoint, fetcher = its backend verdict);
+      2. else the page's embedded ``__NEXT_DATA__`` carries an images array ->
+         images are EMBEDDED in the page, NOT API-served; the page is fetched
+         curl_cffi-first with a browser fallback (mirrors the mangabuddy parser);
+      3. else no image source could be identified -> suggest manual inspection.
+    Advisory only. Pure -- no IO.
+    """
+    # 1. API-served: a captured body that is (or contains) an image-URL array.
+    for url, body in api_bodies:
+        images = _find_image_array(_safe_json(body))
+        if images:
+            fetcher = _verdict_to_fetcher(api_backends.get(url), url in body_urls)
+            note = (
+                f"a captured body returns an array of image-looking URLs "
+                f"({len(images)} seen) -- looks API-served; confirm the JSON path"
+            )
+            return StagePlan(name="images", mechanism=url, fetcher=fetcher, note=note)
+
+    # 2. Embedded in the server-rendered page payload (Next.js __NEXT_DATA__).
+    if page_html:
+        next_data = _next_data_from_html(page_html)
+        if next_data is not None and _images_from_chapter_payload(next_data):
+            note = (
+                "images appear EMBEDDED in the page __NEXT_DATA__ "
+                "(pageProps.initialChapter.images), NOT API-served -- suggest "
+                "fetching the page (curl_cffi first, browser fallback) and "
+                "reading the embedded images path, like the mangabuddy parser"
+            )
+            return StagePlan(
+                name="images",
+                mechanism="embedded in page __NEXT_DATA__",
+                fetcher="curl_cffi",
+                note=note,
+            )
+
+    # 3. Nothing recognisable.
+    return StagePlan(
+        name="images",
+        mechanism="(no image source identified)",
+        fetcher="unknown",
+        note=(
+            "no image-list endpoint or embedded images array was seen -- "
+            "inspect page.html and the captured api_*.json bodies by hand"
+        ),
+    )
+
+
+def synthesize_recommendation(
+    ajax_urls: List[str],
+    api_backends: Dict[str, str],
+    api_bodies: List[Tuple[str, str]],
+    page_html: Optional[str],
+) -> Recommendation:
+    """Distil the probe's capture artifacts into one advisory Recommendation.
+
+    Inputs (all already produced by a capture pass, here as in-memory values):
+      * ``ajax_urls``    -- every API/AJAX URL the page fired;
+      * ``api_backends`` -- endpoint URL -> cheapest working backend verdict
+        (``"requests"`` | ``"curl_cffi"`` | ... ) or ``"blocked"``;
+      * ``api_bodies``   -- captured ``(url, body_text)`` response bodies;
+      * ``page_html``    -- the rendered page HTML (or ``None``).
+
+    Decisions (Req 1.2-1.4), all phrased as suggestions in the rendered text
+    (Req 1.5, Property 6):
+      * ``api_open``        -- any endpoint a non-browser client reached;
+      * ``default_fetcher`` -- the cheapest backend that worked, browser only as
+        a last resort when bodies exist (Req 1.3);
+      * ``stages``          -- a StagePlan each for search, chapters and images,
+        from pattern-matched endpoints and the captured bodies / page payload.
+
+    Robust to empty/partial inputs (missing artifacts -> empty, never raises;
+    ``page_html=None`` and unparseable bodies are tolerated). Pure -- no
+    network/browser/file IO (Req 1.6, Property 7).
+    """
+    body_urls: Set[str] = {url for url, _body in api_bodies}
+    candidate_urls = list(
+        dict.fromkeys(
+            list(ajax_urls) + [url for url, _body in api_bodies] + list(api_backends)
+        )
+    )
+
+    search_url = _find_endpoint(candidate_urls, ("search",))
+    chapters_url = _find_endpoint(
+        candidate_urls, ("chapter", "titles"), exclude=("search",)
+    )
+
+    stages = [
+        _endpoint_stage("search", search_url, api_backends, body_urls),
+        _endpoint_stage("chapters", chapters_url, api_backends, body_urls),
+        _images_stage(api_backends, api_bodies, body_urls, page_html),
+    ]
+
+    return Recommendation(
+        hosts=_hosts_seen(candidate_urls),
+        api_open=any(_is_working_backend(v) for v in api_backends.values()),
+        default_fetcher=_pick_default_fetcher(api_backends, api_bodies),
+        stages=stages,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1100,7 +1469,27 @@ def summarize_backend_probe(label: str, status, error, body) -> str:
     return f"  {label}: status={status} len={blen} json={is_json} -> {verdict}"
 
 
-def _check_api_backends(api_urls: List[str], max_urls: int = 3) -> str:
+def backend_verdict(requests_ok_json: bool, curl_ok_json: bool) -> str:
+    """Rank one endpoint's two backend probes into a single verdict token.
+
+    ``"requests"`` when plain requests returned JSON (cheapest), else
+    ``"curl_cffi"`` when curl_cffi (Chrome impersonation) returned JSON, else
+    ``"blocked"`` when neither did. The ranking requests < curl_cffi mirrors
+    :func:`_pick_default_fetcher`; the resulting verdict is exactly what the
+    in-memory ``api_backends`` map fed to :func:`synthesize_recommendation`
+    expects (Req 1.2, 1.3). Pure -- no IO, derived from the SAME probe attempts
+    :func:`_check_api_backends` already made (no extra network calls, Req 7.1).
+    """
+    if requests_ok_json:
+        return "requests"
+    if curl_ok_json:
+        return "curl_cffi"
+    return "blocked"
+
+
+def _check_api_backends(
+    api_urls: List[str], max_urls: int = 3
+) -> Tuple[str, Dict[str, str]]:
     """For a few captured API URLs, try plain requests and curl_cffi (Chrome
     impersonation) and report whether each returns real JSON without a browser.
 
@@ -1108,50 +1497,72 @@ def _check_api_backends(api_urls: List[str], max_urls: int = 3) -> str:
     cheap HTTP client (curl_cffi/requests), or does it need a full browser?
     Only the data-looking endpoints are worth checking, so the caller passes a
     filtered list; we cap how many we hit to stay polite.
+
+    Returns BOTH the rendered ``api_backends.txt`` text AND an in-memory
+    ``{endpoint_url: verdict}`` map (verdict per :func:`backend_verdict`) so the
+    caller can feed the map straight into :func:`synthesize_recommendation`
+    without a second probing pass -- the verdict is derived from the SAME
+    requests/curl_cffi attempts rendered into the text (no extra site hammering,
+    Req 7.1).
     """
     import requests  # type: ignore
 
     # only real data endpoints, de-duped, capped
     candidates = [u for u in dict.fromkeys(api_urls) if is_api_like_url(u)][:max_urls]
     if not candidates:
-        return "(no API-looking endpoints to check)\n"
+        return "(no API-looking endpoints to check)\n", {}
 
     lines = [
         "# Can the API be reached WITHOUT a browser?",
         "# (tries plain requests + curl_cffi Chrome impersonation per endpoint)",
         "",
     ]
+    verdict_map: Dict[str, str] = {}
     for url in candidates:
         lines.append(url)
         # plain requests
+        req_status: Optional[int] = None
+        req_body: Optional[str] = None
+        req_error: Optional[str] = None
         try:
             resp = requests.get(url, timeout=20)
-            lines.append(
-                summarize_backend_probe(
-                    "requests   ", resp.status_code, None, resp.text
-                )
-            )
+            req_status, req_body = resp.status_code, resp.text
         except Exception as err:
-            lines.append(summarize_backend_probe("requests   ", None, str(err), None))
+            req_error = str(err)
+        lines.append(
+            summarize_backend_probe("requests   ", req_status, req_error, req_body)
+        )
         # curl_cffi with Chrome impersonation
+        curl_status: Optional[int] = None
+        curl_body: Optional[str] = None
+        curl_error: Optional[str] = None
         try:
             from curl_cffi import requests as creq  # type: ignore
 
             cresp = creq.Session(impersonate="chrome").get(url, timeout=20)
-            lines.append(
-                summarize_backend_probe(
-                    "curl_cffi  ", cresp.status_code, None, cresp.text
-                )
-            )
+            curl_status, curl_body = cresp.status_code, cresp.text
         except Exception as err:
-            lines.append(summarize_backend_probe("curl_cffi  ", None, str(err), None))
+            curl_error = str(err)
+        lines.append(
+            summarize_backend_probe("curl_cffi  ", curl_status, curl_error, curl_body)
+        )
         lines.append("")
+        # Reuse the SAME outcomes (status + body) to rank the verdict -- "got
+        # JSON" matches summarize_backend_probe's "JSON OK": status 200, no
+        # error, and a body that parses as JSON.
+        req_ok_json = (
+            req_error is None and req_status == 200 and looks_like_json(req_body)
+        )
+        curl_ok_json = (
+            curl_error is None and curl_status == 200 and looks_like_json(curl_body)
+        )
+        verdict_map[url] = backend_verdict(req_ok_json, curl_ok_json)
     lines.append(
         "If curl_cffi shows 'JSON OK', the parser can use CurlCffiFetcher (no "
         "browser) for these endpoints. If both are blocked but the browser "
         "captured a body, the parser needs BrowserFetcher."
     )
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n", verdict_map
 
 
 def _check_image(img_url: str, referer: str) -> str:
@@ -1475,7 +1886,16 @@ async def _probe(
         # Backend reachability: can the captured API endpoints be hit without a
         # browser (plain requests / curl_cffi)? Decides the parser's fetcher.
         api_seen = [u for (u, _b) in api_bodies] + api_misses
-        _write(out_dir, "api_backends.txt", _check_api_backends(api_seen))
+        backends_text, verdict_map = _check_api_backends(api_seen)
+        _write(out_dir, "api_backends.txt", backends_text)
+
+        # Recommendation synthesis (Phase 1): distil the artifacts just captured
+        # into ONE advisory summary so the developer reads recommendation.txt
+        # first instead of cross-reading five files. Uses the in-memory verdict
+        # map from the SAME backend probe above (no extra network calls).
+        rec = synthesize_recommendation(ajax_urls, verdict_map, api_bodies, html)
+        _write(out_dir, "recommendation.txt", rec.render())
+        print(f"[probe] suggested default fetcher: {rec.default_fetcher}")
     finally:
         browser.stop()
 
@@ -1542,12 +1962,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         _probe(args.url, out_dir, search=args.search, find=args.find)
     )
     print(
-        f"\nDone. Inspect {out_dir}/ajax_log.txt + api_index.txt (and the "
-        "api_*.json dumps), api_backends.txt (can the API be hit without a "
-        "browser?) and candidates.txt (and search_*.txt if --search was used), "
-        "then save the relevant captures as fixtures and write the parser "
-        "against them. To map values you can see on the page onto JSON paths, "
-        "re-run with --map-by-example name=value ... (writes field_map.txt)."
+        f"\nDone. Read {out_dir}/recommendation.txt first -- the single advisory "
+        "summary of the suggested fetcher + per-stage (search / chapters / "
+        "images) mechanisms synthesized from the captures; cross-check it "
+        f"against the detailed files: {out_dir}/ajax_log.txt + api_index.txt "
+        "(and the api_*.json dumps), api_backends.txt (can the API be hit "
+        "without a browser?) and candidates.txt (and search_*.txt if --search "
+        "was used), then save the relevant captures as fixtures and write the "
+        "parser against them. To map values you can see on the page onto JSON "
+        "paths, re-run with --map-by-example name=value ... (writes "
+        "field_map.txt)."
     )
     return 0
 
