@@ -62,25 +62,25 @@ commit-checklist.
 
 ### Phase 3 — Parser scaffold (Step B). Build only after Phase 2 has been used on a real site other than mangak.io.
 
-- [~] 12. Define `ParserConfig` + `SearchSpec`/`ChaptersSpec`/`ImagesSpec` and
+- [x] 12. Define `ParserConfig` + `SearchSpec`/`ChaptersSpec`/`ImagesSpec` and
   `load_parser_config(text)` (toml parse + validation with `ConfigError`) in a
   new `scraper/scaffold.py`. Add `get_by_path(obj, path)` helper.
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
-- [~] 13. Unit-test config load/validate, including a full mangak.io
+- [x] 13. Unit-test config load/validate, including a full mangak.io
   `parser.toml` and a missing-field error case.
   - _Requirements: 5.5_
-- [~] 14. Implement `generate_parser(cfg)` emitting the three parser classes for
+- [x] 14. Implement `generate_parser(cfg)` emitting the three parser classes for
   the `api` and `next_data` image modes, wired to the registry and shared
   building blocks, with explicit hooks for underivable transforms.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.6_
-- [~] 15. Implement `generate_tests(cfg, fixtures)` emitting fixture-backed
+- [x] 15. Implement `generate_tests(cfg, fixtures)` emitting fixture-backed
   tests.
   - _Requirements: 6.1, 6.5_
-- [~] 16. Golden + round-trip tests: assert emitted source contains the right
+- [x] 16. Golden + round-trip tests: assert emitted source contains the right
   endpoints/paths/fetcher; generate the mangak.io parser to a temp module,
   import it, and run mangabuddy-equivalent assertions against the fixtures.
   - _Requirements: 6.5_
-- [~] 17. Add a CLI entry to generate from a config (e.g. `python -m
+- [x] 17. Add a CLI entry to generate from a config (e.g. `python -m
   scraper.scaffold <parser.toml>`), and document the Step B workflow + config
   schema in `docs/adding-a-source.md`.
   - _Requirements: 6.1, 7.2_

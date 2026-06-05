@@ -211,6 +211,137 @@ Use the shared building blocks:
   roll your own `sorted(key=float)` / string compare.
 - `scraper.new_types.SearchResult` — return these from search, not raw dicts.
 
+### 4b. (Optional) Generate the parser from a confirmed config — Step B
+
+Once `--map-by-example` has confirmed the field map (Step A), you can skip most
+of the boilerplate for an **API-backed** site by recording that map in a small
+`parser.toml` and generating the parser + tests from it:
+
+```bash
+# preview only -- writes nothing, prints both sources to stdout
+python -m scraper.scaffold parser.toml --dry-run
+
+# write scraper/parsers/<register_as>.py + tests/test_<register_as>.py
+python -m scraper.scaffold parser.toml \
+    --search search_naruto.json \
+    --chapters chapters_naruto.json \
+    --page-html chapter_page.html
+```
+
+The generated parser is structurally the shipped `mangabuddy.py`: it wires the
+configured fetcher, `sort_chapter_ids`, `SearchResult`, the
+number-from-chapter-name parsing, and `get_by_path` — never a direct HTTP/browser
+call on the data path. The generated tests run against the fixtures you name and
+assert non-empty/specific results, so a wrong field path fails loudly rather than
+mis-parsing silently.
+
+This is a **shortcut for the open-API pattern**, not a replacement for the loop:
+a vrf-token site (`mangafire.py`) or a plain-HTML site (`mangareader.py`) is
+still hand-written.
+
+#### The config schema
+
+A complete mangak.io `parser.toml` (this is the worked example the generator was
+built against):
+
+```toml
+site = "mangak.io"
+register_as = "mangabuddy"
+base_url = "https://mangak.io"
+api_url = "https://api.mangak.io"
+fetcher = "curl_cffi"
+
+[search]
+endpoint = "/titles/search?q={query}"
+items = "data.items"
+title = "name"
+slug = "slug"
+
+[chapters]
+endpoint = "/titles/{id}/chapters?cv={cv}"
+list = "data.chapters"
+chapter_name = "name"
+chapter_slug = "slug"
+id_from = "id"
+cv_from = "cv"
+
+[images]
+source = "next_data"
+images_path = "pageProps.initialChapter.images"
+page_url = "{base_url}/{slug}/{chapter_slug}"
+```
+
+**Top level**
+
+- `site` — human-facing site name, used in the generated docstrings.
+- `register_as` — the name the parser registers under (`@register_source`), and
+  the basename of the generated files (`scraper/parsers/<register_as>.py`,
+  `tests/test_<register_as>.py`).
+- `base_url` — site base URL for page requests.
+- `api_url` — API base URL the `endpoint` templates below are relative to.
+- `fetcher` — the chosen data fetcher: `curl_cffi`, `browser`, or `requests`
+  (pick the cheapest one `api_backends.txt` says works).
+
+**`[search]`**
+
+- `endpoint` — search endpoint template (relative to `api_url`) with a
+  `{query}` placeholder, e.g. `/titles/search?q={query}`.
+- `items` — JSON path to the array of result items, e.g. `data.items`.
+- `title` — path *within one item* to the display title.
+- `slug` — path *within one item* to the manga slug. This is also the field
+  matched against the requested slug during slug→id resolution.
+
+**`[chapters]`**
+
+- `endpoint` — chapters endpoint template with `{id}` / `{cv}` placeholders,
+  e.g. `/titles/{id}/chapters?cv={cv}`.
+- `list` — JSON path to the array of chapters.
+- `chapter_name` — path *within one chapter* to its display name (the human
+  chapter number is parsed from this, not from any API number field — see the
+  mangak.io gotcha above).
+- `chapter_slug` — path *within one chapter* to its url slug.
+- `id_from` / `cv_from` — these express **slug→id resolution**: the requested
+  slug only identifies a title, so search is hit first, the item whose `slug`
+  matches is found, and `id_from` / `cv_from` name the fields read off *that
+  item* to fill the chapters endpoint's `{id}` / `{cv}`.
+
+**`[images]`** — `source` selects one of the three observed image modes, and the
+other fields it needs depend on it:
+
+- `source = "api"` → `endpoint` (standalone image-list API template) +
+  `images_path` (JSON path to the images array in that response).
+- `source = "next_data"` → `page_url` (chapter-page URL template with
+  `{base_url}` / `{slug}` / `{chapter_slug}`) + `images_path` (JSON path to the
+  images array inside the page's embedded `__NEXT_DATA__`).
+- `source = "html"` → `page_url` + `selector` (CSS selector for the image
+  elements). **The `html` mode is not auto-generated**: `page_urls` is emitted
+  as an explicit `NotImplementedError` hook for you to implement, since
+  lazy-loading / `data-src` / descramble quirks can't be derived.
+
+#### It's a scaffold — verify it
+
+The generated parser and tests are a **SCAFFOLD requiring live verification**.
+The JSON *shapes* are confirmed from your fixtures, but the **live network paths
+are unverified**. After generating you must:
+
+1. run the generated tests (they exercise the parsing logic against the
+   fixtures);
+2. verify against the live site (does the fetcher actually reach the API, does
+   the image CDN need cookies);
+3. implement any `NotImplementedError` hooks the scaffold emits — `descramble` /
+   vrf-token / the `html` image mode;
+4. **add the new module to `_SOURCE_MODULES` in `scraper/registry.py`** —
+   registration requires that list, so `--source <name>` won't see the parser
+   until you add `"scraper.parsers.<register_as>"` there (the generator prints
+   this reminder).
+
+**Safety flags:** `--dry-run` / `--print` writes nothing and prints both sources
+to stdout; `--out-dir DIR` writes under an arbitrary sandbox directory instead
+of the repo; and a generate **never overwrites an existing file** unless you
+pass `--force` (so it can't clobber a shipped parser). `--fixtures-dir` overrides
+the fixtures directory the generated tests read from (default
+`tests/test_files/<register_as>`).
+
 ### 5. Register the source
 
 Decorate the site parser and add its module to the registry's module list:
