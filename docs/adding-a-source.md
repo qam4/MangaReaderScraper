@@ -52,6 +52,8 @@ For each URL it drives a real browser (so Cloudflare clears) and writes into
   `page.html` directly.
 - **`page.html`** — the rendered HTML, for manual inspection.
 
+(A `--map-by-example` run additionally writes **`field_map.txt`** — see below.)
+
 #### `--find`: locate a selector by content
 
 When the heuristics don't pinpoint the chapter list / image container (sites use
@@ -75,10 +77,72 @@ string, with the element's selector and its ancestor path, e.g.:
 the known value (from your eyes); the probe does the tedious locating. It does
 not decide which match is "the right one" — you interpret the short list.
 
+#### `--map-by-example`: locate a value inside captured JSON
+
+`--find` locates a visible string in the page's **HTML**. Its JSON counterpart
+is **`--map-by-example`**: on an API-backed site (MangaFire, mangak.io) the
+title/slug/chapter/image data lives in JSON bodies, not markup, and those bodies
+run to thousands of lines. Give it the values you can *see* on the page as
+`name=value` pairs and it reports the JSON *path* each one lives at:
+
+```bash
+python -m scraper.probe https://mangak.io/naruto --map-by-example title=Naruto slug=naruto chapter=700.5
+```
+
+This is a standalone, browser-free mode: it reads the captures already in
+`probe_out/<site>/` and never re-hits the site. So **capture first** with a
+normal probe run, then re-run with `--map-by-example` (if `field_map.txt` comes
+out empty, you probably haven't probed the page yet). It searches every
+`api_*.json` body in the output dir *and* the embedded `__NEXT_DATA__` extracted
+from `page.html`, then writes `field_map.txt`:
+
+```
+# Field map (advisory -- all matches listed; you pick the field)
+
+title = 'Naruto'  (1 match(es))
+  [exact] api_01_search.json: data.items[0].name
+      leaf='Naruto'
+
+slug = 'naruto'  (2 match(es))
+  [exact] api_01_search.json: data.items[0].slug
+      leaf='naruto'
+  [path-prefix] api_01_search.json: data.items[0].url
+      leaf='/naruto'
+
+chapter = '700.5'  (1 match(es))
+  [substring] api_01_search.json: data.items[0].latest_chapters[0].name
+      leaf='Chapter 700.5 : Uzumaki Naruto'
+  !! hint: sibling 'chapter_number'=748 disagrees with 700.5 in the matched value; it is likely a sequence counter rather than the displayed number -- derive the number from the matched field instead
+     (sibling data.items[0].latest_chapters[0].chapter_number)
+```
+
+The match kinds tell you *how* a value was found:
+
+- **`exact`** — a string leaf identical to your value.
+- **`substring`** — a string leaf that *contains* it (e.g. `700.5` inside
+  `'Chapter 700.5 : Uzumaki Naruto'`).
+- **`numeric`** — leaf and value denote the same number across types
+  (`748` matches `"748"`, `"748.0"` matches `"748"`).
+- **`path-prefix`** — a URL-ish leaf equal apart from a leading `/`
+  (`/naruto` vs `naruto`).
+
+The **sibling-mismatch hint** (the `!!` line) is the gotcha catcher: when your
+value contains a number and a *neighbouring* field looks like it should hold the
+same number but disagrees, it's flagged. Above, the chapter's displayed number
+is `700.5` but the adjacent `chapter_number` is `748` — the mangak.io sequence
+counter, exactly the trap that would make `--volumes` ranges wrong. The hint
+never asserts the sibling is wrong; it points you at the disagreement so you
+derive the number from the right field.
+
+Like `--find`, the output is advisory: it lists **all** matches and never picks
+"the" field — you read the short report and decide. And because it only reads
+artifacts already on disk, it adds no extra load on the site (in keeping with the
+project's "probe once, be realistic" ethos).
+
 ### 2. Identify the mechanisms
 
 From `ajax_log.txt`, `api_index.txt` / `api_*.json`, `api_backends.txt`,
-`candidates.txt` and `find.txt`, work out three things:
+`candidates.txt`, `find.txt` and `field_map.txt`, work out three things:
 
 - **search**: is there a JSON search API (e.g. `api.example/titles/search`, or
   an `ajax/.../search` call), or is it plain HTML? Check `api_*.json` for the

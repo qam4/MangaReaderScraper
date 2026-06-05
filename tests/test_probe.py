@@ -2,22 +2,37 @@
 Tests for the probe's pure analysis helpers (no browser needed).
 """
 
+import json
 from pathlib import Path
 
+import pytest
+
 from scraper.probe import (
+    FieldMapEntry,
+    PathMatch,
     ProbeReport,
+    SiblingWarning,
     _element_selector,
     analyze_html,
     api_dump_filename,
+    build_field_map,
     compare_fetches,
     detect_challenge,
     find_text,
+    get_by_path,
     is_api_like_url,
     is_json_mime,
+    json_paths_for_value,
+    load_captures,
     looks_like_json,
+    main,
+    parse_examples,
+    render_field_map,
     render_matches,
+    sibling_mismatch_check,
     site_name_from_url,
     summarize_backend_probe,
+    write_field_map,
 )
 
 # ========================= site_name_from_url ============================
@@ -363,3 +378,610 @@ def test_summarize_backend_probe_reports_error():
     line = summarize_backend_probe("curl_cffi", None, "dns fail", None)
     assert "ERROR" in line
     assert "dns fail" in line
+
+
+# ==================== json_paths_for_value (locator) =====================
+# Map-by-example core: give a value seen on the page, get the JSON path(s) it
+# lives at. Exercised against the real mangabuddy search/chapter-list fixtures.
+
+_MANGABUDDY = Path("tests/test_files/mangabuddy")
+
+
+def _load_json(name: str) -> object:
+    return json.loads((_MANGABUDDY / name).read_text(encoding="utf-8"))
+
+
+def _exact_string_paths(obj: object, value: str, path: str = "") -> list[str]:
+    """Independently collect every path whose leaf is a string == ``value``.
+
+    A second, deliberately naive implementation used to check the locator's
+    completeness for exact matches (Property 2) without trusting the locator's
+    own traversal.
+    """
+    found: list[str] = []
+    if isinstance(obj, dict):
+        for key, child in obj.items():
+            child_path = f"{path}.{key}" if path else key
+            found.extend(_exact_string_paths(child, value, child_path))
+    elif isinstance(obj, list):
+        for i, child in enumerate(obj):
+            found.extend(_exact_string_paths(child, value, f"{path}[{i}]"))
+    elif isinstance(obj, str) and obj == value:
+        found.append(path)
+    return found
+
+
+def test_locator_finds_exact_slug_and_name():
+    # Req 2.1: the slug "naruto" and the name "Naruto" each resolve to their
+    # own exact leaf in the first search result.
+    data = _load_json("search_naruto.json")
+
+    slug_matches = json_paths_for_value(data, "naruto")
+    exact_slug = [m for m in slug_matches if m.kind == "exact"]
+    assert [m.path for m in exact_slug] == ["data.items[0].slug"]
+    assert exact_slug[0].leaf == "naruto"
+
+    name_matches = json_paths_for_value(data, "Naruto")
+    exact_name = [m for m in name_matches if m.kind == "exact"]
+    assert [m.path for m in exact_name] == ["data.items[0].name"]
+    assert exact_name[0].leaf == "Naruto"
+
+
+def test_locator_is_complete_for_exact_matches():
+    # Property 2 / Req 2.1: no exact-equal leaf anywhere is dropped. Compare the
+    # locator's exact hits against an independent scan of the structure.
+    data = _load_json("search_naruto.json")
+    for value in ("naruto", "Naruto", "completed", "ongoing"):
+        located = {
+            m.path for m in json_paths_for_value(data, value) if m.kind == "exact"
+        }
+        assert located == set(_exact_string_paths(data, value))
+
+
+def test_locator_substring_match_inside_chapter_name():
+    # Req 2.2: "700.5" is not a leaf of its own; it lives inside the chapter
+    # name "Chapter 700.5 : Uzumaki Naruto" and must be flagged substring.
+    chapters = _load_json("chapters_naruto.json")
+    matches = json_paths_for_value(chapters, "700.5")
+    by_path = {m.path: m for m in matches}
+
+    assert "data.chapters[0].name" in by_path
+    hit = by_path["data.chapters[0].name"]
+    assert hit.kind == "substring"
+    assert hit.leaf == "Chapter 700.5 : Uzumaki Naruto"
+    # the dotted/slugged forms use "700-5", so the only place "700.5" appears is
+    # the human-readable name -- every match for it is a substring match.
+    assert all(m.kind == "substring" for m in matches)
+
+
+def test_locator_numeric_string_equivalence():
+    # Req 2.3: the string "748" matches the numeric chapter_number / chapters
+    # count leaves (748), cross-type, marked numeric.
+    data = _load_json("search_naruto.json")
+    matches = json_paths_for_value(data, "748")
+
+    numeric_paths = {m.path for m in matches if m.kind == "numeric"}
+    assert numeric_paths == {
+        "data.items[0].stats.chapters_count",
+        "data.items[0].latest_chapters[0].chapter_number",
+    }
+    for m in matches:
+        assert m.kind == "numeric"
+        assert m.leaf == 748
+
+
+def test_locator_path_prefix_distinct_from_exact_slug():
+    # Req 2.4: "naruto" matches the url leaf "/naruto" as a path-prefix match,
+    # and this is reported separately from the exact slug match "naruto".
+    data = _load_json("search_naruto.json")
+    matches = json_paths_for_value(data, "naruto")
+    by_path = {m.path: m for m in matches}
+
+    assert by_path["data.items[0].url"].kind == "path-prefix"
+    assert by_path["data.items[0].url"].leaf == "/naruto"
+    assert by_path["data.items[0].slug"].kind == "exact"
+    assert by_path["data.items[0].slug"].leaf == "naruto"
+    # distinct paths, distinct kinds for the same target value
+    assert by_path["data.items[0].url"].kind != by_path["data.items[0].slug"].kind
+
+
+def test_locator_lists_second_item_substring_matches():
+    # Req 2.1/2.2: account for the second item, whose slug
+    # "naruto-the-seventh-hokage-reborn" contains "naruto" -- a substring (not
+    # exact) match that must still be reported, not collapsed into the first.
+    data = _load_json("search_naruto.json")
+    matches = json_paths_for_value(data, "naruto")
+    by_path = {m.path: m for m in matches}
+
+    assert by_path["data.items[1].slug"].kind == "substring"
+    assert by_path["data.items[1].url"].kind == "substring"
+
+
+def test_locator_reports_unresolved_as_empty_list():
+    # Req 2.5: a value present nowhere yields an empty result (the caller then
+    # reports it as unresolved rather than dropping it silently).
+    for name in ("search_naruto.json", "chapters_naruto.json"):
+        data = _load_json(name)
+        assert json_paths_for_value(data, "zzz-nonexistent") == []
+    # an empty target is noise, not a location -> also empty
+    assert json_paths_for_value(_load_json("search_naruto.json"), "") == []
+
+
+def test_locator_soundness_paths_resolve_back():
+    # Property 1 / Req 2.1, 2.6: every returned path resolves back to exactly
+    # the matched leaf via get_by_path -- the path is real and points at it.
+    cases = [
+        ("search_naruto.json", "naruto"),
+        ("search_naruto.json", "Naruto"),
+        ("search_naruto.json", "748"),
+        ("chapters_naruto.json", "700.5"),
+        ("chapters_naruto.json", "748"),
+    ]
+    for name, value in cases:
+        data = _load_json(name)
+        matches = json_paths_for_value(data, value)
+        assert matches  # each case has at least one hit
+        for m in matches:
+            assert get_by_path(data, m.path) == m.leaf
+            assert isinstance(m, PathMatch)
+
+
+def test_locator_handles_arbitrary_nested_structure_without_raising():
+    # Req 2.6: traverses nested objects/arrays to a bounded depth and does not
+    # raise on arbitrary (cyclic-free) JSON shapes -- empty containers, None,
+    # booleans, mixed lists, deep nesting.
+    weird = {
+        "a": [1, 2, {"b": [{"c": "naruto"}, None, [True, "x"]]}],
+        "deep": {"e": {"f": {"g": {"h": "naruto"}}}},
+        "empty_obj": {},
+        "empty_list": [],
+        "flag": False,
+        "num": 748,
+        "mixed": [{"k": "v"}, "naruto", 3.14, None],
+    }
+    matches = json_paths_for_value(weird, "naruto")
+    # found in the three string-leaf spots, and each path round-trips
+    assert {m.path for m in matches} == {
+        "a[2].b[0].c",
+        "deep.e.f.g.h",
+        "mixed[1]",
+    }
+    for m in matches:
+        assert get_by_path(weird, m.path) == m.leaf
+    # a numeric target still resolves on this structure without raising
+    for m in json_paths_for_value(weird, "748"):
+        assert get_by_path(weird, m.path) == m.leaf
+
+
+# ==================== sibling_mismatch_check (gotcha) ====================
+# Once a value is located, the checker inspects the fields *next to* it and
+# warns when a sibling looks like it should carry the same number but disagrees
+# -- the mangak.io gotcha where a chapter's displayed number ("700.5") sits
+# beside a chapter_number that is really a sequence counter (748). Hints only:
+# matching siblings never warn, so the absence of warnings is meaningful
+# (Req 3.4, Property 4). Exercised against the real chapters fixture.
+
+
+def _match_at(matches: list[PathMatch], path: str) -> PathMatch:
+    """The single PathMatch at ``path`` (fails loudly if absent)."""
+    by_path = {m.path: m for m in matches}
+    assert path in by_path, f"expected a match at {path}, got {sorted(by_path)}"
+    return by_path[path]
+
+
+def test_gotcha_flags_chapter_number_sequence_counter_mangakio():
+    # Req 3.5: the mangak.io case. "700.5" is the displayed chapter number,
+    # located inside data.chapters[0].name; its sibling chapter_number=748 is a
+    # sequence counter that disagrees and must be flagged as an advisory hint.
+    chapters = _load_json("chapters_naruto.json")
+    match = _match_at(json_paths_for_value(chapters, "700.5"), "data.chapters[0].name")
+    assert match.leaf == "Chapter 700.5 : Uzumaki Naruto"
+
+    warnings = sibling_mismatch_check(chapters, match, "700.5")
+
+    # the chapter_number sibling is surfaced. cv is also a disagreeing numeric
+    # sibling (Req 3.2 "any numeric sibling"), so assert presence -- not count.
+    by_sibling = {w.sibling_path: w for w in warnings}
+    assert "data.chapters[0].chapter_number" in by_sibling
+    w = by_sibling["data.chapters[0].chapter_number"]
+    assert isinstance(w, SiblingWarning)
+
+    # both the target number (700.5) and the sequence counter (748) are surfaced
+    assert w.sibling_value == 748
+    assert "748" in w.message
+    assert "700.5" in w.message
+
+    # advisory hint wording: names the likely interpretation (a sequence
+    # counter, derive from the matched field) and never asserts it is "wrong".
+    assert "likely" in w.message
+    assert "sequence counter" in w.message
+    assert "derive" in w.message
+    assert "wrong" not in w.message.lower()
+
+
+def test_gotcha_no_warning_when_sibling_agrees():
+    # Req 3.4 / Property 4: a sibling that agrees with the target number emits
+    # NO warning, so the absence of warnings is meaningful. The agreeing
+    # chapter_number=748 sits beside the matched name "Chapter 748".
+    obj = {"name": "Chapter 748", "chapter_number": 748}
+    match = _match_at(json_paths_for_value(obj, "Chapter 748"), "name")
+    assert match.kind == "exact"
+    assert sibling_mismatch_check(obj, match, "Chapter 748") == []
+
+
+def test_gotcha_no_warning_when_target_has_no_number():
+    # Req 3.4: with no number in the target there is nothing for even a numeric
+    # sibling (year=1999) to disagree with -> stay silent (no noise).
+    obj = {"title": "Naruto", "year": 1999}
+    match = _match_at(json_paths_for_value(obj, "Naruto"), "title")
+    assert sibling_mismatch_check(obj, match, "Naruto") == []
+
+
+def test_gotcha_no_warning_for_non_numeric_siblings():
+    # Req 3.4: a numeric target but every sibling is a non-numeric string
+    # (slug/id) -> nothing to compare numerically -> no warning.
+    obj = {"name": "Chapter 700.5", "slug": "chapter-700-5", "id": "WYXlbzbY"}
+    match = _match_at(json_paths_for_value(obj, "700.5"), "name")
+    assert sibling_mismatch_check(obj, match, "700.5") == []
+
+
+def test_gotcha_no_named_siblings_for_list_element_or_root():
+    # Req 3.1: a matched leaf with no dict parent (a list element, or the root
+    # value itself) has no named siblings -> [].
+    list_match = _match_at(json_paths_for_value(["748", "x"], "748"), "[0]")
+    assert sibling_mismatch_check(["748", "x"], list_match, "748") == []
+
+    root_matches = json_paths_for_value("748", "748")
+    assert root_matches and root_matches[0].path == ""
+    assert sibling_mismatch_check("748", root_matches[0], "748") == []
+
+
+# ===================== build_field_map / render_field_map ================
+# Phase 2 surface: tie the locator + gotcha checker across every captured JSON
+# body, one entry per developer-supplied example. Pure -- parsed JSON in, report
+# text out; the CLI wrapper (task 10) does the file IO / __NEXT_DATA__ pull.
+
+
+def test_field_map_one_entry_per_example_in_order():
+    # Req 4.3 / Property 3: every example produces exactly one entry, in the
+    # input order -- nothing is dropped or reordered.
+    captures = {"search_naruto.json": _load_json("search_naruto.json")}
+    examples = {"title": "Naruto", "slug": "naruto", "chapters": "748"}
+    entries = build_field_map(captures, examples)
+
+    assert [e.name for e in entries] == ["title", "slug", "chapters"]
+    assert [e.value for e in entries] == ["Naruto", "naruto", "748"]
+    assert all(isinstance(e, FieldMapEntry) for e in entries)
+
+
+def test_field_map_lists_all_matches_with_source_file():
+    # Req 4.2 / 4.4 / Property 6: all matches are listed (the tool does not pick
+    # "the" field) and each carries the capture label it came from.
+    captures = {"search_naruto.json": _load_json("search_naruto.json")}
+    entries = build_field_map(captures, {"slug": "naruto"})
+
+    (entry,) = entries
+    # exact slug + path-prefix url + the second item's substrings all show up
+    paths = {(src, m.path) for src, m in entry.matches}
+    assert ("search_naruto.json", "data.items[0].slug") in paths
+    assert ("search_naruto.json", "data.items[0].url") in paths
+    assert len(entry.matches) >= 2
+    # every match keeps its source-file label
+    assert all(src == "search_naruto.json" for src, _ in entry.matches)
+
+
+def test_field_map_searches_every_capture():
+    # Req 4.2: the locator runs over EVERY capture; a value present in two
+    # captures is reported once per capture (uniform across api_*.json and
+    # embedded payloads -- here two arbitrary parsed bodies).
+    captures = {
+        "api_a.json": {"title": "Naruto"},
+        "api_b.json": {"meta": {"title": "Naruto"}},
+    }
+    (entry,) = build_field_map(captures, {"title": "Naruto"})
+    by_src = {src: m for src, m in entry.matches}
+    assert by_src["api_a.json"].path == "title"
+    assert by_src["api_b.json"].path == "meta.title"
+
+
+def test_field_map_unresolved_entry_has_empty_matches():
+    # Req 4.3 / Property 3: a value found nowhere still yields an entry, with an
+    # empty matches list -- that is how "unresolved" is represented.
+    captures = {"search_naruto.json": _load_json("search_naruto.json")}
+    (entry,) = build_field_map(captures, {"mystery": "zzz-nonexistent"})
+    assert entry.matches == []
+    assert entry.warnings == []
+
+
+def test_field_map_collects_sibling_warnings():
+    # Req 4.2 + Req 3: the gotcha hints for each match are gathered onto the
+    # entry. The mangak.io case: name "Chapter 700.5" beside chapter_number=748.
+    captures = {
+        "cap": {
+            "data": {
+                "chapters": [
+                    {
+                        "name": "Chapter 700.5 : Uzumaki Naruto",
+                        "chapter_number": 748,
+                    }
+                ]
+            }
+        }
+    }
+    (entry,) = build_field_map(captures, {"chapter": "700.5"})
+    assert entry.matches  # located inside the name
+    assert any("sequence counter" in w.message for w in entry.warnings)
+
+
+def test_field_map_dedupes_recurring_warnings():
+    # A sibling hint that recurs identically across captures is reported once
+    # (de-duped by sibling_path + message) to keep the report quiet.
+    body = {"name": "Chapter 700.5", "chapter_number": 748}
+    captures = {"api_a.json": body, "api_b.json": dict(body)}
+    (entry,) = build_field_map(captures, {"chapter": "700.5"})
+    # two captures -> two matches, but the identical hint is listed once
+    assert len(entry.matches) == 2
+    assert len(entry.warnings) == 1
+
+
+def test_render_field_map_is_advisory_and_lists_all_matches():
+    # Property 6 / Req 4.4: the report is labeled advisory and lists every
+    # matching path with its source + kind, never asserting a single answer.
+    captures = {"search_naruto.json": _load_json("search_naruto.json")}
+    entries = build_field_map(captures, {"slug": "naruto"})
+    text = render_field_map(entries)
+
+    assert "advisory" in text.lower()
+    assert "slug" in text
+    assert "data.items[0].slug" in text
+    assert "data.items[0].url" in text
+    assert "search_naruto.json" in text
+    # match kinds are surfaced so the dev can interpret
+    assert "[exact]" in text
+    assert "[path-prefix]" in text
+
+
+def test_render_field_map_has_unresolved_section():
+    # Req 4.3 / Property 3: unresolved examples are surfaced in a dedicated
+    # section, not dropped silently.
+    captures = {"search_naruto.json": _load_json("search_naruto.json")}
+    entries = build_field_map(
+        captures, {"title": "Naruto", "mystery": "zzz-nonexistent"}
+    )
+    text = render_field_map(entries)
+
+    assert "Unresolved" in text
+    assert "mystery" in text
+    assert "zzz-nonexistent" in text
+
+
+def test_render_field_map_includes_warning_hints():
+    # The gotcha hints appear in the rendered report (phrased as hints).
+    captures = {"cap": {"name": "Chapter 700.5", "chapter_number": 748}}
+    entries = build_field_map(captures, {"chapter": "700.5"})
+    text = render_field_map(entries)
+    assert "hint" in text.lower()
+    assert "sequence counter" in text
+
+
+def test_render_field_map_empty_input():
+    # No examples -> a clear, non-crashing report.
+    assert "no values supplied" in render_field_map([]).lower()
+
+
+def test_build_field_map_is_pure_does_not_mutate_inputs():
+    # Property 7: pure function of its inputs -- captures/examples unchanged.
+    captures = {"search_naruto.json": _load_json("search_naruto.json")}
+    snapshot = json.dumps(captures, sort_keys=True)
+    examples = {"slug": "naruto"}
+    build_field_map(captures, examples)
+    assert json.dumps(captures, sort_keys=True) == snapshot
+    assert examples == {"slug": "naruto"}
+
+
+# =============== --map-by-example CLI + field_map.txt (task 10) ==========
+# The map-by-example surface: parse name=value CLI tokens, load the EXISTING
+# captures from the output dir (no re-capture / no browser, Req 7.1), and write
+# field_map.txt. The parsing + loading + report rendering are exercised against
+# the real mangabuddy fixtures (Req 4.5).
+
+
+def _seed_captures(out_dir: Path) -> None:
+    """Copy the real mangabuddy fixtures into ``out_dir`` as api_*.json dumps,
+    plus a malformed body that the loader must skip gracefully."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "api_01_search.json").write_text(
+        (_MANGABUDDY / "search_naruto.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (out_dir / "api_02_chapters.json").write_text(
+        (_MANGABUDDY / "chapters_naruto.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    # malformed JSON capture -> must be skipped, not raised on
+    (out_dir / "api_03_bad.json").write_text("{not valid json", encoding="utf-8")
+
+
+# --------------------------- parse_examples ------------------------------
+
+
+def test_parse_examples_splits_name_value_pairs():
+    # Req 4.1: name=value tokens become an ordered {name: value} map.
+    assert parse_examples(["title=Naruto", "slug=naruto"]) == {
+        "title": "Naruto",
+        "slug": "naruto",
+    }
+
+
+def test_parse_examples_value_may_contain_equals():
+    # split on the FIRST '=' so a value can itself contain '='
+    assert parse_examples(["url=/x?a=b&c=d"]) == {"url": "/x?a=b&c=d"}
+
+
+def test_parse_examples_preserves_order():
+    examples = parse_examples(["a=1", "b=2", "c=3"])
+    assert list(examples) == ["a", "b", "c"]
+
+
+def test_parse_examples_rejects_token_without_equals():
+    # a token with no '=' cannot name a value -> clear error
+    with pytest.raises(ValueError):
+        parse_examples(["title=Naruto", "noequals"])
+
+
+# ----------------------------- load_captures -----------------------------
+
+
+def test_load_captures_parses_api_json_keyed_by_filename(tmp_path):
+    # Req 4.2: every api_*.json is parsed and keyed by its filename.
+    _seed_captures(tmp_path)
+    captures = load_captures(tmp_path)
+
+    assert set(captures) == {"api_01_search.json", "api_02_chapters.json"}
+    # the malformed api_03_bad.json is skipped, not raised on
+    assert "api_03_bad.json" not in captures
+    # real parsed structure is returned (paths resolve through it)
+    assert get_by_path(captures["api_01_search.json"], "data.items[0].slug") == "naruto"
+
+
+def test_load_captures_extracts_embedded_next_data(tmp_path):
+    # Req 4.2: __NEXT_DATA__ embedded in page.html is searched too.
+    (tmp_path / "page.html").write_text(
+        (_MANGABUDDY / "chapter_page.html").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    captures = load_captures(tmp_path)
+    assert "page.html#__NEXT_DATA__" in captures
+    # the embedded payload is the parsed Next.js data (has the props tree)
+    assert isinstance(captures["page.html#__NEXT_DATA__"], dict)
+    assert "props" in captures["page.html#__NEXT_DATA__"]
+
+
+def test_load_captures_missing_dir_is_empty(tmp_path):
+    # design: missing files/dir treated as empty, never raised on
+    assert load_captures(tmp_path / "does-not-exist") == {}
+
+
+def test_load_captures_no_artifacts_is_empty(tmp_path):
+    assert load_captures(tmp_path) == {}
+
+
+# ------------------- write_field_map (IO wrapper) ------------------------
+
+
+def test_write_field_map_writes_report_over_fixtures(tmp_path):
+    # Req 4.3 / 4.5: the wrapper writes field_map.txt locating each value across
+    # the captures, with paths, source files, gotcha hint, and an unresolved
+    # section -- all against the real fixtures.
+    _seed_captures(tmp_path)
+    examples = {
+        "name": "Naruto",
+        "slug": "naruto",
+        "chapters": "748",
+        "missing": "zzz",
+    }
+    path = write_field_map(tmp_path, examples)
+
+    assert path == tmp_path / "field_map.txt"
+    text = path.read_text(encoding="utf-8")
+
+    # advisory header (Property 6)
+    assert "advisory" in text.lower()
+    # resolved paths + their source file
+    assert "data.items[0].slug" in text
+    assert "api_01_search.json" in text
+    # the chapter gotcha hint surfaces (chapter_number=748 is a sequence counter
+    # beside "Chapter 700.5"); 748 is located as a numeric match here.
+    assert "748" in text
+    assert "sequence counter" in text
+    # unresolved section lists the value found nowhere
+    assert "Unresolved" in text
+    assert "missing" in text
+    assert "zzz" in text
+
+
+# ----------------------- end-to-end via main() ---------------------------
+
+
+def test_main_map_by_example_writes_field_map_without_browser(tmp_path, monkeypatch):
+    # Req 4.1/4.5 + Req 7.1: the --map-by-example branch builds the field map
+    # from the existing captures and returns WITHOUT importing/driving nodriver.
+    # We seed the out_dir, then make any browser path explode so the test fails
+    # loudly if main() ever tries to capture.
+    out_base = tmp_path
+    out_dir = out_base / "mybuddy"
+    _seed_captures(out_dir)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("map-by-example must not drive a browser (Req 7.1)")
+
+    # if the branch fell through to a capture, this would fire
+    monkeypatch.setattr("scraper.probe._probe", _boom)
+
+    rc = main(
+        [
+            "https://example.test/manga/naruto",
+            "--out",
+            str(out_base),
+            "--site",
+            "mybuddy",
+            "--map-by-example",
+            "name=Naruto",
+            "slug=naruto",
+            "chapters=748",
+            "missing=zzz",
+        ]
+    )
+
+    assert rc == 0
+    field_map = out_dir / "field_map.txt"
+    assert field_map.is_file()
+    text = field_map.read_text(encoding="utf-8")
+    # multiple pairs were accepted and located (Req 4.1)
+    assert "data.items[0].slug" in text
+    assert "api_01_search.json" in text
+    assert "sequence counter" in text  # the 748 chapter gotcha hint
+    # unresolved value surfaced, not dropped
+    assert "Unresolved" in text
+    assert "zzz" in text
+
+
+def test_main_map_by_example_accepts_multiple_pairs(tmp_path):
+    # Req 4.1: the option takes one OR many name=value pairs.
+    out_dir = tmp_path / "site"
+    _seed_captures(out_dir)
+    rc = main(
+        [
+            "https://example.test/x",
+            "--out",
+            str(tmp_path),
+            "--site",
+            "site",
+            "--map-by-example",
+            "a=Naruto",
+            "b=naruto",
+            "c=completed",
+        ]
+    )
+    assert rc == 0
+    text = (out_dir / "field_map.txt").read_text(encoding="utf-8")
+    for label in ("a", "b", "c"):
+        assert label in text
+
+
+def test_main_map_by_example_rejects_bad_token(tmp_path):
+    # a token with no '=' is a clean CLI error (argparse SystemExit), not a crash
+    out_dir = tmp_path / "site"
+    _seed_captures(out_dir)
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "https://example.test/x",
+                "--out",
+                str(tmp_path),
+                "--site",
+                "site",
+                "--map-by-example",
+                "noequals",
+            ]
+        )

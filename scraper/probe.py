@@ -35,17 +35,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
 from scraper.parsers._html import attr
+from scraper.parsers.mangabuddy import _next_data_from_html
 
 logger = logging.getLogger(__name__)
 
@@ -461,10 +463,528 @@ def render_matches(needle: str, matches: List[FoundMatch]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 -- map-by-example: locate human-supplied values inside captured JSON.
+# These are the JSON counterpart to ``find_text`` (which works on HTML): the
+# developer gives a value they can SEE on the page and the locator reports the
+# JSON path(s) it lives at, so the title/slug/chapter fields can be identified
+# without scrolling thousands of lines. Pure -- no network/browser/file IO.
+# ---------------------------------------------------------------------------
+
+# Cap how deep we walk nested JSON. Real API/embedded payloads are shallow; a
+# bound keeps the traversal terminating on pathological input and satisfies the
+# "bounded depth" contract (Req 2.6). Cyclic-free JSON from json.loads cannot
+# exceed this in practice.
+_MAX_JSON_DEPTH = 50
+
+
+@dataclass
+class PathMatch:
+    """One JSON path whose leaf matched a target value, with the match kind.
+
+    ``path`` is a dotted/indexed locator (e.g. ``data.items[0].name``) that
+    resolves back to ``leaf`` via :func:`get_by_path`. ``kind`` is one of:
+
+      * ``"exact"``      -- a string leaf equal to the target.
+      * ``"substring"``  -- a string leaf that *contains* the target.
+      * ``"numeric"``    -- leaf and target denote the same number (numeric leaf
+        vs numeric string, or two differently-formatted numeric strings).
+      * ``"path-prefix"``-- a URL-ish leaf equal to the target apart from a
+        leading path separator (e.g. ``/naruto`` vs ``naruto``).
+    """
+
+    path: str
+    leaf: object
+    kind: str
+
+
+def _to_number(x: object) -> Optional[float]:
+    """Parse ``x`` to a float if it denotes a number, else ``None``.
+
+    Booleans are rejected (``True``/``False`` are ``int`` subclasses in Python
+    but never a "number" a developer would map a chapter value onto). Pure.
+    """
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, str):
+        try:
+            return float(x.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _numeric_equal(leaf: object, value: str) -> bool:
+    """True if ``leaf`` and the target string denote the same number. Pure."""
+    a = _to_number(leaf)
+    b = _to_number(value)
+    return a is not None and b is not None and a == b
+
+
+def _is_path_prefix(leaf: str, value: str) -> bool:
+    """True if ``leaf`` equals ``value`` apart from leading path separator(s),
+    e.g. ``/naruto`` vs ``naruto`` (Req 2.4). Pure."""
+    return leaf != value and leaf.lstrip("/") == value.lstrip("/")
+
+
+def _classify_leaf(leaf: object, value: str) -> Optional[str]:
+    """Return the most specific match kind for ``leaf`` against the target
+    ``value``, or ``None`` if it does not match.
+
+    Precedence (most specific first), so a single leaf yields at most one kind
+    and overlapping kinds never both fire:
+
+      1. ``exact``       -- string leaf identical to the target.
+      2. ``path-prefix`` -- string leaf differing only by a leading ``/``.
+      3. ``numeric``     -- leaf and target are the same number (this is where a
+         numeric leaf such as ``748`` matches the string ``"748"``, and where
+         ``"748.0"`` matches ``"748"``).
+      4. ``substring``   -- string leaf that contains the target.
+
+    Pure -- no IO.
+    """
+    if isinstance(leaf, str):
+        if leaf == value:
+            return "exact"
+        if _is_path_prefix(leaf, value):
+            return "path-prefix"
+        if _numeric_equal(leaf, value):
+            return "numeric"
+        if value in leaf:
+            return "substring"
+        return None
+    # numeric (or other scalar) leaf: only a numeric equivalence can match a
+    # string target (string/number cross-type equality -> "numeric", Req 2.3).
+    if _numeric_equal(leaf, value):
+        return "numeric"
+    return None
+
+
+def _walk_for_value(
+    obj: object,
+    value: str,
+    path: str,
+    depth: int,
+    out: List[PathMatch],
+) -> None:
+    """Recursively collect :class:`PathMatch` for ``value`` under ``obj``,
+    building dotted/indexed paths. Bounded by ``_MAX_JSON_DEPTH``. Pure."""
+    if depth > _MAX_JSON_DEPTH:
+        return
+    if isinstance(obj, dict):
+        for key, child in obj.items():
+            child_path = f"{path}.{key}" if path else f"{key}"
+            _walk_for_value(child, value, child_path, depth + 1, out)
+    elif isinstance(obj, list):
+        for i, child in enumerate(obj):
+            _walk_for_value(child, value, f"{path}[{i}]", depth + 1, out)
+    else:
+        kind = _classify_leaf(obj, value)
+        if kind is not None:
+            out.append(PathMatch(path=path, leaf=obj, kind=kind))
+
+
+def json_paths_for_value(obj: object, value: str) -> List[PathMatch]:
+    """Return every JSON path whose leaf matches ``value`` (Req 2.1-2.4, 2.6).
+
+    Walks dicts and lists to a bounded depth (``_MAX_JSON_DEPTH``) and never
+    raises on cyclic-free arbitrary JSON. Each returned :class:`PathMatch` has a
+    ``path`` that resolves back to its ``leaf`` via :func:`get_by_path`
+    (Property 1, locator soundness). Every leaf equal to the target is reported
+    (Property 2, completeness for exact matches); see :func:`_classify_leaf` for
+    the match-kind precedence. The tool does not pick "the" field -- all matches
+    are returned for the developer to interpret.
+
+    Pure -- no network/browser/file IO (Req 2.6, Property 7).
+    """
+    out: List[PathMatch] = []
+    if value == "":
+        # An empty target would "substring-match" every string leaf; that is
+        # noise, not a location, so report nothing (the caller treats a
+        # value with no matches as unresolved, Req 2.5).
+        return out
+    _walk_for_value(obj, value, "", 0, out)
+    return out
+
+
+# Path segments look like ``key`` or ``key[0]`` or a bare ``[0]`` (list root),
+# with one or more bracketed indices, e.g. ``items[0][1]``.
+_PATH_SEGMENT = re.compile(r"^([^\[\]]*)((?:\[\d+\])*)$")
+
+
+def get_by_path(obj: object, path: str) -> object:
+    """Resolve a dotted/indexed ``path`` (as produced by
+    :func:`json_paths_for_value`) against ``obj`` and return the leaf value.
+
+    ``""`` denotes the root object itself. Dict keys are dot-separated and list
+    indices are bracketed, e.g. ``data.items[0].name``. This is the inverse of
+    the locator and is shared with the Phase 3 scaffold's runtime path access.
+    Raises ``KeyError``/``IndexError``/``TypeError`` for a path that does not
+    resolve. Pure -- no IO.
+
+    Note: keys containing ``.`` or ``[`` are not representable in this notation;
+    the captured manga JSON uses identifier-like keys, for which it round-trips.
+    """
+    if path == "":
+        return obj
+    cur: object = obj
+    for segment in path.split("."):
+        match = _PATH_SEGMENT.match(segment)
+        if match is None:
+            raise KeyError(f"unparseable path segment: {segment!r}")
+        key, indices = match.group(1), match.group(2)
+        if key != "":
+            cur = cur[key]  # type: ignore[index]
+        for idx in re.findall(r"\[(\d+)\]", indices):
+            cur = cur[int(idx)]  # type: ignore[index]
+    return cur
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 -- sibling-mismatch (gotcha) check: once a value is located, look at
+# the fields *next to* it and warn when one looks like it should carry the same
+# number but disagrees -- e.g. a ``chapter_number`` that is a sequence counter,
+# not the displayed chapter (refactoring-plan "Problem A"). Hints only: the tool
+# never asserts the sibling is wrong, and stays silent when nothing disagrees so
+# that the absence of warnings is meaningful (Req 3.4, Property 4). Pure -- no IO.
+# ---------------------------------------------------------------------------
+
+# Sibling key *names* that hint the field should carry the matched datum as a
+# number (case-insensitive substring match, Req 3.2): ``chapter_number``,
+# ``page_count``, ``manga_id`` all qualify. Used to specialise the hint wording.
+_NUMBER_KEY_HINTS = ("number", "count")
+_ID_KEY_HINTS = ("id",)
+
+# First integer/decimal run embedded in a string, e.g. ``700.5`` inside
+# ``"Chapter 700.5 : Uzumaki Naruto"`` (Req 3.2).
+_EMBEDDED_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+@dataclass
+class SiblingWarning:
+    """A hint that a field adjacent to a matched value disagrees with it.
+
+    ``sibling_path`` is the full dotted/indexed path of the disagreeing sibling
+    (resolvable via :func:`get_by_path`); ``sibling_value`` is its raw value;
+    ``message`` is advisory prose (Req 3.3) -- the tool never asserts the
+    sibling is wrong, only that it *might* be a gotcha (e.g. a sequence counter).
+    """
+
+    sibling_path: str
+    sibling_value: object
+    message: str
+
+
+def _number_in_target(value: str) -> Optional[float]:
+    """The number a target value denotes or contains, or ``None`` if it has
+    none.
+
+    A bare numeric target (``"748"``, ``"700.5"``) is parsed via
+    :func:`_to_number`; otherwise the first embedded ``\\d+(\\.\\d+)?`` run is
+    taken (``"Chapter 700.5 : Uzumaki Naruto"`` -> ``700.5``). Returning
+    ``None`` means there is nothing numeric to compare a sibling against, so the
+    checker stays silent (Req 3.4). Pure -- no IO.
+    """
+    bare = _to_number(value)
+    if bare is not None:
+        return bare
+    found = _EMBEDDED_NUMBER.search(value)
+    return float(found.group()) if found else None
+
+
+def _format_number(n: float) -> str:
+    """Render a comparison number without a spurious ``.0`` (``748.0`` ->
+    ``"748"``, ``700.5`` -> ``"700.5"``). Pure."""
+    return str(int(n)) if n.is_integer() else str(n)
+
+
+def _sibling_hint(key: str, target_str: str, sibling_value: object) -> str:
+    """Advisory message for a disagreeing sibling, specialised by key shape
+    (Req 3.3). Always phrased as a hint ("likely", "might"). Pure -- no IO."""
+    base = (
+        f"sibling {key!r}={sibling_value!r} disagrees with {target_str} "
+        f"in the matched value"
+    )
+    low = key.lower()
+    if any(h in low for h in _NUMBER_KEY_HINTS):
+        return (
+            f"{base}; it is likely a sequence counter rather than the displayed "
+            f"number -- derive the number from the matched field instead"
+        )
+    if any(h in low for h in _ID_KEY_HINTS):
+        return f"{base}; it might be an internal id rather than the displayed number"
+    return f"{base}; verify which field actually holds the value you want"
+
+
+def sibling_mismatch_check(
+    obj: object, match: PathMatch, value: str
+) -> List[SiblingWarning]:
+    """Flag sibling fields that look like they should hold the matched value's
+    number but disagree (Req 3.1-3.4).
+
+    Resolves the dict that *directly* contains the matched leaf (the parent of
+    ``match.path``) and inspects its other keys. A sibling is flagged when the
+    target contains a number AND the sibling *looks* numeric/identifier-like --
+    a ``*number*``/``*count*``/``*id*`` key (case-insensitive) or any numeric
+    value -- AND its numeric value differs from the target's number. Comparison
+    is numeric, so ``748`` and ``"748"`` agree (no warning). Matching siblings
+    never warn, so the absence of warnings is meaningful (Req 3.4, Property 4);
+    warnings are phrased as hints, not assertions (Req 3.3).
+
+    Returns ``[]`` when the matched leaf is not inside a dict (a list element or
+    the root -- no named siblings, Req 3.1), when the target contains no number,
+    or when no sibling disagrees. Pure -- no network/browser/file IO
+    (Property 7).
+    """
+    # The matched leaf has named siblings only if it sits in a dict. ``""`` is
+    # the root, and a path ending in an index (``...[0]``) points at a list
+    # element -- neither exposes named siblings (Req 3.1).
+    if match.path == "":
+        return []
+    last_segment = match.path.split(".")[-1]
+    if last_segment.endswith("]"):
+        return []
+    matched_key = last_segment
+    parent_path = match.path.rsplit(".", 1)[0] if "." in match.path else ""
+
+    try:
+        parent = get_by_path(obj, parent_path)
+    except (KeyError, IndexError, TypeError):
+        return []
+    if not isinstance(parent, dict):
+        return []
+
+    target_number = _number_in_target(value)
+    if target_number is None:
+        # No number in the target -> nothing for a numeric sibling to disagree
+        # with -> stay silent (Req 3.4, no noise).
+        return []
+    target_str = _format_number(target_number)
+
+    warnings: List[SiblingWarning] = []
+    for key, sibling_value in parent.items():
+        if key == matched_key:
+            continue
+        sibling_number = _to_number(sibling_value)
+        if sibling_number is None:
+            # Non-numeric sibling: nothing to compare numerically. A key whose
+            # *name* hints a number (e.g. an id) but whose value is a
+            # non-numeric string (e.g. "WYXlbzbY") gives no disagreement to
+            # surface -> skip (conservative, Req 3.4).
+            continue
+        if sibling_number == target_number:
+            continue  # agrees -> never warn (Req 3.4, Property 4)
+        sibling_path = f"{parent_path}.{key}" if parent_path else key
+        warnings.append(
+            SiblingWarning(
+                sibling_path=sibling_path,
+                sibling_value=sibling_value,
+                message=_sibling_hint(key, target_str, sibling_value),
+            )
+        )
+    return warnings
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 -- field map: tie the locator and the gotcha checker together across
+# every captured JSON body. Given the developer's known values
+# (``name=value`` examples), report, per value, the path(s) it lives at, which
+# capture each came from, and any sibling-mismatch hints -- plus an explicit
+# "unresolved" marker for values found nowhere (Req 4.2-4.4). The tool lists
+# *all* matches and never picks "the" field; the developer interprets
+# (Property 6, advisory-only). Pure -- the CLI wrapper does the file IO and the
+# ``__NEXT_DATA__`` extraction (Property 7); this works uniformly on any parsed
+# JSON, whether it came from an ``api_*.json`` body or embedded page data.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FieldMapEntry:
+    """One developer-supplied example mapped across all captured JSON.
+
+    ``name`` is the label the developer gave (e.g. ``"title"``); ``value`` is
+    the value they can see on the page. ``matches`` is every
+    ``(source_file, PathMatch)`` the value was located at, across *all*
+    captures -- the tool does not pick a single field (Req 4.4, Property 6).
+    ``warnings`` collects the sibling-mismatch hints for those matches
+    (de-duplicated). An entry with an empty ``matches`` list is *unresolved*
+    (the value was found nowhere) and is reported as such rather than dropped
+    (Req 4.3, Property 3 -- no silent loss).
+    """
+
+    name: str
+    value: str
+    matches: List[Tuple[str, PathMatch]]
+    warnings: List[SiblingWarning]
+
+
+def build_field_map(
+    captures: Dict[str, object],
+    examples: Dict[str, str],
+) -> List[FieldMapEntry]:
+    """Locate each example value across every parsed JSON capture (Req 4.2-4.4).
+
+    ``captures`` maps a source-file label (e.g. ``"api_01.json"`` or
+    ``"page.html#__NEXT_DATA__"``) to an already-parsed JSON object;
+    ``examples`` maps a developer label to the value they can see on the page.
+
+    For each ``(name, value)`` -- in the input order of ``examples`` -- the
+    locator (:func:`json_paths_for_value`) runs over every capture and *all*
+    matches are collected as ``(source_file, PathMatch)`` tuples; the tool does
+    not pick "the" field (Req 4.4). Each match is also run through
+    :func:`sibling_mismatch_check` against the capture it came from, and the
+    resulting :class:`SiblingWarning` hints are gathered (de-duplicated by
+    ``(sibling_path, message)`` so a hint recurring across captures is reported
+    once). Every example produces exactly one :class:`FieldMapEntry`, even when
+    nothing matched -- an empty ``matches`` list is how "unresolved" is
+    represented, so no input is silently lost (Req 4.3, Property 3).
+
+    Pure -- no network/browser/file IO. It reads only its parsed inputs, so it
+    treats standalone ``api_*.json`` bodies and embedded ``__NEXT_DATA__``
+    payloads identically (the CLI wrapper supplies both, Property 7).
+    """
+    entries: List[FieldMapEntry] = []
+    for name, value in examples.items():
+        matches: List[Tuple[str, PathMatch]] = []
+        warnings: List[SiblingWarning] = []
+        seen_warnings: set = set()
+        for source_file, capture in captures.items():
+            for match in json_paths_for_value(capture, value):
+                matches.append((source_file, match))
+                for warning in sibling_mismatch_check(capture, match, value):
+                    key = (warning.sibling_path, warning.message)
+                    if key in seen_warnings:
+                        continue
+                    seen_warnings.add(key)
+                    warnings.append(warning)
+        entries.append(
+            FieldMapEntry(name=name, value=value, matches=matches, warnings=warnings)
+        )
+    return entries
+
+
+def render_field_map(entries: List[FieldMapEntry]) -> str:
+    """Render a readable, advisory field-map report (Req 4.3, 4.4; Property 6).
+
+    Resolved examples come first: per entry, the label and value, then every
+    matching path with its source file and match kind, then any sibling-mismatch
+    hint lines. When several paths match one value they are *all* listed -- the
+    report never asserts a single answer (Req 4.4, Property 6). Unresolved
+    examples (no matches) are gathered into a dedicated trailing section so they
+    are visible, not dropped (Req 4.3, Property 3). Pure -- no IO.
+    """
+    resolved = [e for e in entries if e.matches]
+    unresolved = [e for e in entries if not e.matches]
+
+    lines = [
+        "# Field map (advisory -- all matches listed; you pick the field)\n",
+    ]
+
+    if not resolved and not unresolved:
+        lines.append("(no values supplied)")
+        return "\n".join(lines) + "\n"
+
+    for entry in resolved:
+        lines.append(
+            f"{entry.name} = {entry.value!r}  ({len(entry.matches)} match(es))"
+        )
+        for source_file, match in entry.matches:
+            lines.append(f"  [{match.kind}] {source_file}: {match.path}")
+            lines.append(f"      leaf={match.leaf!r}")
+        for warning in entry.warnings:
+            lines.append(f"  !! hint: {warning.message}")
+            lines.append(f"     (sibling {warning.sibling_path})")
+        lines.append("")
+
+    if unresolved:
+        lines.append("# Unresolved (found in no capture -- check the exact value)")
+        for entry in unresolved:
+            lines.append(f"  {entry.name} = {entry.value!r}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def parse_examples(tokens: List[str]) -> Dict[str, str]:
+    """Parse ``name=value`` CLI tokens into an ``{name: value}`` map (Req 4.1).
+
+    Splits each token on the *first* ``=`` so a value may itself contain ``=``
+    (e.g. ``url=/x?a=b`` -> ``{"url": "/x?a=b"}``). Insertion order is preserved
+    so the field-map report lists examples in the order the developer gave them.
+    A token with no ``=`` cannot name a value, so it raises ``ValueError`` (the
+    CLI turns this into a clean ``argparse`` error). Pure -- no IO.
+    """
+    examples: Dict[str, str] = {}
+    for token in tokens:
+        name, sep, value = token.partition("=")
+        if sep == "":
+            raise ValueError(
+                f"invalid --map-by-example token {token!r}: expected name=value"
+            )
+        examples[name] = value
+    return examples
+
+
 def _write(out_dir: Path, name: str, text: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / name).write_text(text, encoding="utf-8", errors="replace")
     print(f"  wrote {out_dir / name}  ({len(text)} chars)")
+
+
+def load_captures(out_dir: Path) -> Dict[str, object]:
+    """Load already-captured probe artifacts in ``out_dir`` into the
+    ``{source_file: parsed_json}`` map :func:`build_field_map` expects.
+
+    Reads only what the probe already wrote -- it never triggers a new
+    browser/network capture (Req 7.1):
+
+      * every ``api_*.json`` body in the directory is parsed and keyed by its
+        filename; a file whose contents don't parse as JSON is skipped, not
+        raised on (design "Malformed JSON in a capture -> skipped").
+      * if ``page.html`` is present, its embedded ``__NEXT_DATA__`` payload is
+        extracted via :func:`_next_data_from_html` and, when found, added under
+        ``"page.html#__NEXT_DATA__"`` (Req 4.2 -- embedded JSON is searched too).
+
+    A missing directory or absent files yield an empty map rather than an error
+    (design: missing files treated as empty). The only IO is reading; the
+    returned data is what makes the field-map step unit-testable (Property 7).
+    """
+    captures: Dict[str, object] = {}
+    if not out_dir.is_dir():
+        return captures
+
+    for path in sorted(out_dir.glob("api_*.json")):
+        try:
+            captures[path.name] = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            # malformed JSON (or unreadable) capture -> skip gracefully
+            continue
+
+    page_html = out_dir / "page.html"
+    if page_html.is_file():
+        try:
+            next_data = _next_data_from_html(page_html.read_text(encoding="utf-8"))
+        except OSError:
+            next_data = None
+        if next_data is not None:
+            captures["page.html#__NEXT_DATA__"] = next_data
+
+    return captures
+
+
+def write_field_map(out_dir: Path, examples: Dict[str, str]) -> Path:
+    """Build a field map over the existing captures in ``out_dir`` and write
+    ``field_map.txt`` (Req 4.2, 4.3). Thin IO wrapper around the pure analysis.
+
+    Operates purely on artifacts already in ``out_dir`` -- it performs no
+    network/browser capture (Req 7.1, Property 7). Returns the path written.
+    """
+    captures = load_captures(out_dir)
+    entries = build_field_map(captures, examples)
+    _write(out_dir, "field_map.txt", render_field_map(entries))
+    return out_dir / "field_map.txt"
 
 
 def _dump_api_bodies(
@@ -984,11 +1504,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="locate this string (a chapter number, title, slug you can SEE on "
         "the page) in the HTML and report its element + container selector",
     )
+    ap.add_argument(
+        "--map-by-example",
+        nargs="+",
+        metavar="name=value",
+        help="map-by-example: give one or more values you can SEE on the page "
+        "as name=value pairs and write field_map.txt locating each across the "
+        "captured JSON (api_*.json + embedded __NEXT_DATA__). Operates on the "
+        "EXISTING captures in the output dir -- it does NOT re-capture (no "
+        "browser/network), so run a normal probe first.",
+    )
     args = ap.parse_args(argv)
 
     site = args.site or site_name_from_url(args.url)
     out_dir = Path(args.out) / site
     print(f"[probe] site={site} -> {out_dir}")
+
+    # Map-by-example is a standalone, browser-free mode: it reads the artifacts
+    # already in out_dir and writes field_map.txt. It returns BEFORE importing
+    # nodriver below, so it never drives a browser or hits the site (Req 7.1).
+    if args.map_by_example:
+        try:
+            examples = parse_examples(args.map_by_example)
+        except ValueError as err:
+            ap.error(str(err))
+        path = write_field_map(out_dir, examples)
+        print(
+            f"\nDone. Wrote {path} -- the field map locating each value across "
+            "the captured JSON (advisory: all matches are listed, you pick the "
+            "field). Re-run a normal probe first if it looks empty."
+        )
+        return 0
 
     import nodriver as nd
 
@@ -1000,7 +1546,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "api_*.json dumps), api_backends.txt (can the API be hit without a "
         "browser?) and candidates.txt (and search_*.txt if --search was used), "
         "then save the relevant captures as fixtures and write the parser "
-        "against them."
+        "against them. To map values you can see on the page onto JSON paths, "
+        "re-run with --map-by-example name=value ... (writes field_map.txt)."
     )
     return 0
 

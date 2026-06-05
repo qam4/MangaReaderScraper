@@ -14,83 +14,83 @@ commit-checklist.
 
 ### Phase 1 — Recommendation synthesis
 
-- [ ] 1. Add `StagePlan` and `Recommendation` dataclasses (with `render()`) to
+- [~] 1. Add `StagePlan` and `Recommendation` dataclasses (with `render()`) to
   `scraper/probe.py`.
   - _Requirements: 1.1, 1.5_
-- [ ] 2. Implement `synthesize_recommendation(ajax_urls, api_backends,
+- [~] 2. Implement `synthesize_recommendation(ajax_urls, api_backends,
   api_bodies, page_html)` deciding `api_open`, `default_fetcher`, and the three
   stage plans from the artifacts.
   - _Requirements: 1.2, 1.3, 1.4_
-- [ ] 3. Unit-test the synthesizer: open-API site (mangak.io-like) → curl_cffi
+- [~] 3. Unit-test the synthesizer: open-API site (mangak.io-like) → curl_cffi
   + embedded-images note; challenged-everywhere site → browser; no-API HTML
   site. Use crafted inputs mirroring real captures.
   - _Requirements: 1.6_
-- [ ] 4. Wire `_probe` to build the api_backends map + parsed bodies in-memory
+- [~] 4. Wire `_probe` to build the api_backends map + parsed bodies in-memory
   and write `recommendation.txt`; update the module docstring and the final
   "Done" hint. Update `docs/adding-a-source.md` to list `recommendation.txt`.
   - _Requirements: 1.1, 7.2_
 
 ### Phase 2 — Map-by-example (Step A)
 
-- [ ] 5. Implement `json_paths_for_value(obj, value)` with the four match kinds
+- [x] 5. Implement `json_paths_for_value(obj, value)` with the four match kinds
   (exact, substring, numeric-equiv, path-prefix) and bounded-depth traversal;
   add `PathMatch`.
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6_
-- [ ] 6. Unit-test the locator against `search_naruto.json` /
+- [x] 6. Unit-test the locator against `search_naruto.json` /
   `chapters_naruto.json`: finds `name`/`slug`, substring `700.5` in a chapter
   name, numeric/string equivalence, `/naruto` path-prefix, and unresolved
   values.
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
-- [ ] 7. Implement `sibling_mismatch_check(obj, match, value)` +
+- [x] 7. Implement `sibling_mismatch_check(obj, match, value)` +
   `SiblingWarning`; flag numeric / `*number*` / `*count*` / `*id*` siblings that
   disagree.
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
-- [ ] 8. Unit-test the gotcha checker on the mangak.io case (`name="Chapter
+- [x] 8. Unit-test the gotcha checker on the mangak.io case (`name="Chapter
   700.5"` vs sibling `chapter_number=748`) and the no-warning case.
   - _Requirements: 3.5_
-- [ ] 9. Implement `build_field_map(captures, examples)` (search standalone
+- [x] 9. Implement `build_field_map(captures, examples)` (search standalone
   `api_*.json` + embedded `__NEXT_DATA__` via `_next_data_from_html`) and
   `render_field_map(entries)`; add `FieldMapEntry`.
   - _Requirements: 4.2, 4.3, 4.4_
-- [ ] 10. Add `--map-by-example name=value ...` to `main()`; collect parsed
+- [x] 10. Add `--map-by-example name=value ...` to `main()`; collect parsed
   captures and write `field_map.txt`. Unit-test CLI parsing + report rendering
   against the mangabuddy fixtures.
   - _Requirements: 4.1, 4.5_
-- [ ] 11. Document `--map-by-example` in `docs/adding-a-source.md` (a JSON
+- [x] 11. Document `--map-by-example` in `docs/adding-a-source.md` (a JSON
   counterpart to `--find`).
   - _Requirements: 7.2_
 
 ### Phase 3 — Parser scaffold (Step B). Build only after Phase 2 has been used on a real site other than mangak.io.
 
-- [ ] 12. Define `ParserConfig` + `SearchSpec`/`ChaptersSpec`/`ImagesSpec` and
+- [~] 12. Define `ParserConfig` + `SearchSpec`/`ChaptersSpec`/`ImagesSpec` and
   `load_parser_config(text)` (toml parse + validation with `ConfigError`) in a
   new `scraper/scaffold.py`. Add `get_by_path(obj, path)` helper.
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
-- [ ] 13. Unit-test config load/validate, including a full mangak.io
+- [~] 13. Unit-test config load/validate, including a full mangak.io
   `parser.toml` and a missing-field error case.
   - _Requirements: 5.5_
-- [ ] 14. Implement `generate_parser(cfg)` emitting the three parser classes for
+- [~] 14. Implement `generate_parser(cfg)` emitting the three parser classes for
   the `api` and `next_data` image modes, wired to the registry and shared
   building blocks, with explicit hooks for underivable transforms.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.6_
-- [ ] 15. Implement `generate_tests(cfg, fixtures)` emitting fixture-backed
+- [~] 15. Implement `generate_tests(cfg, fixtures)` emitting fixture-backed
   tests.
   - _Requirements: 6.1, 6.5_
-- [ ] 16. Golden + round-trip tests: assert emitted source contains the right
+- [~] 16. Golden + round-trip tests: assert emitted source contains the right
   endpoints/paths/fetcher; generate the mangak.io parser to a temp module,
   import it, and run mangabuddy-equivalent assertions against the fixtures.
   - _Requirements: 6.5_
-- [ ] 17. Add a CLI entry to generate from a config (e.g. `python -m
+- [~] 17. Add a CLI entry to generate from a config (e.g. `python -m
   scraper.scaffold <parser.toml>`), and document the Step B workflow + config
   schema in `docs/adding-a-source.md`.
   - _Requirements: 6.1, 7.2_
-- [ ] 18. (`html` image mode) Extend the generator for the plain-HTML image mode
+- [~] 18. (`html` image mode) Extend the generator for the plain-HTML image mode
   with a configured selector, if a real site needs it. Defer until then.
   - _Requirements: 6.2_
 
 ### Cross-cutting
 
-- [ ] 19. Verify no phase adds site hammering; ensure all new logic is pure +
+- [~] 19. Verify no phase adds site hammering; ensure all new logic is pure +
   unit-tested with no network/browser; confirm `probe_out/` stays gitignored.
   - _Requirements: 7.1, 7.3, 7.4_
 
