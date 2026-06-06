@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -11,17 +12,15 @@ from scraper.menu import SearchMenu
 from scraper.parsers.types import SiteParserClass
 from scraper.registry import available_sources, get_source
 from scraper.uploaders.types import Uploader
-from scraper.utils import menu_input, settings
+from scraper.utils import LOG_LEVEL_ENV, configure_logging, menu_input, settings
 
 CONFIG = settings()["config"]
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(funcName)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+# Configure logging once at import with the default level; cli() re-applies the
+# user's --log-level (and propagates it to worker processes via the env var).
+configure_logging()
 
 
 def get_volume_values(volume: str) -> List[str]:
@@ -107,6 +106,12 @@ def cli(arguments: List[str]) -> dict:
     parser = get_parser()
     args = vars(parser.parse_args(arguments))
     logger.debug(f"args={args}")
+    # Apply the chosen log level once, and propagate it to spawned worker
+    # processes (which don't inherit logging config) via the env var that
+    # configure_logging reads as its pool initializer.
+    log_level = args.get("log_level") or "INFO"
+    os.environ[LOG_LEVEL_ENV] = log_level
+    configure_logging(log_level)
     manga_parser = get_manga_parser(args["source"])
     title = None
 
@@ -173,8 +178,14 @@ def change_args_to_search(args: Dict[str, Optional[str]]) -> List[Optional[str]]
     args.update({"manga": None, "volumes": None, "search": args["manga"]})
 
     flags = ["remove"]
+    # log_level is applied globally (env var + configure_logging) before any
+    # re-entry, and its CLI flag is hyphenated (--log-level) so it can't be
+    # re-emitted from the underscore dict key; skip it.
+    skip = ["log_level"]
 
     for k, v in args.items():
+        if k in skip:
+            continue
         if (k == "upload" and not v) or (k in flags and v is False) or v is None:
             continue
         if k in flags and v is True:
@@ -252,6 +263,13 @@ def get_parser() -> argparse.ArgumentParser:
         "--bundle",
         type=int,
         help="Specify the number of chapters per volume in the output manga",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="logging verbosity (default: INFO)",
     )
     return parser
 

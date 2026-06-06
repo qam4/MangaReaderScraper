@@ -29,7 +29,7 @@ from scraper.exceptions import (
 from scraper.new_types import PageData, VolumeData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
-from scraper.utils import get_adapter, settings
+from scraper.utils import configure_logging, get_adapter, settings
 
 logger = logging.getLogger(__name__)
 
@@ -234,14 +234,6 @@ class MangaBuilder:
         Download pages of a volume, and save them to disk (in pdf or cbz)
         Returns volume number & each pages raw data
         """
-        # On windows, sub-process do not inherit logLevel, ...
-        # also, logs in sub-process mess tqmd (so better keep level=WARN)
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(funcName)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-
         # Do not try to download volume data if the complete volume is already saved on disk
         if self.manga.volume_exists(volume_id, volume_index):
             return None
@@ -311,7 +303,7 @@ class MangaBuilder:
         self.adapter.info("Downloading volumes data...")
         self.adapter.debug(f"self.manga.name={self.manga.name}")
         with logging_redirect_tqdm(loggers=[self.adapter.logger]):
-            with Pool(4) as pool:
+            with Pool(4, initializer=configure_logging) as pool:
                 volumes_data = list(
                     tqdm(
                         pool.imap(

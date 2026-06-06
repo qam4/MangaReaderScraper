@@ -1,6 +1,7 @@
 import configparser
 import functools
 import logging
+import os
 import pdb
 import re
 import sys
@@ -14,6 +15,38 @@ from requests.adapters import HTTPAdapter  # type: ignore
 from urllib3.util.retry import Retry
 
 from scraper.exceptions import CannotExtractChapter
+
+# Env var carrying the chosen log level into spawned worker processes, which do
+# NOT inherit the parent's logging config (esp. on Windows spawn). The CLI sets
+# it once; each pool worker reads it back via ``configure_logging`` as its pool
+# ``initializer``. Keeps logging configured in ONE place instead of three.
+LOG_LEVEL_ENV = "MANGASCRAPER_LOG_LEVEL"
+DEFAULT_LOG_LEVEL = "INFO"
+
+
+def configure_logging(level: Optional[str] = None) -> None:
+    """Configure root logging once, with a ``rich`` handler.
+
+    Single source of truth for log setup (replaces the three duplicated
+    ``logging.basicConfig`` calls). ``level`` defaults to the
+    ``MANGASCRAPER_LOG_LEVEL`` env var, then ``INFO`` -- so worker processes that
+    don't inherit the parent's config can be used as a pool ``initializer`` with
+    no args and still pick up the level the CLI chose. ``force=True`` makes it
+    idempotent (safe to call again from the CLI after argparse).
+    """
+    if level is None:
+        level = os.environ.get(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL)
+    level = level.upper()
+
+    from rich.logging import RichHandler
+
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        force=True,
+    )
 
 
 class CustomAdapter(LoggerAdapter):

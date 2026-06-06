@@ -19,7 +19,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
 from tqdm.rich import tqdm  # type: ignore
 
 from scraper.manga import Manga
-from scraper.utils import get_adapter, settings
+from scraper.utils import configure_logging, get_adapter, settings
 
 logger = logging.getLogger(__name__)
 
@@ -103,14 +103,6 @@ class Bundle:
         """
         Create a bundled volume
         """
-        # On windows, sub-process do not inherit logLevel, ...
-        # also, logs in sub-process mess tqmd (so better keep level=WARN)
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(funcName)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-
         start_time = time.time()
 
         input_root_path = self._get_manga_download_dir()
@@ -230,7 +222,7 @@ class Bundle:
         multi_process = True
         with logging_redirect_tqdm(loggers=[self.adapter.logger]):
             if multi_process:
-                with Pool() as pool:
+                with Pool(initializer=configure_logging) as pool:
                     list(
                         tqdm(
                             pool.imap(

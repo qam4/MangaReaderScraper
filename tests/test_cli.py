@@ -203,12 +203,27 @@ def test_ioerror_remove_upload_args():
 @mock.patch("scraper.__main__.download_manga", mock.Mock(return_value=1))
 def test_download_via_cli(arguments, expected):
     args = cli(arguments)
+    args.pop("log_level", None)  # routing test; log level is asserted elsewhere
     assert args == expected
 
 
 def test_get_invalid_manga_parser():
     with pytest.raises(ValueError):
         get_manga_parser("nothing")
+
+
+@mock.patch("scraper.__main__.download_manga", mock.Mock(return_value=1))
+def test_log_level_arg_sets_level_and_env(monkeypatch):
+    import logging
+    import os
+
+    from scraper.utils import LOG_LEVEL_ENV
+
+    monkeypatch.delenv(LOG_LEVEL_ENV, raising=False)
+    cli(["--manga", "dragonball", "--log-level", "DEBUG"])
+    # the chosen level is applied and propagated to workers via the env var
+    assert os.environ[LOG_LEVEL_ENV] == "DEBUG"
+    assert logging.getLogger().level == logging.DEBUG
 
 
 @pytest.mark.parametrize("arguments,inputs,expected", SEARCH_PARAMETERS)
@@ -220,6 +235,7 @@ def test_search_via_cli(
         gen = (x for x in inputs)
         monkeypatch.setattr("builtins.input", lambda x: next(gen))
         args = cli(arguments)
+        args.pop("log_level", None)  # routing test; log level asserted elsewhere
         assert args == expected
 
 
@@ -242,6 +258,7 @@ def test_search_if_failed_manga_match(monkeypatch, mangareader_search_html):
             # mock manga_search to return values that signifies it was triggered
             mocked_func.return_value = ("manga title", "search activated", "2")
             args = cli(["--manga", "dragonballzz"])
+            args.pop("log_level", None)  # routing test; log level asserted elsewhere
             expected = {
                 "manga": "search activated",
                 "search": ["dragonballzz"],
