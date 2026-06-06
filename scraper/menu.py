@@ -61,15 +61,6 @@ class Menu:
         else:
             return f"{num}. Back"
 
-    # @classmethod
-    # def from_list(cls, l: List[str]) -> "Menu":
-    #     """
-    #     Constructs self._options and self.choices from a list.
-    #     """
-    #     options = {str(k + 1): i for k, i in enumerate(l)}
-    #     choices = "\n".join("{}. {}".format(k, i) for k, i in sorted(options.items()))
-    #     return cls(options, choices)
-
 
 class SearchMenu(Menu):
     def __init__(self, query: List[str], parser: SiteParserClass) -> None:

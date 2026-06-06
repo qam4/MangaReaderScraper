@@ -254,8 +254,6 @@ class MangaBuilder:
                 # Download the data from urls
                 # i.e download the volume images in parallel threads
                 pages_data = pool.map(self.parser.manga.page_data, urls)
-            # no multi-thread version:
-            # pages_data = list(map(self.parser.manga.page_data, urls))
 
             if not pages_data:
                 self.adapter.error(f"No data for volume {volume_id}")

@@ -59,12 +59,9 @@ class MangaparkMangaParser(BaseMangaParser):
         Return a list of urls for every page in a given volume
         """
         volume_html = self._scrape_volume(volume)
-        logger.debug(f"volume_html={volume_html}")
         if volume_html:
             items = volume_html.find_all("div", {"data-name": "image-item"})
-            logger.debug(f"items={items}")
             all_img_tags = [item.find("img") for item in items]  # type: ignore[union-attr]
-            logger.debug(f"all_img_tags={all_img_tags}")
             all_page_urls = [attr(img, "src") for img in all_img_tags]
             return list(enumerate(all_page_urls, start=1))
         return None
@@ -81,10 +78,8 @@ class MangaparkMangaParser(BaseMangaParser):
             url = f"{self.base_url}/title/{self.manga_url}"
             logger.debug(f"Manga url={url}")
             manga_html = fetch_soup(url)
-            logger.debug(f"manga_html={manga_html}")
 
             volume_tags = manga_html.find_all("div", {"q:key": "8t_8"})
-            logger.debug(f"volume_tags={volume_tags}")
             volume_ids = list(
                 reversed(
                     list(
@@ -95,7 +90,6 @@ class MangaparkMangaParser(BaseMangaParser):
                     )
                 )
             )
-            logger.debug(f"volume_ids={volume_ids}")
             return volume_ids
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -117,19 +111,15 @@ class MangaparkSearch(BaseSearchParser):
         Extract the desired text from a HTML search result
         """
         manga_title = attr(result.find("img"), "alt")
-        logger.debug(f"manga_title={manga_title}")
         manga_url = attr(result.find("a"), "href")
-        logger.debug(f"manga_url={manga_url}")
         manga_url_short = Path(manga_url).stem.split("/")[-1]
         last_chapter = result.find(
             "a", {"class": "link-hover link-primary visited:link-accent"}
         )
-        logger.debug(f"last_chapter={last_chapter}")
         if last_chapter:
             chapters = text(last_chapter.find("span"))  # type: ignore[arg-type]
         else:
             chapters = ""
-        logger.debug(f"chapters={chapters}")
         return SearchResult(
             title=manga_title,
             manga_url=manga_url_short,
