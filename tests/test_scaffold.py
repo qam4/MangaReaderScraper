@@ -17,9 +17,10 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import bs4
 import pytest
 
-from scraper.exceptions import MangaDoesNotExist
+from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
 from scraper.fetchers import FetchResult
 from scraper.registry import _REGISTRY
 from scraper.scaffold import (
@@ -371,12 +372,36 @@ def test_generated_parser_compiles():
     compile(src, "<gen>", "exec")
 
 
-def test_generated_parser_html_mode_emits_hook_and_compiles():
-    # Req 6.4: the plain-HTML image mode is not auto-derivable -- page_urls is an
-    # explicit hook -- but the module still compiles.
+def test_generated_parser_html_mode_extracts_images_and_compiles():
+    # Task 18 / Req 6.2: the plain-HTML image mode now emits a REAL page_urls --
+    # it fetch_soups the page, selects IMAGES_SELECTOR, and reads each <img>'s
+    # url via the shared attr helper -- never the old NotImplementedError stub.
     html_src = generate_parser(load_parser_config(HTML_IMAGES_TOML))
-    assert "site-specific: html image mode" in html_src
+    # the shared building blocks are wired in (Req 6.2): fetch_soup + attr
+    assert "from scraper.fetchers import" in html_src
+    assert "fetch_soup" in html_src
+    assert "from scraper.parsers._html import attr" in html_src
+    # the configured selector + the optional image-attr override are baked in
+    assert "IMAGES_SELECTOR" in html_src
+    assert "IMAGE_ATTR" in html_src
+    assert "soup.select_one(IMAGES_SELECTOR)" in html_src
+    # the old "not implemented" html image-mode stub is GONE (it's implemented)
+    assert 'NotImplementedError("site-specific: html image mode' not in html_src
+    # but the underivable descramble / vrf hooks are still present (Req 6.4)
+    assert "site-specific: image descramble" in html_src
+    assert "site-specific: vrf / signed request token" in html_src
     compile(html_src, "<gen-html>", "exec")
+
+
+def test_generated_parser_html_mode_uses_browser_fetch_when_configured():
+    # When the html config picks the browser fetcher, page_urls fetches through
+    # the SHARED building block as fetch_soup(url, BrowserFetcher()) -- still
+    # never a direct browser-library call on the data path (Req 6.2).
+    html_src = generate_parser(load_parser_config(HTML_IMAGES_TOML))  # fetcher=browser
+    assert "fetch_soup(url, BrowserFetcher())" in html_src
+    assert "from scraper.fetchers import BrowserFetcher, FetchResult, fetch_soup" in (
+        html_src
+    )
 
 
 def test_generated_parser_api_mode_has_images_endpoint_and_compiles():
@@ -552,6 +577,154 @@ def test_roundtrip_wrong_search_path_yields_empty(tmp_path):
     finally:
         sys.modules.pop(module_name, None)
         _REGISTRY.pop("mangabuddy_badpath", None)
+
+
+# =========================================================================
+# Task 18 / Req 6.2 + 6.5: plain-HTML image mode round-trips against REAL
+# shipped HTML fixtures. Generate an html-mode parser, import it into a temp
+# module, mock the generated module's `fetch_soup` to return a BeautifulSoup of
+# the captured page, and assert page_urls extracts the right images.
+#
+# Two real fixtures are the ground truth:
+#   * mangakaka -- images in `div.container-chapter-reader`, plain `src` (no
+#     data-src), with logo/gohome imgs OUTSIDE the container that must be
+#     excluded by the container-scoped find_all("img");
+#   * mangafast -- images in `div#Read`; the first img carries the real url in
+#     `src`, the lazy ones carry a `data:` placeholder in `src` and the real url
+#     in `data-src` -- so extraction must prefer data-src, fall back to src, and
+#     never emit the `data:` placeholder.
+# A wrong selector must fail LOUDLY (VolumeDoesntExist), not silently mis-parse.
+# Each test imports under a DISTINCT register_as and tears down sys.modules +
+# the registry key, so no global state leaks and nothing lands in the real tree.
+
+# The real shipped HTML fixtures (ground truth for the html-mode round-trip).
+MANGAKAKA_VOLUME_HTML = Path(
+    "tests/test_files/mangakaka/dragonball_super_volume_1.html"
+).read_text(encoding="utf-8")
+MANGAFAST_VOLUME_HTML = Path(
+    "tests/test_files/mangafast/dragonball_super_volume_1.html"
+).read_text(encoding="utf-8")
+
+
+def _html_toml(register_as: str, selector: str) -> str:
+    """A minimal valid html-mode config (search/chapters mirror MANGAKIO shapes;
+    they are not exercised by the page test). No image_attr -> data-src/src
+    fallback applies."""
+    return f"""\
+site = "html-site"
+register_as = "{register_as}"
+base_url = "https://example.com"
+api_url = "https://example.com"
+fetcher = "curl_cffi"
+
+[search]
+endpoint = "/search?q={{query}}"
+items = "data.items"
+title = "name"
+slug = "slug"
+
+[chapters]
+endpoint = "/manga/{{id}}/chapters?cv={{cv}}"
+list = "data.chapters"
+chapter_name = "name"
+chapter_slug = "slug"
+id_from = "id"
+cv_from = "cv"
+
+[images]
+source = "html"
+page_url = "{{base_url}}/{{slug}}/{{chapter_slug}}"
+selector = "{selector}"
+"""
+
+
+def test_roundtrip_html_mode_mangakaka_container_plain_src(tmp_path):
+    # mangakaka: div.container-chapter-reader, 16 plain-`src` page images. The
+    # logo/gohome imgs OUTSIDE the container must be excluded (count stays 16,
+    # every url under the mkklcdnv5 host), and no `data:` placeholder leaks.
+    cfg = load_parser_config(_html_toml("kakalot_gen", "div.container-chapter-reader"))
+    module_name = "gen_kakalot_roundtrip"
+    mod = _import_generated(
+        generate_parser(cfg), module_name, tmp_path / "gen_kakalot.py"
+    )
+    try:
+        parser = mod.KakalotGenMangaParser("dragon-ball-super")
+        parser._chapter_slugs = {"1": "chapter-1"}
+        soup = bs4.BeautifulSoup(MANGAKAKA_VOLUME_HTML, "lxml")
+        with mock.patch.object(mod, "fetch_soup", return_value=soup):
+            pages = parser.page_urls("1")
+        assert len(pages) == 16
+        assert pages[0] == (
+            1,
+            "https://s5.mkklcdnv5.com/mangakakalot/d2/dragon_ball_super/"
+            "chapter_1_the_god_of_destructions_prophetic_dream/1.jpg",
+        )
+        # logo / gohome imgs (outside the container) are excluded: every kept url
+        # is a page image on the mkklcdnv5 host, and none is a data: placeholder.
+        assert all("mkklcdnv5.com" in url for _, url in pages)
+        assert not any(url.startswith("data:") for _, url in pages)
+        # pages are numbered 1..16 in order
+        assert [num for num, _ in pages] == list(range(1, 17))
+    finally:
+        sys.modules.pop(module_name, None)
+        _REGISTRY.pop("kakalot_gen", None)
+
+
+def test_roundtrip_html_mode_mangafast_lazy_data_src(tmp_path):
+    # mangafast: div#Read; the FIRST img's real url is in `src` (no data-src),
+    # the lazy ones have a `data:` placeholder in `src` and the real url in
+    # `data-src`. Extraction must prefer data-src, fall back to src for the first
+    # img, and never emit the data: placeholder.
+    cfg = load_parser_config(_html_toml("mangafast_gen", "div#Read"))
+    module_name = "gen_mangafast_roundtrip"
+    mod = _import_generated(
+        generate_parser(cfg), module_name, tmp_path / "gen_mangafast.py"
+    )
+    try:
+        parser = mod.MangafastGenMangaParser("dragon-ball-super")
+        parser._chapter_slugs = {"1": "chapter-1"}
+        soup = bs4.BeautifulSoup(MANGAFAST_VOLUME_HTML, "lxml")
+        with mock.patch.object(mod, "fetch_soup", return_value=soup):
+            pages = parser.page_urls("1")
+        assert pages, "no images extracted from div#Read"
+        # page 1: real url read from `src` (the first img has no data-src)
+        assert pages[0] == (
+            1,
+            "https://i0.wp.com/mangafast.net/img4/2020-07-22/576980/"
+            "dragon-ball-super-chapter-1-page-1.jpg?q=70",
+        )
+        # page 2: real url read from `data-src`, NOT the data:image/svg placeholder
+        assert pages[1] == (
+            2,
+            "https://i0.wp.com/mangafast.net/img4/2020-07-22/576980/"
+            "dragon-ball-super-chapter-1-page-2.jpg?q=70",
+        )
+        # the lazy data: placeholder never leaks into the page urls
+        assert not any(url.startswith("data:") for _, url in pages)
+    finally:
+        sys.modules.pop(module_name, None)
+        _REGISTRY.pop("mangafast_gen", None)
+
+
+def test_roundtrip_html_mode_wrong_selector_fails_loudly(tmp_path):
+    # Req 6.5: a wrong selector finds no container (select_one -> None), so
+    # page_urls raises VolumeDoesntExist -- a LOUD failure, not a silent empty
+    # result or mis-parse.
+    cfg = load_parser_config(_html_toml("badsel_gen", "div.does-not-exist"))
+    module_name = "gen_badsel_roundtrip"
+    mod = _import_generated(
+        generate_parser(cfg), module_name, tmp_path / "gen_badsel.py"
+    )
+    try:
+        parser = mod.BadselGenMangaParser("dragon-ball-super")
+        parser._chapter_slugs = {"1": "chapter-1"}
+        soup = bs4.BeautifulSoup(MANGAKAKA_VOLUME_HTML, "lxml")
+        with mock.patch.object(mod, "fetch_soup", return_value=soup):
+            with pytest.raises(VolumeDoesntExist):
+                parser.page_urls("1")
+    finally:
+        sys.modules.pop(module_name, None)
+        _REGISTRY.pop("badsel_gen", None)
 
 
 # =========================================================================

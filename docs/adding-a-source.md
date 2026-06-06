@@ -231,13 +231,18 @@ python -m scraper.scaffold parser.toml \
 The generated parser is structurally the shipped `mangabuddy.py`: it wires the
 configured fetcher, `sort_chapter_ids`, `SearchResult`, the
 number-from-chapter-name parsing, and `get_by_path` — never a direct HTTP/browser
-call on the data path. The generated tests run against the fixtures you name and
-assert non-empty/specific results, so a wrong field path fails loudly rather than
-mis-parsing silently.
+call on the data path. The image stage can be an API endpoint, embedded
+`next_data`, or plain HTML (`source = "html"` — `fetch_soup` + a container
+`selector`, see below). The generated tests run against the fixtures you name and
+assert non-empty/specific results, so a wrong field path (or selector) fails
+loudly rather than mis-parsing silently.
 
-This is a **shortcut for the open-API pattern**, not a replacement for the loop:
-a vrf-token site (`mangafire.py`) or a plain-HTML site (`mangareader.py`) is
-still hand-written.
+This is a **shortcut for the API-backed search/chapters pattern**, not a
+replacement for the loop: the generator still resolves the slug and lists
+chapters via the API, so a vrf-token site (`mangafire.py`) or a fully plain-HTML
+site whose *search and chapter list* are also scraped from markup
+(`mangareader.py`) is still hand-written — even though its image stage could use
+the `html` mode above.
 
 #### The config schema
 
@@ -313,10 +318,19 @@ other fields it needs depend on it:
 - `source = "next_data"` → `page_url` (chapter-page URL template with
   `{base_url}` / `{slug}` / `{chapter_slug}`) + `images_path` (JSON path to the
   images array inside the page's embedded `__NEXT_DATA__`).
-- `source = "html"` → `page_url` + `selector` (CSS selector for the image
-  elements). **The `html` mode is not auto-generated**: `page_urls` is emitted
-  as an explicit `NotImplementedError` hook for you to implement, since
-  lazy-loading / `data-src` / descramble quirks can't be derived.
+- `source = "html"` → `page_url` + `selector` (CSS selector for the **container**
+  holding the page `<img>` elements, e.g. `div.container-chapter-reader` or
+  `div#Read`) + an optional `image_attr`. This mode **is** auto-generated: the
+  emitted `page_urls` `fetch_soup`s the chapter page (via the shared building
+  block — `fetch_soup(url)`, or `fetch_soup(url, BrowserFetcher())` when
+  `fetcher = "browser"` — never a direct HTTP/browser call), `select_one`s the
+  container, and reads each `<img>`'s url preferring `data-src` (lazy-load) then
+  falling back to `src`, skipping `data:` placeholder images. Set `image_attr`
+  to override which attribute is read first (it is then tried before
+  `data-src`/`src`). A wrong selector finds no container and raises
+  `VolumeDoesntExist` — a loud failure, not a silent mis-parse. Genuinely
+  site-specific quirks (image descramble, JS-injected images) still surface as
+  `NotImplementedError` hooks / need hand-editing.
 
 #### It's a scaffold — verify it
 
@@ -329,7 +343,7 @@ are unverified**. After generating you must:
 2. verify against the live site (does the fetcher actually reach the API, does
    the image CDN need cookies);
 3. implement any `NotImplementedError` hooks the scaffold emits — `descramble` /
-   vrf-token / the `html` image mode;
+   vrf-token quirks;
 4. **add the new module to `_SOURCE_MODULES` in `scraper/registry.py`** —
    registration requires that list, so `--source <name>` won't see the parser
    until you add `"scraper.parsers.<register_as>"` there (the generator prints

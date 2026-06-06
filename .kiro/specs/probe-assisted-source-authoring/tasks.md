@@ -84,7 +84,7 @@ commit-checklist.
   scraper.scaffold <parser.toml>`), and document the Step B workflow + config
   schema in `docs/adding-a-source.md`.
   - _Requirements: 6.1, 7.2_
-- [~] 18. (`html` image mode) Extend the generator for the plain-HTML image mode
+- [x] 18. (`html` image mode) Extend the generator for the plain-HTML image mode
   with a configured selector, if a real site needs it. Defer until then.
   - _Requirements: 6.2_
 

@@ -123,7 +123,8 @@ class ImagesSpec:
 
       * ``api``       -> :attr:`endpoint` + :attr:`images_path`
       * ``next_data`` -> :attr:`page_url` + :attr:`images_path`
-      * ``html``      -> :attr:`page_url` + :attr:`selector`
+      * ``html``      -> :attr:`page_url` + :attr:`selector` (+ optional
+        :attr:`image_attr`)
 
     Attributes:
         source: One of :data:`VALID_IMAGE_SOURCES`.
@@ -133,7 +134,16 @@ class ImagesSpec:
             ``{slug}`` / ``{chapter_slug}`` placeholders -- used by
             ``next_data`` and ``html``.
         endpoint: Standalone image-list API endpoint template -- used by ``api``.
-        selector: CSS selector for the image elements -- used by ``html``.
+        selector: CSS selector for the container holding the page ``<img>``
+            elements -- used by ``html`` (e.g. ``"div.container-chapter-reader"``
+            or ``"div#Read"``). The generated ``page_urls`` scopes its
+            ``find_all("img")`` to this container, so logo/nav images outside it
+            are excluded.
+        image_attr: Optional markup attribute holding each image's url -- used by
+            ``html``. When set, the generated ``page_urls`` reads this attribute
+            first; when blank (the default), it prefers ``data-src`` (lazy-load)
+            then falls back to ``src``. Either way a ``data:`` placeholder is
+            skipped.
     """
 
     source: str
@@ -141,6 +151,7 @@ class ImagesSpec:
     page_url: str = ""
     endpoint: str = ""
     selector: str = ""
+    image_attr: str = ""
 
 
 @dataclass
@@ -228,6 +239,8 @@ def _build_images(table: dict[str, Any]) -> ImagesSpec:
     else:  # "html"
         _require(table, "page_url", "images")
         _require(table, "selector", "images")
+        # image_attr is OPTIONAL: blank -> the generated parser prefers
+        # data-src then falls back to src (Requirement 5.2 / 6.2).
 
     return ImagesSpec(
         source=source,
@@ -235,6 +248,7 @@ def _build_images(table: dict[str, Any]) -> ImagesSpec:
         page_url=str(table.get("page_url", "")),
         endpoint=str(table.get("endpoint", "")),
         selector=str(table.get("selector", "")),
+        image_attr=str(table.get("image_attr", "")),
     )
 
 
@@ -275,12 +289,13 @@ def load_parser_config(text: str) -> ParserConfig:
 # constants (Req 6.6), NOT a runtime config-interpreter: quirks then live in
 # editable code. It is structurally the shipped ``mangabuddy.py`` (Req 6.1) and
 # wires to the shared building blocks -- the fetchers, ``sort_chapter_ids``,
-# ``SearchResult``, chapter-number-from-name parsing, ``get_by_path`` (Req 6.2)
-# -- never a direct HTTP/browser library call on the data path. Two image modes
-# are emitted directly (``api`` and ``next_data``, Req 6.2/6.3); the ``html``
-# mode and any underivable transform (descramble, vrf) are emitted as explicit
-# ``NotImplementedError("site-specific: ...")`` hooks, never a fake body
-# (Req 6.4).
+# ``SearchResult``, chapter-number-from-name parsing, ``get_by_path``,
+# ``fetch_soup`` + ``attr`` (Req 6.2) -- never a direct HTTP/browser library
+# call on the data path. All three image modes are emitted with real bodies
+# (``api`` / ``next_data`` JSON paths, ``html`` selector + ``data-src``/``src``
+# extraction, Req 6.2/6.3); only underivable transforms (descramble, vrf) are
+# emitted as explicit ``NotImplementedError("site-specific: ...")`` hooks, never
+# a fake body (Req 6.4).
 #
 # Implementation note: the generated method bodies read every field through the
 # module constants, so they are STATIC text; only the docstring, the imports,
@@ -336,10 +351,17 @@ def _fetcher_import_line(cfg: ParserConfig) -> str:
     Always imports the data fetcher + ``FetchResult``; the ``next_data`` image
     mode additionally needs ``CurlCffiFetcher`` (curl-first) and
     ``BrowserFetcher`` (fallback), mirroring the shipped mangabuddy ``page_urls``.
+    The ``html`` image mode needs ``fetch_soup`` (the shared HTML building block,
+    Req 6.2) and -- only when the chosen fetcher is the browser -- ``BrowserFetcher``
+    to pass to it.
     """
     names = {_data_fetcher_class(cfg), "FetchResult"}
     if cfg.images.source == "next_data":
         names.update({"CurlCffiFetcher", "BrowserFetcher"})
+    elif cfg.images.source == "html":
+        names.add("fetch_soup")
+        if cfg.fetcher == "browser":
+            names.add("BrowserFetcher")
     return "from scraper.fetchers import " + ", ".join(sorted(names))
 
 
@@ -380,6 +402,18 @@ missing path surfaces as "not found" rather than a silent mis-parse (Req 6.5).
 def _render_header(cfg: ParserConfig) -> str:
     """Module docstring + imports + the module ``logger``."""
     docstring = _MODULE_DOCSTRING.replace("@@SITE@@", cfg.site)
+    parser_imports = []
+    if cfg.images.source == "html":
+        # The html image mode reads each <img>'s url through the shared
+        # ``attr`` helper (Req 6.2). isort orders ``_html`` before ``base``.
+        parser_imports.append("from scraper.parsers._html import attr")
+    parser_imports += [
+        "from scraper.parsers.base import (",
+        "    BaseMangaParser,",
+        "    BaseSearchParser,",
+        "    BaseSiteParser,",
+        ")",
+    ]
     return "\n".join(
         [
             docstring,
@@ -390,11 +424,7 @@ def _render_header(cfg: ParserConfig) -> str:
             "from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist",
             _fetcher_import_line(cfg),
             "from scraper.new_types import SearchResult, SearchResults",
-            "from scraper.parsers.base import (",
-            "    BaseMangaParser,",
-            "    BaseSearchParser,",
-            "    BaseSiteParser,",
-            ")",
+            *parser_imports,
             "from scraper.probe import get_by_path",
             "from scraper.registry import register_source",
             "from scraper.selection import sort_chapter_ids",
@@ -434,6 +464,7 @@ def _render_constants(cfg: ParserConfig) -> str:
     else:  # html
         lines.append(f"PAGE_URL = {_pylit(cfg.images.page_url)}")
         lines.append(f"IMAGES_SELECTOR = {_pylit(cfg.images.selector)}")
+        lines.append(f"IMAGE_ATTR = {_pylit(cfg.images.image_attr)}")
     return "\n".join(lines)
 
 
@@ -820,9 +851,14 @@ _IMAGES_NEXT_DATA = r'''    def volume_url(self, volume: str) -> str:
         return list(enumerate(images, start=1))'''
 
 
-# ``html`` mode: NOT auto-derivable into a working body (Req 6.4). Emit an
-# explicit hook that raises rather than a fake implementation -- task 18 (or a
-# hand edit) implements it against the live site using ``IMAGES_SELECTOR``.
+# ``html`` mode: the page images live in plain HTML inside a container element
+# (Req 6.2). Fetch the page via the SHARED ``fetch_soup`` building block (never a
+# direct HTTP/browser call), select the container with the configured
+# ``IMAGES_SELECTOR``, and read each ``<img>``'s url -- preferring ``IMAGE_ATTR``
+# (if configured) then ``data-src`` (lazy-load) then ``src``, skipping the
+# ``data:`` placeholder lazy imgs ship in ``src``. A wrong selector -> no
+# container -> ``VolumeDoesntExist`` (Req 6.5: wrong path fails loudly).
+# ``@@SOUPFETCH@@`` is replaced with the configured ``fetch_soup(...)`` call.
 _IMAGES_HTML = r'''    def volume_url(self, volume: str) -> str:
         """URL of the chapter page for a given chapter number."""
         chapter_slug = self._chapter_slug_for(volume)
@@ -835,23 +871,61 @@ _IMAGES_HTML = r'''    def volume_url(self, volume: str) -> str:
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] by scraping the chapter page HTML.
 
-        The plain-HTML image mode is site-specific (lazy-loading, ``data-src``
-        vs ``src``, descramble) and is NOT auto-generated. Fetch the page via
-        ``volume_url(volume)``, select images with ``IMAGES_SELECTOR``, and
-        return them ordered -- implement against the live site.
+        Fetches the page through the shared ``fetch_soup`` building block (Req
+        6.2 -- never a direct HTTP/browser call), scopes ``find_all("img")`` to
+        the container at ``IMAGES_SELECTOR`` (so logo / nav images outside it are
+        excluded), and reads each image's url with an attribute rule that copes
+        with lazy-loading: ``IMAGE_ATTR`` first when configured, else ``data-src``
+        then ``src``. The ``data:`` placeholder lazy imgs ship in ``src`` is
+        skipped. A wrong selector yields no container -> ``VolumeDoesntExist``
+        (Req 6.5: a wrong path fails loudly rather than mis-parsing).
         """
-        raise NotImplementedError(
-            "site-specific: html image mode -- implement against the live site "
-            "(task 18 / hand-write) using IMAGES_SELECTOR"
-        )'''
+        url = self.volume_url(volume)
+        logger.info(f"Chapter page url={url}")
+        soup = @@SOUPFETCH@@
+        container = soup.select_one(IMAGES_SELECTOR)
+        if container is None:
+            raise VolumeDoesntExist(
+                f"Image container {IMAGES_SELECTOR!r} not found on page for "
+                f"{self.manga_url} chapter {volume}"
+            )
+        kept: List[str] = []
+        for img in container.find_all("img"):
+            if IMAGE_ATTR:
+                img_url = (
+                    attr(img, IMAGE_ATTR) or attr(img, "data-src") or attr(img, "src")
+                )
+            else:
+                img_url = attr(img, "data-src") or attr(img, "src")
+            if img_url and not img_url.startswith("data:"):
+                kept.append(img_url)
+        if not kept:
+            raise VolumeDoesntExist(
+                f"No page images found for {self.manga_url} chapter {volume}"
+            )
+        return list(enumerate(kept, start=1))'''
+
+
+def _soup_fetch_call(cfg: ParserConfig) -> str:
+    """The ``fetch_soup(...)`` expression for the html image mode.
+
+    Defaults to ``fetch_soup(url)`` (curl_cffi under the hood); when the config
+    chose the browser fetcher, passes a ``BrowserFetcher()`` so the JS-rendered
+    page is fetched through a real browser -- still via the shared building block
+    (Req 6.2), never a direct browser-library call.
+    """
+    if cfg.fetcher == "browser":
+        return "fetch_soup(url, BrowserFetcher())"
+    return "fetch_soup(url)"
 
 
 def _render_images_method(cfg: ParserConfig) -> str:
     """The mode-specific ``volume_url`` + image methods for the manga parser."""
+    if cfg.images.source == "html":
+        return _IMAGES_HTML.replace("@@SOUPFETCH@@", _soup_fetch_call(cfg))
     return {
         "api": _IMAGES_API,
         "next_data": _IMAGES_NEXT_DATA,
-        "html": _IMAGES_HTML,
     }[cfg.images.source]
 
 
@@ -932,11 +1006,12 @@ def generate_parser(cfg: ParserConfig) -> str:
 
     The emitted module is a SKELETON with the config values baked in as module
     constants (Req 6.6), structurally mirroring the shipped ``mangabuddy.py``
-    (Req 6.1) and wired to the shared building blocks (Req 6.2). It emits the
-    ``api`` and ``next_data`` image modes directly (Req 6.2/6.3); the ``html``
-    mode and underivable transforms are explicit ``NotImplementedError`` hooks,
-    never fake bodies (Req 6.4). The result is syntactically valid Python with a
-    trailing newline.
+    (Req 6.1) and wired to the shared building blocks (Req 6.2). It emits all
+    three image modes with real bodies -- ``api`` / ``next_data`` (JSON paths)
+    and ``html`` (``fetch_soup`` + selector + ``data-src``/``src`` extraction,
+    Req 6.2/6.3); only underivable transforms are explicit
+    ``NotImplementedError`` hooks, never fake bodies (Req 6.4). The result is
+    syntactically valid Python with a trailing newline.
     """
     header = _render_header(cfg)
     sections = [
@@ -966,8 +1041,8 @@ def generate_parser(cfg: ParserConfig) -> str:
 # test_mangabuddy.py`` (the template): it loads the captured fixtures as text,
 # defines an ``_ok(text)`` ``FetchResult`` helper, mocks the GENERATED parser
 # module's configured fetcher ``.get`` (and, for the ``next_data`` image mode,
-# its ``BrowserFetcher``), and asserts search / chapters / page_urls against the
-# fixtures.
+# its ``BrowserFetcher``; for the ``html`` image mode, its ``fetch_soup``), and
+# asserts search / chapters / page_urls against the fixtures.
 #
 # Requirement 6.5 (a wrong/missing field path must FAIL the test, not silently
 # mis-parse) is enforced by the SHAPE of the assertions: the generated parser
@@ -986,7 +1061,7 @@ def generate_parser(cfg: ParserConfig) -> str:
 #                                                # to tests/test_files/<register_as>
 #       "search":    "search_xxx.json",   # enables the search test
 #       "chapters":  "chapters_xxx.json", # with "search": enables the chapters test
-#       "page_html": "chapter_page.html", # next_data image mode: page_urls test
+#       "page_html": "chapter_page.html", # next_data/html image mode: page_urls test
 #       "images":    "images_xxx.json",   # api image mode: page_urls test
 #       "slug":      "naruto",   # a manga slug PRESENT in the search fixture --
 #                                # the chapters test resolves it slug->id, so it
@@ -1068,15 +1143,21 @@ def _render_test_imports(
     cfg: ParserConfig,
     *,
     fixture_backed: bool,
+    uses_ok_helper: bool,
+    uses_bs4: bool,
     emit_search: bool,
     emit_chapters: bool,
+    emit_pages: bool,
     uses_pytest: bool,
 ) -> str:
     """Assemble the import block for the generated test (isort-ordered).
 
     Only the names the emitted tests actually reference are imported, so the
     result is ruff-clean (no unused imports) regardless of which tests are
-    emitted.
+    emitted. ``fixture_backed`` brings in ``Path`` + ``mock`` (any test reading a
+    fixture / patching a seam); ``uses_ok_helper`` adds ``FetchResult`` (the
+    JSON/page-fetch tests that build a ``FetchResult`` via ``_ok``); ``uses_bs4``
+    adds ``import bs4`` (the ``html`` image-mode page test builds a soup).
     """
     prefix = _class_prefix(cfg)
     module = parser_module_name(cfg)
@@ -1087,13 +1168,15 @@ def _render_test_imports(
         stdlib.append("from unittest import mock")
 
     third_party = []
+    if uses_bs4:
+        third_party.append("import bs4")
     if uses_pytest:
         third_party.append("import pytest")
 
     first_party = []
     if emit_chapters:
         first_party.append("from scraper.exceptions import MangaDoesNotExist")
-    if fixture_backed:
+    if uses_ok_helper:
         first_party.append("from scraper.fetchers import FetchResult")
 
     # Names imported from the generated parser module: constants (UPPER_CASE)
@@ -1127,7 +1210,7 @@ def _render_fixture_constants(cfg: ParserConfig, fixtures: dict[str, Any]) -> st
         lines.append(
             f"CHAPTERS_JSON = {read.format(name=_pylit(fixtures['chapters']))}"
         )
-    if cfg.images.source == "next_data" and fixtures.get("page_html"):
+    if cfg.images.source in ("next_data", "html") and fixtures.get("page_html"):
         lines.append(
             f"CHAPTER_PAGE_HTML = {read.format(name=_pylit(fixtures['page_html']))}"
         )
@@ -1237,14 +1320,25 @@ _PAGES_API_TEST = r"""def test_page_urls_reads_image_api():
     assert pages[0][0] == 1"""
 
 
-_PAGES_HTML_TEST = r"""def test_page_urls_html_mode_is_an_explicit_hook():
-    # html mode is a site-specific hook (Req 6.4): page_urls raises
-    # NotImplementedError rather than guessing a scrape. Implement it against the
-    # live site (task 18 / by hand) and replace this test.
+_PAGES_HTML_TEST = r"""def test_page_urls_scrapes_images_from_html():
+    # html mode: the page images live in the chapter page HTML inside the
+    # IMAGES_SELECTOR container. fetch_soup is mocked to return a BeautifulSoup
+    # of the captured page; the parser scopes find_all("img") to the container
+    # and reads each url preferring data-src then src (skipping data: lazy
+    # placeholders). Pre-seed the chapter map so volume_url resolves without an
+    # extra fetch.
     parser = @@P@@MangaParser(@@SLUG@@)
     parser._chapter_slugs = {"1": "scaffold-chapter-1"}
-    with pytest.raises(NotImplementedError):
-        parser.page_urls("1")"""
+    soup = bs4.BeautifulSoup(CHAPTER_PAGE_HTML, "lxml")
+    with mock.patch("@@SOUPTARGET@@", return_value=soup):
+        pages = parser.page_urls("1")
+    # Req 6.5: a wrong IMAGES_SELECTOR yields no container -> VolumeDoesntExist;
+    # a non-empty list of (int, url) pairs proves the selector resolves.
+    assert pages, "no images -- check IMAGES_SELECTOR"
+    assert all(isinstance(num, int) and isinstance(url, str) for num, url in pages)
+    assert pages[0][0] == 1
+    # the lazy-load data: placeholder must not leak into the page urls
+    assert not any(url.startswith("data:") for _, url in pages)"""
 
 
 _SITE_TEST = r"""def test_site_parser_wires_subparsers():
@@ -1261,9 +1355,11 @@ def generate_tests(cfg: ParserConfig, fixtures: dict[str, Any]) -> str:
     thin CLI (task 17) writes the returned string to disk.
 
     See the module-level banner above for the ``fixtures`` dict shape. Only the
-    tests whose fixtures are supplied are emitted; the ``html`` image mode always
-    emits a ``NotImplementedError`` hook test (it has no fixture). The result is
-    valid, ruff-clean Python with a trailing newline.
+    tests whose fixtures are supplied are emitted; for the ``html`` image mode a
+    real ``page_urls`` test is emitted when a ``page_html`` fixture is given
+    (it mocks ``fetch_soup`` to return a soup of the fixture), otherwise the page
+    test is skipped. The result is valid, ruff-clean Python with a trailing
+    newline.
 
     Requirement 6.5 is enforced by asserting NON-EMPTY / specific results, so a
     wrong/missing configured field path (which makes the generated parser's
@@ -1282,19 +1378,30 @@ def generate_tests(cfg: ParserConfig, fixtures: dict[str, Any]) -> str:
 
     emit_search = bool(fixtures.get("search"))
     emit_chapters = bool(fixtures.get("search") and fixtures.get("chapters"))
-    if source == "next_data":
+    if source in ("next_data", "html"):
+        # html now has a real page_urls (task 18): emit a real page test only
+        # when a page_html fixture is supplied, otherwise skip the page test
+        # (it is no longer a NotImplementedError hook).
         emit_pages = bool(fixtures.get("page_html"))
-    elif source == "api":
+    else:  # api
         emit_pages = bool(fixtures.get("images"))
-    else:  # html -- an explicit hook test, no fixture needed
-        emit_pages = True
 
-    # Any test that fakes a fetch response reads a fixture file and uses
-    # mock + FetchResult + _ok; the html-mode page test and the site test do not.
-    fixture_backed = (
+    # Which support each emitted test needs:
+    #   * the JSON/page-fetch tests build a FetchResult via _ok (search/chapters/
+    #     api page/next_data page);
+    #   * the html page test builds a BeautifulSoup from the page fixture (bs4),
+    #     reads the page HTML constant + patches fetch_soup, but uses no _ok;
+    #   * the chapters test needs pytest (the unknown-slug raises case).
+    emit_json_fetch = (
         emit_search or emit_chapters or (emit_pages and source in ("api", "next_data"))
     )
-    uses_pytest = emit_chapters or (emit_pages and source == "html")
+    emit_html_page = emit_pages and source == "html"
+    uses_ok_helper = emit_json_fetch
+    uses_bs4 = emit_html_page
+    # any test reading a fixture / patching a seam needs Path + mock + the
+    # fixture-constants block.
+    fixture_backed = emit_json_fetch or emit_html_page
+    uses_pytest = emit_chapters
 
     base_map = {
         "@@P@@": prefix,
@@ -1303,6 +1410,7 @@ def generate_tests(cfg: ParserConfig, fixtures: dict[str, Any]) -> str:
         "@@DATATARGET@@": data_target,
         "@@CURLTARGET@@": f"scraper.parsers.{module}.CurlCffiFetcher.get",
         "@@BROWSERTARGET@@": f"scraper.parsers.{module}.BrowserFetcher",
+        "@@SOUPTARGET@@": f"scraper.parsers.{module}.fetch_soup",
         "@@QUERY@@": _pylit(query),
         "@@QUERYURL@@": _pylit(query.replace(" ", "+")),
         "@@SLUG@@": _pylit(slug),
@@ -1313,8 +1421,11 @@ def generate_tests(cfg: ParserConfig, fixtures: dict[str, Any]) -> str:
     imports = _render_test_imports(
         cfg,
         fixture_backed=fixture_backed,
+        uses_ok_helper=uses_ok_helper,
+        uses_bs4=uses_bs4,
         emit_search=emit_search,
         emit_chapters=emit_chapters,
+        emit_pages=emit_pages,
         uses_pytest=uses_pytest,
     )
 
@@ -1323,7 +1434,7 @@ def generate_tests(cfg: ParserConfig, fixtures: dict[str, Any]) -> str:
         preamble += "\n\n" + _render_fixture_constants(cfg, fixtures)
 
     chunks = [preamble]
-    if fixture_backed:
+    if uses_ok_helper:
         chunks.append(_OK_HELPER)
     if emit_search:
         chunks.append(_apply(_SEARCH_TEST, base_map))
@@ -1369,11 +1480,11 @@ def _build_fixtures(args: argparse.Namespace, cfg: ParserConfig) -> dict[str, An
     """Assemble the ``fixtures`` dict ``generate_tests`` understands from flags.
 
     Only keys the developer supplied are included; ``generate_tests`` emits only
-    the tests whose fixtures are present (the ``html`` image mode always emits
-    its ``NotImplementedError`` hook test regardless). ``dir`` defaults to
-    ``tests/test_files/<register_as>`` -- matching ``generate_tests``'s own
-    default -- and is overridable with ``--fixtures-dir``. Pure: reads ``args``,
-    returns a dict; no IO.
+    the tests whose fixtures are present (the ``html`` image mode emits a real
+    ``page_urls`` test when ``--page-html`` is given, else skips it). ``dir``
+    defaults to ``tests/test_files/<register_as>`` -- matching ``generate_tests``'s
+    own default -- and is overridable with ``--fixtures-dir``. Pure: reads
+    ``args``, returns a dict; no IO.
     """
     fixtures: dict[str, Any] = {
         "dir": args.fixtures_dir or f"tests/test_files/{cfg.register_as}",
@@ -1429,8 +1540,7 @@ def _closing_message(cfg: ParserConfig, parser_path: Path, test_path: Path) -> s
             "relying on it:",
             "  1. run the generated tests against the fixtures;",
             "  2. verify it against the live site;",
-            "  3. implement any NotImplementedError hooks (descramble / vrf / "
-            "html image mode);",
+            "  3. implement any NotImplementedError hooks (descramble / vrf);",
             f"  4. add {f'scraper.parsers.{module}'!r} to _SOURCE_MODULES in "
             "scraper/registry.py so --source picks it up.",
         ]
@@ -1472,7 +1582,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     fx.add_argument(
         "--page-html",
         dest="page_html",
-        help="chapter-page HTML fixture (next_data image mode: page_urls test)",
+        help="chapter-page HTML fixture (next_data / html image mode: page_urls test)",
     )
     fx.add_argument(
         "--images",
