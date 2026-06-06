@@ -70,7 +70,7 @@ def test_settings():
         create_base_config()
         config = settings()
         assert config["config"]["manga_directory"] == str(Path("/tmp/Downloads"))
-        assert config["config"]["source"] == "mangareader"
+        assert config["config"]["source"] == "mangabuddy"
         assert config["config"]["filetype"] == "pdf"
 
 

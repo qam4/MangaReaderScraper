@@ -74,7 +74,9 @@ def create_base_config() -> None:
 
     config["config"]["manga_directory"] = str(downloaddir)
     config["config"]["manga_bundle_directory"] = str(downloaddir)
-    config["config"]["source"] = "mangareader"
+    # mangareader.net is defunct; default to mangabuddy (mangak.io), an
+    # open-API source that works without a browser.
+    config["config"]["source"] = "mangabuddy"
     config["config"]["filetype"] = "pdf"
     config["config"]["upload_root"] = "/"
 

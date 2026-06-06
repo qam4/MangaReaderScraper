@@ -54,6 +54,15 @@ def test_volume_total_pages(volume):
     assert volume.total_pages() == 2
 
 
+def test_volume_total_pages_counts_pages_not_max_number():
+    # regression: total_pages must be a COUNT, not max(page number). With a gap
+    # (pages 1 and 5) the count is 2, while max page number would be 5.
+    volume = Volume("1", Path("/Some/path"), Path("/some/path"))
+    volume.add_page(1, b"a")
+    volume.add_page(5, b"b")
+    assert volume.total_pages() == 2
+
+
 def test_cant_add_page_already_in_volume(volume):
     with pytest.raises(PageAlreadyPresent):
         volume.add_page(1, b"something")

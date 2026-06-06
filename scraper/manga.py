@@ -120,7 +120,8 @@ class Volume:
         self._pages[page_number] = page
 
     def total_pages(self) -> int:
-        return max(self.page)
+        """Number of pages in the volume (a count, not the max page number)."""
+        return len(self._pages)
 
 
 @dataclass
