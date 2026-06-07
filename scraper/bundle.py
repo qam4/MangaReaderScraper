@@ -18,7 +18,19 @@ from scraper.utils import configure_logging, get_adapter, get_console, settings
 
 logger = logging.getLogger(__name__)
 
-WRITER_DEFAULT = "Fred Marchais"
+# Neutral fallback for the ComicInfo <Writer> tag when the manga has no known
+# author. Overridable via the ini ``[config] writer`` key. NOTE: extracting the
+# real per-manga author (so this fallback is rarely needed) is backlog item E1.
+WRITER_DEFAULT = "Unknown"
+
+
+def _configured_writer() -> str:
+    """The default comic ``<Writer>``: the ini ``[config] writer`` if set, else
+    the neutral ``WRITER_DEFAULT``. Never hardcodes a specific person."""
+    try:
+        return settings()["config"].get("writer", WRITER_DEFAULT) or WRITER_DEFAULT
+    except Exception:
+        return WRITER_DEFAULT
 
 
 def extract_cbz(archive_path, cbz_output_path):
@@ -58,7 +70,7 @@ class Bundle:
         self.manga: Manga = manga
         self.chapters_per_volume: int = chapters_per_volume
         self.adapter: LoggerAdapter = get_adapter(logger, manga.name)
-        self.writer = WRITER_DEFAULT
+        self.writer = _configured_writer()
         self.comic_info_template = """<?xml version="1.0" encoding="utf-8"?>
         <ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
         <Series>{series}</Series>

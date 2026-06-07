@@ -324,11 +324,52 @@ Each item has a done-when so "done" is unambiguous.
   README stale. Friction: repo rename breaks clone URLs/CI/install. Only worth it
   bundled with the Wave B rebuild; standalone it's just paint (A2 is the real fix).
 
-- [ ] **D4 [QUICK] De-personalize `bundle.py`** — `WRITER_DEFAULT = "Fred
-  Marchais"` hardcoded as every user's comic author → make configurable (settings).
-  (The dead `multi_process = True` toggle + its `else` branch were already removed
-  as part of A6's bundle.py progress-bar conversion.) Full bundle.py cleanup is a
-  larger isolable task.
+- [x] **D4 [QUICK] De-personalize `bundle.py`** — DONE: `WRITER_DEFAULT` is now
+  the neutral `"Unknown"` (was the maintainer's name, which shipped as the
+  `<Writer>` of every user's comic). Added `_configured_writer()` reading an
+  optional `[config] writer` ini override, falling back to neutral. The dead
+  `multi_process = True` toggle + `else` branch were already removed in A6.
+  - NOTE: D4 is the QUICK de-personalization (neutral fallback + configurable).
+    Actually EXTRACTING the real author is the bigger E1 feature below — D4 just
+    stops shipping the maintainer's name as every comic's writer in the meantime.
+
+## Wave E — features (new capability, not cleanup)
+
+- [ ] **E1 [STRUCT-lite] Extract author(s) into the pipeline → ComicInfo `<Writer>`**
+  - WHY: `bundle.py` hardcodes `WRITER_DEFAULT = "Fred Marchais"` (the maintainer)
+    as the `<Writer>` in every ComicInfo.xml because nothing in the pipeline
+    carries an author. User wanted real author extraction but couldn't — turns out
+    the data IS available, the plumbing just never existed.
+  - EVIDENCE (from the C1 probe capture, probe_out/mangafire/chapters/page.html):
+    the author lives on the `/manga/<slug>` SERIES page, inside a
+    `class="collapse" id="info-rating"` block (hidden by default — why eyeballing
+    missed it), as `<a itemprop="author" href="/author/..">Mihachi Kagano</a>`.
+    The `itemprop="author"` (schema.org microdata) is the clean, stable selector;
+    multiple authors = multiple such `<a>`. NOTE: the parser never parses this
+    page today — `all_volume_ids` hits the `/ajax/manga/<id>/chapter/en` endpoint
+    (chapter <li>s only, no author) and `page_urls` uses the reader page. So
+    fetching author means parsing the series page (or finding an author field in
+    an API/embedded payload on API sites).
+  - SHAPE (design-first; crosses the data model):
+    1. `Manga` gains an optional `author: Optional[str]` (or `List[str]`) field.
+       Decide single string vs list (sites may list author + artist separately).
+    2. `BaseMangaParser` gains an optional `author()` hook returning `None` by
+       default; each parser implements it where the site exposes it (MangaFire:
+       `a[itemprop="author"]` on the series page). Most sites have schema.org
+       microdata or a labelled meta block; some have none → None.
+    3. `MangaBuilder.get_manga_volumes` sets `self.manga.author` (parent-side).
+    4. `bundle.py` reads `manga.author` for `<Writer>`, falling back to a NEUTRAL
+       default ("Unknown") — never the maintainer's name (this also closes D4).
+  - PER-SITE / LIVE caveat: author extraction is site-specific (selector varies)
+    and only confirmable against a live page or a captured fixture — so each
+    parser's author selector is verified like any other extracted field (probe →
+    fixture → test). MangaFire is the worked example (fixture-backed test from the
+    existing C1 capture).
+  - OPEN QUESTIONS (user to decide when scheduled): single author vs list;
+    surface author in SearchResult/menu too, or just ComicInfo `<Writer>`.
+  - DONE-WHEN: `Manga` carries author; MangaFire extracts it via
+    `itemprop="author"` (fixture-backed test); bundle.py writes it to `<Writer>`
+    with a neutral fallback; other parsers default to None gracefully.
 
 ---
 
