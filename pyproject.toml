@@ -93,6 +93,7 @@ log_cli = true
 log_cli_level = "WARN"
 markers = [
     "integration: tests that touch a real browser/network (deselect with -m 'not integration'). None yet -- the suite is fully mocked.",
+    "real_pool: opt out of the mocked_pool_imap fixture and run MangaBuilder's real multiprocessing Pool (verifies the parent assembles pages from worker return values under spawn).",
 ]
 
 [tool.mypy]

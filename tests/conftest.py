@@ -35,11 +35,23 @@ def _no_real_browser():
         yield
 
 
-@pytest.fixture(scope="session", autouse=True)
-def mocked_pool_imap():
+@pytest.fixture(autouse=True)
+def mocked_pool_imap(request):
     """
-    Mock Pool.imap to a not multi-process version
+    Run ``MangaBuilder``'s process Pool single-threaded by patching
+    ``Pool.imap`` -> ``map``, so the (deterministic) builder tests don't spawn
+    real worker processes.
+
+    This is a TEST CONVENIENCE, not production behaviour: under a real spawn
+    Pool the worker runs on a private copy of the builder, so historically this
+    mask hid the multiprocess data-flow bug (B2). A test that wants to exercise
+    the REAL pool opts out with ``@pytest.mark.real_pool`` -- then the parent
+    must assemble the Manga from the worker RETURN values, which is exactly what
+    the B2 redesign guarantees.
     """
+    if request.node.get_closest_marker("real_pool"):
+        yield None
+        return
 
     def pool_imap(self, func, iterable):
         return map(func, iterable)

@@ -20,7 +20,7 @@ from scraper.exceptions import (
     VolumeAlreadyPresent,
     VolumeDoesntExist,
 )
-from scraper.new_types import PageData, VolumeData
+from scraper.new_types import PageData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
 from scraper.utils import configure_logging, get_adapter, settings
@@ -29,6 +29,24 @@ from scraper.writers import get_writer
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
+
+
+@dataclass
+class VolumeDownload:
+    """Result of one worker downloading a volume -- the value that crosses the
+    multiprocess boundary.
+
+    The worker is side-effect-free w.r.t. shared state (it does not mutate the
+    builder's Manga or write to disk); it returns this, and the parent assembles
+    the Manga and writes the file from it. ``pages`` is ``None`` for a skipped
+    volume (already on disk / no pages / chapter doesn't exist); ``complete`` is
+    False when pages are missing or the volume couldn't be fetched.
+    """
+
+    volume_id: str
+    volume_index: int
+    pages: Optional[List[PageData]] = None
+    complete: bool = True
 
 
 def sanitize_filename(filename: str) -> str:
@@ -221,99 +239,91 @@ class MangaBuilder:
         self.manga: Optional[Manga] = None
 
     def _get_volume_data_wrapped(self, arg):
-        return self._get_volume_data(*arg)  # Unpacks args
+        return self._download_volume(*arg)  # Unpacks (index, volume_id, on_disk)
 
-    def _get_volume_data(
-        self, volume_index: int, volume_id: str
-    ) -> Optional[VolumeData]:
+    def _download_volume(
+        self, volume_index: int, volume_id: str, already_on_disk: bool
+    ) -> "VolumeDownload":
         """
-        Download pages of a volume, and save them to disk (in pdf or cbz)
-        Returns volume number & each pages raw data
+        Download every page of one volume and RETURN the result. Hermetic: it
+        does NOT mutate ``self.manga``, does NOT write to disk, and does NOT read
+        ``settings()`` -- so it behaves identically in a spawned worker process,
+        where module-level config/patches don't propagate.
+
+        This is the multiprocess worker. Under a spawn ``Pool`` the child runs on
+        a private copy of the builder, so any mutation here would be discarded
+        when the process ends -- only the return value crosses the boundary. The
+        parent decides ``already_on_disk`` (it owns config/disk access) and owns
+        Manga assembly + writing in ``_add_download_to_manga``.
+
+        ``pages`` is ``None`` for a volume that was skipped -- already complete on
+        disk, no page urls, or the chapter doesn't exist.
         """
-        # Do not try to download volume data if the complete volume is already saved on disk
-        if self.manga.volume_exists(volume_id, volume_index):
-            return None
+        if already_on_disk:
+            return VolumeDownload(volume_id, volume_index, pages=None, complete=True)
 
         self.adapter.info(
             f"Downloading volume {volume_index} from {self.parser.manga.volume_url(volume_id)}"
         )
         try:
             urls = self.parser.manga.page_urls(volume_id)
-            if not urls:
-                self.adapter.warning(f"No pages found for volume {volume_id}, skipping")
-                return None
         except VolumeDoesntExist as e:
             self.adapter.error(e)
-            return (volume_id, None)
-        if urls:
-            with ThreadPool() as pool:
-                # Download the data from urls
-                # i.e download the volume images in parallel threads
-                pages_data = pool.map(self.parser.manga.page_data, urls)
+            return VolumeDownload(volume_id, volume_index, pages=None, complete=False)
+        if not urls:
+            self.adapter.warning(f"No pages found for volume {volume_id}, skipping")
+            return VolumeDownload(volume_id, volume_index, pages=None, complete=False)
 
-            if not pages_data:
-                self.adapter.error(f"No data for volume {volume_id}")
-                return (volume_id, None)
+        with ThreadPool() as pool:
+            # download the volume images in parallel threads
+            pages_data = list(pool.map(self.parser.manga.page_data, urls))
 
-            # check if any page is missing
-            volume_complete = True
-            if any([page[2] != "success" for page in pages_data]):
-                self.adapter.error(
-                    f"Volume {volume_id} is missing pages {','.join([str(page[0]) for page in pages_data if page[2] != 'success'])}, url={self.parser.manga.volume_url(volume_id)}"
-                )
-                volume_complete = False
+        if not pages_data:
+            self.adapter.error(f"No data for volume {volume_id}")
+            return VolumeDownload(volume_id, volume_index, pages=None, complete=False)
 
-            # Add the volume to the manga
-            # note: each volume is created in its own process,
-            # so self.manga of the parent process is not changed
-            try:
-                self.manga.add_volume(
-                    volume_id, volume_index=volume_index, complete=volume_complete
-                )
-                # properties cause an error in mypy when getter/setters input
-                # differ, mypy thinks they should be the same
-                self.manga.volumes_dict[volume_id].pages = pages_data  # type: ignore
-            except VolumeAlreadyPresent as e:
-                self.adapter.error(e)
+        # flag a volume that is missing pages (any page that didn't 'success')
+        missing = [page for page in pages_data if page[2] != "success"]
+        complete = not missing
+        if missing:
+            self.adapter.error(
+                f"Volume {volume_id} is missing pages "
+                f"{','.join(str(page[0]) for page in missing)}, "
+                f"url={self.parser.manga.volume_url(volume_id)}"
+            )
 
-            # Save the volume to disk
-            self.adapter.info(f"Saving volume {volume_id}")
-            self._create_manga_dir(self.manga.name)
+        self.adapter.info(f"Volume {volume_id} done")
+        return VolumeDownload(
+            volume_id, volume_index, pages=pages_data, complete=complete
+        )
 
-            if self.writer:
-                self.writer.write(self.manga.volumes_dict[volume_id])
-            self.adapter.info(f"Volume {volume_id} done")
-
-            # Return the page data so the PARENT can assemble its Manga. Under
-            # spawn, the child's mutations to self.manga above are on a private
-            # copy and never reach the parent; only this return value crosses
-            # the process boundary. (See get_manga_volumes for assembly.)
-            return (volume_id, pages_data)
-        return None
-
-    def _get_volumes_data(
-        self, vol_ids: Iterable[str] = []
-    ) -> List[Optional[VolumeData]]:
+    def _get_volumes_data(self, vol_ids: Iterable[str] = []) -> List["VolumeDownload"]:
         """
-        Download a list of volumes
-        Each volume is processed in parallel processes
-        Returns a list of (volume_id, pages_data) results (None for volumes that
-        were skipped: already on disk, or no pages found)
+        Download a list of volumes, each in its own worker process, and return
+        the per-volume :class:`VolumeDownload` results (in input order).
+
+        The parent decides up front which volumes are already on disk (the only
+        config/disk-dependent step) and passes that in, so the workers stay
+        hermetic. The parent assembles the Manga from these returns.
         """
+        assert self.manga is not None
+        vol_ids = list(vol_ids)
+        # Parent-side (has settings/disk access): which volumes are already saved?
+        worker_args = [
+            (index, volume_id, self.manga.volume_exists(volume_id, index))
+            for index, volume_id in enumerate(vol_ids, start=1)
+        ]
         self.adapter.info("Downloading volumes data...")
         self.adapter.debug(f"self.manga.name={self.manga.name}")
         with logging_redirect_tqdm(loggers=[self.adapter.logger]):
             with Pool(4, initializer=configure_logging) as pool:
-                volumes_data = list(
+                return list(
                     tqdm(
-                        pool.imap(
-                            self._get_volume_data_wrapped, enumerate(vol_ids, start=1)
-                        ),
-                        total=len(list(vol_ids)),
+                        pool.imap(self._get_volume_data_wrapped, worker_args),
+                        total=len(worker_args),
                         unit="volumes",
                     )
                 )
-                return volumes_data
 
     def _create_manga_dir(self, manga_name: str) -> None:
         """
@@ -360,24 +370,43 @@ class MangaBuilder:
             vol_ids = select_chapters(vol_ids, all_volume_ids)
         self.adapter.debug(f"vol_ids={vol_ids}")
 
-        # Download the volumes. Each worker returns (volume_id, pages_data) on
-        # success, or None when the volume was skipped (already on disk / no
-        # pages). We assemble the parent's Manga from these RETURN values rather
-        # than from child-side mutations, which don't survive a spawn Pool.
-        volumes_data = self._get_volumes_data(vol_ids)
-        pages_by_volume = {
-            result[0]: result[1] for result in volumes_data if result is not None
-        }
+        # Download the volumes in parallel worker processes. Each worker returns
+        # a VolumeDownload (it does NOT touch self.manga or disk -- child-side
+        # mutations don't survive a spawn Pool). The PARENT owns assembly +
+        # writing below, so the in-memory Manga is correct after a real run.
+        downloads = self._get_volumes_data(vol_ids)
 
-        # Add volumes to the manga, populating pages from the worker results.
-        for index, volume_id in enumerate(vol_ids, start=1):
-            if not self.manga.volumes_dict.get(volume_id):
-                volume_complete = self.manga.volume_exists(volume_id, index)
-                self.manga.add_volume(
-                    volume_id, volume_index=index, complete=volume_complete
-                )
-            pages = pages_by_volume.get(volume_id)
-            if pages and not self.manga.volumes_dict[volume_id].pages:
-                self.manga.volumes_dict[volume_id].pages = list(pages)
+        for download in downloads:
+            self._add_download_to_manga(download)
 
         return self.manga
+
+    def _add_download_to_manga(self, download: "VolumeDownload") -> None:
+        """Assemble one worker result into ``self.manga`` and write it to disk.
+
+        Parent-side: registers the volume, populates its pages from the worker's
+        RETURN value (the only thing that survives the process boundary), and
+        saves it via the writer. A skipped volume (``pages is None`` -- already
+        on disk / no pages) is still listed as metadata but written nothing.
+        """
+        assert self.manga is not None
+        volume_id = download.volume_id
+        if not self.manga.volumes_dict.get(volume_id):
+            self.manga.add_volume(
+                volume_id,
+                volume_index=download.volume_index,
+                complete=download.complete,
+            )
+
+        if download.pages is None:
+            return
+
+        volume = self.manga.volumes_dict[volume_id]
+        if not volume.pages:
+            volume.pages = list(download.pages)  # type: ignore[assignment]
+
+        # Persist the assembled volume (parent-side, once -- not in the worker).
+        self._create_manga_dir(self.manga.name)
+        if self.writer:
+            self.adapter.info(f"Saving volume {volume_id}")
+            self.writer.write(volume)

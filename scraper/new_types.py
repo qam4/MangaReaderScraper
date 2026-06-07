@@ -3,10 +3,9 @@ Custom type hints & aliases
 """
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Tuple
 
 PageData = Tuple[int, bytes, str]
-VolumeData = Tuple[str, Optional[Iterable[PageData]]]
 
 
 @dataclass

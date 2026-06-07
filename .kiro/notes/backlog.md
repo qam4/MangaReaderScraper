@@ -115,27 +115,29 @@ Each item has a done-when so "done" is unambiguous.
     inside the raises block, i.e. dead asserts — now assert the message via
     `match=`). Gates green, 318 pass.
 
-- [ ] **B2-redesign [STRUCT] Proper multiprocess boundary + retire the mask** (follow-up to B2)
+- [x] **B2-redesign [STRUCT] Proper multiprocess boundary + retire the mask** (follow-up to B2)
   - WHY: B2 was an honest minimal fix (parent assembles from worker returns). The
-    deeper problems remain: (a) workers still mutate a throwaway `self.manga` and
-    redo `add_volume` + disk save inside the child, while the parent ALSO does
-    add_volume — duplicated, split-brain ownership; (b) settings/config aren't
-    cleanly propagated to spawned workers (worker re-reads ini via initializer);
-    (c) `mocked_pool_imap` (session autouse in conftest) still forces the whole
-    suite single-process, hiding the real spawn data flow.
-  - STEPS:
-    1. Make the worker a PURE function: download pages → return
-       `(volume_id, pages_data, complete)`; do NOT touch `self.manga` or save to
-       disk inside the child. Parent owns Manga assembly AND disk writing (or a
-       dedicated writer — see B3).
-    2. Pass everything the worker needs explicitly (urls/config), so it doesn't
-       depend on parent mutable state surviving spawn.
-    3. Add ONE real-pool characterization test that opts out of `mocked_pool_imap`
-       (e.g. an opt-out marker/fixture) and asserts parent `.pages` populated.
-    4. Decide the fate of `mocked_pool_imap`: scope it to the few tests that truly
-       need single-process determinism instead of session-autouse, OR remove it.
-  - DONE-WHEN: worker is side-effect-free w.r.t. parent state; a real-pool test
-    proves parent Manga is correct under spawn; the global mask is gone or scoped.
+    deeper problems remained: (a) the worker still mutated a throwaway self.manga
+    and redid add_volume + disk save inside the child; (b) config didn't propagate
+    to spawned workers (worker re-read ini); (c) mocked_pool_imap (session
+    autouse) forced the whole suite single-process, hiding the real spawn flow.
+  - DONE:
+    1. Worker is now HERMETIC: `_download_volume(index, volume_id, already_on_disk)`
+       only downloads pages and returns a `VolumeDownload` dataclass — it does NOT
+       mutate self.manga, NOT write to disk, NOT read settings(). Replaced the
+       `VolumeData` tuple alias with the explicit `VolumeDownload` (volume_id,
+       volume_index, pages|None, complete).
+    2. Parent owns everything config/disk/state: `_get_volumes_data` computes
+       `already_on_disk` (the only settings/disk step) per volume in the PARENT
+       and passes it into each worker; `_add_download_to_manga` registers the
+       volume, assembles pages from the RETURN value, and writes via the writer.
+    3. Real-pool test added: `test_builder_populates_pages_under_real_pool`
+       (`@pytest.mark.real_pool`) runs the ACTUAL spawn Pool and asserts the
+       parent Manga has pages — green (pre-redesign this showed 0 pages).
+    4. mocked_pool_imap retired-as-global: changed from session-autouse to
+       function-autouse that respects a `real_pool` opt-out marker (registered in
+       pyproject). The mask is now scoped, not forced on the whole suite.
+  - Gates green, 335 pass.
 
 ## Wave C — finish the parser refactor (PROBE-gated; user runs live probes)
 
