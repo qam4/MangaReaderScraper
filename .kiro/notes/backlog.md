@@ -31,10 +31,12 @@ Each item has a done-when so "done" is unambiguous.
     `# no multi-thread version:` block (manga.py) + commented `from_list`
     (menu.py).
 
-- [ ] **A4 [QUICK] Cache `settings()`**
-  - WHERE: `utils.settings()` re-parses the ini on every call (hot paths). Cache
-    (lru_cache/module-level) with a test reset hook.
-  - DONE-WHEN: ini parsed once per run; settings-swapping tests still pass.
+- [x] **A4 [QUICK] Cache `settings()`**
+  - DONE: ini parsed once via `_read_settings(path)` (`lru_cache`, keyed on the
+    config PATH so test `Path.home`-patching gets a distinct entry, not the
+    real-home parse); `create_base_config` calls `cache_clear()` on rewrite.
+    CAVEAT: won't pick up an EXTERNAL mid-process edit of the ini until restart
+    (fine for a CLI that reads config once).
 
 - [x] **A5 [QUICK] Fix `Volume.total_pages()`** (H2)
   - DONE: now `len(self._pages)` (a count, not `max(page number)`); added
