@@ -140,13 +140,65 @@ Each item has a done-when so "done" is unambiguous.
 ## Wave C — finish the parser refactor (PROBE-gated; user runs live probes)
 
 - [ ] **C1 [PROBE] Re-probe MangaFire** — verify vrf/scramble/endpoints still hold
-  - Commands (live, headful browser; user runs). Slug: `ad-astra-scipio-and-hanniball.lww3`:
-    - `python -m scraper.probe https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-1`
-    - `python -m scraper.probe https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3`
-    - `python -m scraper.probe https://mangafire.to/home --search "ad astra"`
-  - Inspect probe_out/mangafire/: recommendation.txt, api_backends.txt (can
+  - Commands (live, headful browser; user runs). Slug: `ad-astra-scipio-and-hanniball.lww3`.
+    IMPORTANT: all three URLs share the `mangafire.to` host, so the probe derives
+    the SAME folder (`probe_out/mangafire/`) for each and OVERWRITES the shared
+    summary files (recommendation.txt, page.html, ajax_log.txt, candidates.txt,
+    api_backends.txt) on every run — and leaves stale `api_*.json` (indexed
+    per-run, not cleared). Use `--site mangafire/<stage>` to isolate each run:
+    - chapters (the `/manga/<slug>` series page — chapter list):
+      `python -m scraper.probe https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3 --site mangafire/chapters`
+    - images (the `/read/.../chapter-1` reader page — vrf/scramble/image list):
+      `python -m scraper.probe https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-1 --site mangafire/images`
+    - search (drives the search box on /home):
+      `python -m scraper.probe https://mangafire.to/home --search "ad astra" --site mangafire/search`
+  - Inspect each subfolder's recommendation.txt, api_backends.txt (can
     curl_cffi reach the no-vrf chapter list?), ajax_log/api_*.json shapes.
   - DONE-WHEN: know if shapes hold → decide cleanup vs rewrite; record findings.
+  - NOTE: the probe is STAGE-AGNOSTIC at capture time — there is no `--stage`
+    flag. It captures whatever the URL you point it at fires; the search/chapters/
+    images split happens in analysis (synthesize_recommendation pattern-matches the
+    captured endpoints). You probe 3 URLs because each page only fires its own
+    stage's traffic, NOT to "select" a stage. (See C4/C5 to make this friendlier.)
+
+- [ ] **C4 [QUICK] Probe: auto-namespace output by URL stage + guard overwrites**
+  - WHY (surfaced this session): every probe run writes fixed filenames via
+    `_write` (plain `write_text`, no clearing); repeated runs into the same
+    `probe_out/<host>/` silently clobber recommendation.txt et al. and orphan
+    stale `api_*.json`. A tool meant to be run several times per site overwrites
+    its headline output with no warning — a footgun (hit during C1).
+  - STEPS: (a) derive the out subfolder from the URL PATH, not just the host
+    (`/manga/` → chapters, `/read/`|`chapter` → images, a `--search` run →
+    search), so the 3 stage runs land in distinct folders WITHOUT needing
+    `--site`; (b) when about to write into a non-empty out_dir, warn (or require
+    `--fresh`/`--force`) before overwriting an existing recommendation.txt.
+  - DONE-WHEN: 3 stage probes of one site no longer collide by default; a
+    re-run into a populated dir is either namespaced or explicitly confirmed.
+    Offline-testable (path→subfolder mapping is pure). Low risk.
+
+- [ ] **C5 [STRUCT][NORTH STAR] Single-entry multi-stage probe** — `probe <manga-url>
+  [--search "term"]` captures ALL stages in one run
+  - VISION (user's original mental model): point the probe at the manga page and
+    have it probe everything — capture the series page (chapters), AUTO-FOLLOW the
+    first detected chapter link to capture the reader page (images), and run the
+    search action — writing each stage to its own subfolder and synthesizing ONE
+    combined recommendation.txt across all three.
+  - FEASIBILITY (the parts already exist, this is mostly orchestration):
+    * chapters→images IS a real link: `analyze_html` already extracts
+      `chapter_links` from the manga page → follow the first href, second capture
+      pass. Doable.
+    * search is NOT derivable from the manga URL — it needs a query. `--search`
+      already opens the site, finds the search box, types, and triggers the
+      search. So the irreducible input is the search TERM; `probe <manga-url>
+      --search "term"` is the realistic "one command" ceiling.
+  - CAVEATS (why it's STRUCT, not QUICK): adds browser navigation/wait
+    orchestration; the chapter-link-follow and search-box-find are the fragile
+    site-specific bits; live-only to validate; pushes against the probe's current
+    "capture exactly the page you point me at" ethos. Sequence deliberately, not
+    mid-C1. Directly serves the "adding a parser was a huge burden" complaint.
+  - DONE-WHEN: a single `probe <manga-url> --search "term"` yields per-stage
+    captures + one combined recommendation, with the multi-page navigation
+    covered by tests (mock the browser/nav seam) where possible.
 
 - [ ] **C2 [PROBE] Re-probe + re-derive mangago / mangapark**
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
