@@ -405,3 +405,74 @@ family share markup). If a new site matches one you already support, you may be
 able to point a new `base_url` at an existing parser instead of writing a new
 one. This only helps when the engine is already supported — a genuinely new
 site still needs the full loop above.
+
+## Re-probing an existing source: fix or retire
+
+Sites rot. A parser that worked at merge time can break when a site changes its
+markup/endpoints, moves behind a harder Cloudflare wall, or shuts down. Use the
+same probe to decide, per source, whether to **fix** it or **retire** it. This is
+the loop above run in reverse — start from a parser you already have and check it
+against the live site.
+
+### 1. Re-probe the three stages
+
+Run the probe against the source's current pages (no `--site` needed — each lands
+in `probe_out/<host>/{chapters,images,search}/` by default):
+
+```bash
+python -m scraper.probe https://<site>/<manga-path>/<slug>          # chapters
+python -m scraper.probe https://<site>/<reader-path>/<slug>/...     # images
+python -m scraper.probe https://<site>/<home> --search "<a title>"  # search
+```
+
+### 2. Read each stage against what the parser assumes
+
+For each stage, compare the capture to the parser's current code:
+
+- **Site gone / DNS fails / parks** → the probe can't load anything → **retire**.
+- **Loads, shapes still match** the parser's selectors/JSON paths → no change, or
+  just promote fresh fixtures.
+- **Loads, but shapes changed** (renamed fields, new endpoint, new token) →
+  **fix**: update the selectors/paths, or regenerate via the scaffold if it's an
+  API/`next_data`/html-image site.
+- **`recommendation.txt` says "CHALLENGE WALL"** → confirm it's real: a page that
+  rendered real content (chapter links, data-number cards, images) was *cleared*
+  by the browser and is NOT walled (the detector suppresses the weak CF-infra
+  markers when real content is present). A genuine wall is a small page with no
+  content. Check `api_backends.txt` — if curl_cffi gets JSON, the site is
+  reachable without a browser regardless of infra markers.
+
+Lessons from the MangaFire re-probe that generalize:
+
+- The probe is **stage-agnostic**; it captures whatever the page you point it at
+  fires. A parser endpoint the page doesn't call (e.g. MangaFire's no-vrf
+  `/ajax/manga/<id>/chapter/en`, which the reader page never hits) simply won't
+  appear — that's a coverage gap in the probe run, **not** evidence the endpoint
+  is dead. Confirm such endpoints directly (curl_cffi the URL) before concluding.
+- "It still downloads end-to-end with no manual captcha" is the strongest signal
+  the data paths are intact — trust it over a scary-looking `recommendation.txt`.
+
+### 3a. Fix
+
+Edit the parser in place (update selectors/paths/endpoints), refresh the
+`tests/test_files/<site>/` fixtures from the new captures, and re-run the
+fixture-backed tests. For API/`next_data`/html-image sites a `--map-by-example`
+pass + scaffold regeneration may be faster than hand-editing.
+
+### 3b. Retire
+
+When a site is permanently down (e.g. mangareader.net), remove it cleanly:
+
+1. Delete `scraper/parsers/<site>.py` and `tests/test_<site>.py` (+ its
+   `tests/test_files/<site>/` fixtures).
+2. Remove its line from `_SOURCE_MODULES` in `scraper/registry.py` — the single
+   registration site. `available_sources()` / `--source` choices update
+   automatically; there is no dict/Union/argparse list to also edit.
+3. If it was the configured default source (`utils.create_base_config`) or named
+   in the README, update those.
+4. Run the gates. A retired source should leave **no** dangling references
+   (`grep` the name across `scraper/` + `tests/` + `docs/`).
+
+Retiring is cheap precisely because of the registry: one module file + one list
+line. Don't leave a dead parser registered — a `--source deadsite` that always
+errors is worse than the site simply not being offered.

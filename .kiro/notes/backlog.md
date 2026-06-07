@@ -244,13 +244,21 @@ Each item has a done-when so "done" is unambiguous.
     captures + one combined recommendation, with the multi-page navigation
     covered by tests (mock the browser/nav seam) where possible.
 
-- [ ] **C2 [PROBE] Re-probe + re-derive mangago / mangapark**
+- [ ] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
-    cloudflare-403 notes → likely already broken. Probe each; if still HTML-image
-    sites, push onto a shared "browser-HTML" base (like kakalot) or regenerate via
-    the scaffold (html image mode exists now).
-  - DONE-WHEN: each is working+on a shared base, or removed if the site is gone.
-    No duplicated bespoke skeleton remains.
+    cloudflare-403 notes → likely already broken. Follow the "Re-probing an
+    existing source: fix or retire" playbook in docs/adding-a-source.md:
+    re-probe the 3 stages (auto-namespaced now, C4), compare each to the parser's
+    assumptions, then fix (update selectors / regenerate via scaffold) or retire
+    (delete parser+tests+fixtures, drop the `_SOURCE_MODULES` line — see playbook
+    step 3b).
+  - LIKELY ALSO RETIRE: `mangareader` (mangareader.net is dead — the A2 stale
+    default + D3 rename both point at this). Confirm down, then retire per the
+    playbook. NOTE: `tests/conftest.py` + `test_cli.py` use `mangareader` as the
+    default-source-flows-through fixture — retiring it means switching those to
+    another registered source (or a fake), so it's not a pure delete.
+  - DONE-WHEN: each of mangago/mangapark/mangareader is either working+fixtured or
+    cleanly retired (no dangling refs across scraper/ + tests/ + docs/).
 
 - [x] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
   answer to "MangaFire has a lot of ad-hoc code"
