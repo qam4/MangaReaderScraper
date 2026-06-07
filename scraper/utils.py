@@ -116,18 +116,36 @@ def create_base_config() -> None:
     configfile = configdir / "mangascraper.ini"
     with configfile.open("w") as cf:
         config.write(cf)
+    # the on-disk config just changed; drop any cached parse so the next
+    # settings() call re-reads it.
+    _read_settings.cache_clear()
+
+
+@functools.lru_cache(maxsize=None)
+def _read_settings(config_path: str) -> configparser.ConfigParser:
+    """Parse the ini at ``config_path`` (cached by path).
+
+    Keyed on the path (not no-args) so a patched ``Path.home()`` in tests maps to
+    a distinct cache entry rather than reusing the real-home parse. Cleared by
+    ``create_base_config`` when the file is (re)written.
+    """
+    config = configparser.ConfigParser()
+    config.read(config_path)
+    return config
 
 
 def settings() -> configparser.ConfigParser:
     """
-    Retrieve settings file contents
+    Retrieve settings file contents.
+
+    The ini is parsed once per path and cached (it's read on every volume/upload
+    path build), so repeated calls don't re-hit disk. ``create_base_config``
+    clears the cache when it rewrites the file.
     """
-    config = configparser.ConfigParser()
     user_config = Path.home() / ".config" / "mangascraper.ini"
     if not user_config.exists():
         create_base_config()
-    config.read(str(user_config))
-    return config
+    return _read_settings(str(user_config))
 
 
 def extract_chapter_number(chapter_string: str) -> str:
