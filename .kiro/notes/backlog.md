@@ -15,8 +15,8 @@ Each item has a done-when so "done" is unambiguous.
     `MANGASCRAPER_LOG_LEVEL` when no arg); removed the 3 basicConfig copies;
     `--log-level` arg; cli() sets env + applies; pools use
     `Pool(initializer=configure_logging)`; `change_args_to_search` skips
-    log_level (M1 brittleness surfaced + handled). CAVEAT: rich+tqdm interleave
-    in a real multiprocess download NOT verified (mocked suite) — eyeball live.
+    log_level (M1 brittleness surfaced + handled).
+    UPDATE (A6): the rich+tqdm interleave caveat is RESOLVED — see A6 below.
 
 - [x] **A2 [QUICK] Fix stale default source** (mangareader.net is dead)
   - DONE: `utils.create_base_config` default → `mangabuddy`; `test_utils` assertion
@@ -41,6 +41,22 @@ Each item has a done-when so "done" is unambiguous.
 - [x] **A5 [QUICK] Fix `Volume.total_pages()`** (H2)
   - DONE: now `len(self._pages)` (a count, not `max(page number)`); added
     regression test with a page-number gap (pages 1 & 5 → count 2).
+
+- [x] **A6 [QUICK] Pin the progress bar (rich.progress, shared Console)**
+  - WHY (surfaced this session): the download/bundle bars used `tqdm.rich` +
+    `logging_redirect_tqdm` ALONGSIDE the A1 `RichHandler`. tqdm.rich has its own
+    rich `Live`, and `logging_redirect_tqdm` only knows how to pin CLASSIC tqdm,
+    so the bar wasn't kept at the bottom — two uncoordinated Live regions fought
+    and the bar scrolled away. (This was the open A1 caveat.)
+  - DONE: added `utils.get_console()` — one shared `rich.console.Console`
+    (lru_cache'd). `configure_logging` now builds `RichHandler(console=...)` with
+    it, and both `manga.MangaBuilder._get_volumes_data` and `bundle.Bundle.bundle`
+    render a `rich.progress.Progress(console=get_console())` instead of tqdm —
+    so rich coordinates ONE Live region (logs scroll above, bar pinned). Dropped
+    the `tqdm` dependency entirely (pyproject deps + mypy override) and the dead
+    `multi_process` toggle / `else` branch in bundle.py. Gates green, 335 pass.
+  - CAVEAT: visual pinning is live-only to confirm in a real terminal; the code
+    path is exercised by the real-pool test, so it runs without error.
 
 ## Wave B — orchestration rebuild (STRUCT; B1+B2 are ONE surface — design together)
 
@@ -309,9 +325,10 @@ Each item has a done-when so "done" is unambiguous.
   bundled with the Wave B rebuild; standalone it's just paint (A2 is the real fix).
 
 - [ ] **D4 [QUICK] De-personalize `bundle.py`** — `WRITER_DEFAULT = "Fred
-  Marchais"` hardcoded as every user's comic author → make configurable (settings);
-  drop dead `multi_process = True` toggle. (Full bundle.py cleanup is a larger
-  isolable task.)
+  Marchais"` hardcoded as every user's comic author → make configurable (settings).
+  (The dead `multi_process = True` toggle + its `else` branch were already removed
+  as part of A6's bundle.py progress-bar conversion.) Full bundle.py cleanup is a
+  larger isolable task.
 
 ---
 

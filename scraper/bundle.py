@@ -7,23 +7,16 @@ import os
 import shutil
 import subprocess
 import time
-import warnings
 import zipfile
 from itertools import repeat
 from logging import LoggerAdapter
 from multiprocessing.pool import Pool
 from typing import List
 
-from tqdm import TqdmExperimentalWarning  # type: ignore
-from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
-from tqdm.rich import tqdm  # type: ignore
-
 from scraper.manga import Manga
-from scraper.utils import configure_logging, get_adapter, settings
+from scraper.utils import configure_logging, get_adapter, get_console, settings
 
 logger = logging.getLogger(__name__)
-
-warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 WRITER_DEFAULT = "Fred Marchais"
 
@@ -219,27 +212,29 @@ class Bundle:
         volume_digits = len(str(num_volumes))
 
         logger.info(f"Bundling {num_volumes} volumes...")
-        multi_process = True
-        with logging_redirect_tqdm(loggers=[self.adapter.logger]):
-            if multi_process:
-                with Pool(initializer=configure_logging) as pool:
-                    list(
-                        tqdm(
-                            pool.imap(
-                                self.create_volume_wrapped,
-                                zip(range(num_volumes), repeat(volume_digits)),
-                            ),
-                            total=num_volumes,
-                            unit="volumes",
-                        )
-                    )
-            else:
-                list(
-                    tqdm(
-                        map(
-                            self.create_volume_wrapped,
-                            zip(range(num_volumes), repeat(volume_digits)),
-                        ),
-                        total=num_volumes,
-                    )
-                )
+        # rich.progress.Progress sharing the logging Console (see
+        # utils.get_console) keeps this bar pinned at the bottom while logs
+        # scroll above -- one coordinated rich Live region.
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        with Pool(initializer=configure_logging) as pool:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=get_console(),
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Bundling volumes", total=num_volumes)
+                for _ in pool.imap(
+                    self.create_volume_wrapped,
+                    zip(range(num_volumes), repeat(volume_digits)),
+                ):
+                    progress.advance(task)

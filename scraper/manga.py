@@ -3,15 +3,10 @@ Manga building blocks & factories
 """
 
 import logging
-import warnings
 from dataclasses import dataclass, field
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from typing import Dict, Generator, Iterable, List, Optional
-
-from tqdm import TqdmExperimentalWarning  # type: ignore
-from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
-from tqdm.rich import tqdm  # type: ignore
 
 from scraper.exceptions import (
     PageAlreadyPresent,
@@ -23,12 +18,10 @@ from scraper.exceptions import (
 from scraper.new_types import PageData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
-from scraper.utils import configure_logging, get_adapter, settings
+from scraper.utils import configure_logging, get_adapter, get_console, settings
 from scraper.writers import get_writer
 
 logger = logging.getLogger(__name__)
-
-warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 
 @dataclass
@@ -315,15 +308,34 @@ class MangaBuilder:
         ]
         self.adapter.info("Downloading volumes data...")
         self.adapter.debug(f"self.manga.name={self.manga.name}")
-        with logging_redirect_tqdm(loggers=[self.adapter.logger]):
-            with Pool(4, initializer=configure_logging) as pool:
-                return list(
-                    tqdm(
-                        pool.imap(self._get_volume_data_wrapped, worker_args),
-                        total=len(worker_args),
-                        unit="volumes",
-                    )
-                )
+
+        # rich.progress.Progress shares the same Console as the logging
+        # RichHandler (see utils.get_console), so rich coordinates ONE Live
+        # region: log lines scroll above while this bar stays pinned at the
+        # bottom. (The old tqdm.rich bar had its own Live and fought the handler.)
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        results: List[VolumeDownload] = []
+        with Pool(4, initializer=configure_logging) as pool:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=get_console(),
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Downloading volumes", total=len(worker_args))
+                for result in pool.imap(self._get_volume_data_wrapped, worker_args):
+                    results.append(result)
+                    progress.advance(task)
+        return results
 
     def _create_manga_dir(self, manga_name: str) -> None:
         """

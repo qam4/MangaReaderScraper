@@ -24,6 +24,21 @@ LOG_LEVEL_ENV = "MANGASCRAPER_LOG_LEVEL"
 DEFAULT_LOG_LEVEL = "INFO"
 
 
+@functools.lru_cache(maxsize=1)
+def get_console() -> Any:
+    """The single shared ``rich`` Console for the process.
+
+    Both the logging ``RichHandler`` and the download ``rich.progress.Progress``
+    must render through the SAME Console so rich coordinates one Live region --
+    that is what keeps the progress bar pinned at the bottom while log lines
+    scroll above it. Two separate Consoles (or rich's progress alongside tqdm's
+    own Live) fight over the terminal and the bar gets scrolled away.
+    """
+    from rich.console import Console
+
+    return Console(stderr=True)
+
+
 def configure_logging(level: Optional[str] = None) -> None:
     """Configure root logging once, with a ``rich`` handler.
 
@@ -33,6 +48,9 @@ def configure_logging(level: Optional[str] = None) -> None:
     don't inherit the parent's config can be used as a pool ``initializer`` with
     no args and still pick up the level the CLI chose. ``force=True`` makes it
     idempotent (safe to call again from the CLI after argparse).
+
+    The handler renders through the shared ``get_console()`` so it shares one
+    Live region with the download progress bar (keeps the bar pinned).
     """
     if level is None:
         level = os.environ.get(LOG_LEVEL_ENV, DEFAULT_LOG_LEVEL)
@@ -44,7 +62,9 @@ def configure_logging(level: Optional[str] = None) -> None:
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        handlers=[
+            RichHandler(console=get_console(), rich_tracebacks=True, show_path=False)
+        ],
         force=True,
     )
 
