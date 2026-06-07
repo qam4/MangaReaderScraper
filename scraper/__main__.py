@@ -36,6 +36,18 @@ def get_volume_values(volume: str) -> List[str]:
     return [token for token in volume.split(",") if token]
 
 
+def normalize_volumes(volumes: Optional[List[str]]) -> Optional[List[str]]:
+    """
+    Flatten raw ``--volumes`` tokens into selector tokens, or None if empty.
+    """
+    if not volumes:
+        return None
+    flattened: List[str] = []
+    for vol in volumes:
+        flattened += get_volume_values(vol)
+    return flattened
+
+
 def manga_search(
     query: List[str], parser: SiteParserClass
 ) -> Tuple[str, str, List[str]]:
@@ -128,13 +140,7 @@ def cli(arguments: List[str]) -> dict:
     else:
         raise IOError("Missing argument --manga or --search")
 
-    if args["volumes"]:
-        volumes: List[str] = []
-        for vol in args["volumes"]:
-            volumes += get_volume_values(vol)
-        args["volumes"] = volumes
-    else:
-        args["volumes"] = None
+    args["volumes"] = normalize_volumes(args["volumes"])
 
     if args["bundle"]:
         args["filetype"] = "cbz"
@@ -150,12 +156,25 @@ def cli(arguments: List[str]) -> dict:
             preferred_name=args["override_name"],
         )
     except MangaDoesNotExist:
+        # The direct slug lookup failed. Fall back to a search for the same
+        # term -- as a plain branch, not by re-serializing argv and re-entering
+        # cli(). The user picks a result, then we download that.
         logging.warning(
             f"No manga found for {args['manga']}. Searching for closest match."
         )
-        updated_args = change_args_to_search(args)
-        # logger.debug(f"updated_args={updated_args}")
-        return cli(updated_args)
+        args["search"] = [args["manga"]]
+        title, args["manga"], args["volumes"] = manga_search(
+            args["search"], manga_parser
+        )
+        args["volumes"] = normalize_volumes(args["volumes"])
+        manga = download_manga(
+            manga_url=args["manga"],
+            manga_title=title,
+            volumes=args["volumes"],
+            filetype=args["filetype"],
+            parser=manga_parser,
+            preferred_name=args["override_name"],
+        )
 
     if args["upload"]:
         upload(manga, args["upload"])
@@ -168,32 +187,6 @@ def cli(arguments: List[str]) -> dict:
         bundle(manga, args["bundle"])
 
     return args
-
-
-def change_args_to_search(args: Dict[str, Optional[str]]) -> List[Optional[str]]:
-    """
-    Alters arguments to use --search
-    """
-    updated_args = []
-    args.update({"manga": None, "volumes": None, "search": args["manga"]})
-
-    flags = ["remove"]
-    # log_level is applied globally (env var + configure_logging) before any
-    # re-entry, and its CLI flag is hyphenated (--log-level) so it can't be
-    # re-emitted from the underscore dict key; skip it.
-    skip = ["log_level"]
-
-    for k, v in args.items():
-        if k in skip:
-            continue
-        if (k == "upload" and not v) or (k in flags and v is False) or v is None:
-            continue
-        if k in flags and v is True:
-            updated_args.append(f"--{k}")
-            continue
-        updated_args.append(f"--{k}")
-        updated_args.append(v)
-    return updated_args
 
 
 def cli_entry() -> None:

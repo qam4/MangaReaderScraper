@@ -20,33 +20,19 @@ def test_searchmenu_attributes(mangareader_search_html):
 
 
 @pytest.mark.parametrize(
-    "selected,expected", [("1", "dragon-ball"), ("6", "dragon-ball-super")]
+    "selected,expected",
+    [("1", METADATA["1"]), ("6", METADATA["6"])],
 )
-def test_menu_options(selected, expected, monkeypatch, menu):
+def test_handle_options_returns_selected_result(
+    selected, expected, monkeypatch, mangareader_search_html
+):
+    search_menu = SearchMenu("dragon-ball", MockedSearch)
     monkeypatch.setattr("builtins.input", lambda x: selected)
-    requested = menu.handle_options()
-    assert requested == expected
+    assert search_menu.handle_options() == expected
 
 
-def test_invalid_choic(monkeypatch, menu):
+def test_handle_options_invalid_choice_raises(monkeypatch, mangareader_search_html):
+    search_menu = SearchMenu("dragon-ball", MockedSearch)
     monkeypatch.setattr("builtins.input", lambda x: "999")
     with pytest.raises(InvalidOption):
-        menu.handle_options()
-
-
-def test_parent_menu(monkeypatch, menu):
-    assert menu.options["7"] == menu.parent
-    monkeypatch.setattr("builtins.input", lambda x: "7")
-    requested = menu.handle_options()
-    assert requested == menu.parent
-
-
-# def test_init_from_list():
-#     menu = Menu.from_list(["a", "b", "c"])
-#     assert menu.options == {"1": "a", "2": "b", "3": "c"}
-#     assert menu.choices == "1. a\n2. b\n3. c"
-
-
-def test_back_button(menu_no_choices):
-    back_button = menu_no_choices.options.get("3")
-    assert back_button == menu_no_choices.parent
+        search_menu.handle_options()

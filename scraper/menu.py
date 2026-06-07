@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from tabulate import tabulate  # type: ignore
 
@@ -7,75 +7,30 @@ from scraper.new_types import SearchResults
 from scraper.parsers.types import SiteParser, SiteParserClass
 from scraper.utils import menu_input
 
+# Titles longer than this are truncated in the results table.
+TITLE_MAX_WIDTH = 70
 
-class Menu:
+
+class SearchMenu:
     """
-    Base class for all menus.
+    Render search results as a numbered table, prompt for a choice, and return
+    the chosen result.
+
+    This is deliberately flat: a single "render -> pick row -> return" step.
+    There is no parent/child menu tree -- search is the only menu the CLI has.
     """
 
-    def __init__(
-        self,
-        options: Dict[str, Any],
-        choices: Optional[str] = None,
-        parent: Optional["Menu"] = None,
-    ) -> None:
-        self.parent: Menu = parent
-        self.options: Dict[str, Any] = self._add_parent_to_options(options)
-        self.choices: str = self._add_back_to_choices(choices)
-
-    def handle_options(self) -> Any:
-        """
-        Extract and execute a method from self.options
-        """
-        try:
-            print(self.choices)
-            msg = "Select the index of the manga of your choice"
-            choice = menu_input(msg)
-            item = self.options[choice]
-            return item
-        except KeyError:
-            raise InvalidOption(
-                f"{choice} is invalid. Choose an option from "
-                f"{', '.join(self.options.keys())}"
-            )
-
-    def _add_parent_to_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Modify options to include parent menu
-        """
-        if self.parent:
-            number_options = len(options)
-            new_option_key = str(number_options + 1)
-            options[new_option_key] = self.parent
-        return options
-
-    def _add_back_to_choices(self, choices: str) -> str:
-        """
-        Modify choices to include back option to parent menu
-        """
-        if not self.parent:
-            return choices
-        num = len(self.options)
-        if choices:
-            return f"{choices}\n{num}. Back"
-        else:
-            return f"{num}. Back"
-
-
-class SearchMenu(Menu):
     def __init__(self, query: List[str], parser: SiteParserClass) -> None:
         self.parser: SiteParser = parser()
         self.search_results: SearchResults = self._search(query)
-        choices: str = self.table()
-        options: SearchResults = self._create_options()
-        Menu.__init__(self, options, choices)
+        self.options: SearchResults = self.search_results
+        self.choices: str = self.table()
 
     def _search(self, query: List[str]) -> SearchResults:
         """
-        Search for query and return Search object
+        Search for query and return the search results.
         """
-        search_results = self.parser.search(" ".join(query))
-        return search_results
+        return self.parser.search(" ".join(query))
 
     def table(self) -> str:
         columns = ["", "Title", "Latest Volume", "Source"]
@@ -86,14 +41,26 @@ class SearchMenu(Menu):
                 metadata["chapters"],
                 metadata["source"],
             )
-            title = title if len(title) < 70 else f"{title[:70]}..."
+            title = (
+                title
+                if len(title) < TITLE_MAX_WIDTH
+                else f"{title[:TITLE_MAX_WIDTH]}..."
+            )
             data.append([number, title, chapters, source])
 
-        table = tabulate(data, headers=columns, tablefmt="psql")
-        return table
+        return tabulate(data, headers=columns, tablefmt="psql")
 
-    def _create_options(self) -> SearchResults:
+    def handle_options(self):
         """
-        Take number and url from search object
+        Print the table, prompt for a row index, and return the chosen result.
         """
-        return self.search_results
+        print(self.choices)
+        msg = "Select the index of the manga of your choice"
+        choice = menu_input(msg)
+        try:
+            return self.options[choice]
+        except KeyError:
+            raise InvalidOption(
+                f"{choice} is invalid. Choose an option from "
+                f"{', '.join(self.options.keys())}"
+            )

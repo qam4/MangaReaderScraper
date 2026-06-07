@@ -10,7 +10,6 @@ import pytest
 from bs4 import BeautifulSoup
 
 from scraper.manga import Manga, Page, Volume
-from scraper.menu import Menu
 from tests.helpers import MockedMangaReaderParser, get_bs4_tree, get_images
 
 
@@ -269,59 +268,3 @@ def manga():
 @pytest.fixture
 def logger():
     return logging.getLogger("unittest_logger")
-
-
-@pytest.fixture
-def menu():
-    choices = "pick A or B for stuff"
-    options = {"A": "1", "B": "2"}
-    parent = Menu(options, choices)
-    choices = (
-        "+----+---------------------------------+-----------+--------+\n"
-        "|    | Title                           |   Volumes | Type   |\n"
-        "|----+---------------------------------+-----------+--------|\n"
-        "|  1 | Dragon Ball                     |       520 | Manga  |\n"
-        "|  2 | Dragon Ball SD                  |        34 | Manga  |\n"
-        "|  3 | Dragon Ball: Episode of Bardock |         3 | Manga  |\n"
-        "|  4 | DragonBall Next Gen             |         4 | Manga  |\n"
-        "|  5 | Dragon Ball Z - Rebirth of F    |         3 | Manga  |\n"
-        "|  6 | Dragon Ball Super               |        54 | Manga  |\n"
-        "+----+---------------------------------+-----------+--------+"
-    )
-    options = {
-        "1": "dragon-ball",
-        "2": "dragon-ball-sd",
-        "3": "dragon-ball-episode-of-bardock",
-        "4": "dragonball-next-gen",
-        "5": "dragon-ball-z-rebirth-of-f",
-        "6": "dragon-ball-super",
-    }
-    return Menu(options, choices, parent)
-
-
-@pytest.fixture
-def menu_no_choices():
-    choices = (
-        "+----+---------------------------------+-----------+--------+\n"
-        "|    | Title                           |   Volumes | Type   |\n"
-        "|----+---------------------------------+-----------+--------|\n"
-        "|  1 | Dragon Ball                     |       520 | Manga  |\n"
-        "|  2 | Dragon Ball SD                  |        34 | Manga  |\n"
-        "|  3 | Dragon Ball: Episode of Bardock |         3 | Manga  |\n"
-        "|  4 | DragonBall Next Gen             |         4 | Manga  |\n"
-        "|  5 | Dragon Ball Z - Rebirth of F    |         3 | Manga  |\n"
-        "|  6 | Dragon Ball Super               |        54 | Manga  |\n"
-        "+----+---------------------------------+-----------+--------+"
-    )
-    options = {
-        "1": "dragon-ball",
-        "2": "dragon-ball-sd",
-        "3": "dragon-ball-episode-of-bardock",
-        "4": "dragonball-next-gen",
-        "5": "dragon-ball-z-rebirth-of-f",
-        "6": "dragon-ball-super",
-    }
-    parent = Menu(options, choices)
-    options = {"A": "1", "B": "2"}
-    child = Menu(options, parent=parent)
-    return child

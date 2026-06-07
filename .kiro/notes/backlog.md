@@ -44,12 +44,24 @@ Each item has a done-when so "done" is unambiguous.
 
 ## Wave B — orchestration rebuild (STRUCT; B1+B2 are ONE surface — design together)
 
-- [ ] **B1 [STRUCT] Decouple resolve→download; kill `change_args_to_search`** (M1)
+- [x] **B1 [STRUCT] Decouple resolve→download; kill `change_args_to_search`** (M1)
   - WHERE: `__main__.cli()` recursion + `change_args_to_search` + `manga_search`;
     collapse `Menu`/`SearchMenu` (menu.py) into "render table → pick row → return
     SearchResult" (drop unused parent/Back menu-tree machinery).
-  - DONE-WHEN: no argv re-serialization/recursion; not-found→search is a plain
-    branch; `test_cli.py` updated (READ FIRST — pins current behavior).
+  - DONE (part 1, CLI): removed `change_args_to_search` and the `cli()` recursion.
+    On `MangaDoesNotExist` the not-found→search fallback is now a plain in-line
+    branch (set `args["search"]`, call `manga_search`, normalize volumes, download
+    once) — no argv re-serialization, no re-entry. Extracted `normalize_volumes()`
+    so the volume-token flattening is shared by the direct and fallback paths.
+  - DONE (part 2, menu): collapsed `menu.py` to a single flat `SearchMenu` (render
+    table → prompt → return chosen SearchResult). Deleted the `Menu` base class and
+    its parent/child/Back tree machinery (production never used a parent — only the
+    synthetic test fixtures did). Extracted the 70-char truncation to
+    `TITLE_MAX_WIDTH` (also closes part of D2). Updated tests: dropped the
+    `menu`/`menu_no_choices` conftest fixtures + `test_parent_menu`/`test_back_button`;
+    `test_menu.py` now covers `handle_options` (valid selection + invalid choice)
+    through `SearchMenu` with `MockedSearch`. `test_cli.py` unchanged and green —
+    the search-fallback test now exercises the plain branch. Gates green, 321 pass.
 
 - [x] **B2 [STRUCT] Multiprocess boundary returns data, not disk-roundtrip** (H1)
   - WHERE: `manga.py` `MangaBuilder._get_volume_data`/`_get_volumes_data` — child
@@ -159,6 +171,9 @@ Each item has a done-when so "done" is unambiguous.
 - [ ] **D2 [QUICK] `menu.py table()` unicode + magic number** — stop
   `.encode("ascii", errors="ignore")` (mangles JP/accented titles); render
   unicode; extract the 70-char truncation to a named constant.
+  - PARTIAL (B1 part 2): the 70-char truncation is now the `TITLE_MAX_WIDTH`
+    constant. STILL OPEN: the `.encode("ascii", errors="ignore")` that drops
+    non-ASCII title characters — render unicode instead.
 
 - [ ] **D3 [DECISION] Project rename** — `MangaReaderScraper` names a dead site.
   Package (`scraper/`) already neutral; only project/repo/dist/pyproject name +
