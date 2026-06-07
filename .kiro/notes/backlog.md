@@ -190,22 +190,19 @@ Each item has a done-when so "done" is unambiguous.
   round-trips to a valid JPEG; else this is just unverified, not broken (the
   parser works on non-scrambled chapters today).
 
-- [ ] **C9 [QUICK] Probe: challenge detection is too trigger-happy (false positive)**
+- [x] **C9 [QUICK] Probe: challenge detection is too trigger-happy (false positive)**
   - SURFACED by C1: the probe yelled "CHALLENGE WALL DETECTED" on all three
     MangaFire pages purely from Cloudflare infra markers (`turnstile`,
     `/cdn-cgi/challenge-platform`) in otherwise-fine HTML — yet the browser
-    cleared CF automatically and the shipped parser reaches every endpoint. The
-    loud warning oversells the situation and could push someone toward a needless
-    rewrite. Note: candidates.txt ALSO prints a calmer "behind Cloudflare (infra
-    markers present) -- informational, not a block" line right above the scary
-    one — they contradict each other.
-  - FIX IDEA: only raise the hard "CHALLENGE WALL" when the page actually lacks
-    real content (e.g. tiny page + challenge markers + no chapter links / no data
-    captured), not whenever CF infra markers appear. If real content (chapter
-    links, api bodies) was captured, downgrade to the informational line.
-  - DONE-WHEN: a page that the browser cleared (real content present) no longer
-    reports a hard challenge wall; genuine interstitials still do. Unit-testable
-    against captured HTML (pure detector).
+    cleared CF automatically and the shipped parser reaches every endpoint.
+  - DONE: `detect_challenge(html, has_real_content=False)` now suppresses the
+    weak CF-infra markers when real content is present. `analyze_html` computes
+    the content signal first (chapter_links / data-number / data-src / an img
+    cluster > 1) and passes `has_real_content`, so a fully-rendered page is no
+    longer flagged as a wall just for carrying CF's always-on script. Strong
+    interstitial phrases still always flag; a small CF page with NO real content
+    still flags. Added 3 regression tests (incl. the MangaFire shape: small +
+    turnstile script + chapter links → NOT a challenge). Gates green, 324 pass.
 
 - [ ] **C4 [QUICK] Probe: auto-namespace output by URL stage + guard overwrites**
   - WHY (surfaced this session): every probe run writes fixed filenames via
@@ -254,11 +251,34 @@ Each item has a done-when so "done" is unambiguous.
   - DONE-WHEN: each is working+on a shared base, or removed if the site is gone.
     No duplicated bespoke skeleton remains.
 
-- [ ] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1)
-  - WHERE: identical curl_cffi+Referer+retry loop in `mangabuddy.py`,
-    `mangafire.py`, and emitted by `scaffold.py`. Lift to a shared base/helper;
-    descramble stays a hook on top.
-  - DONE-WHEN: one impl reused by both + scaffold. (After C1 → verified baseline.)
+- [ ] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
+  answer to "MangaFire has a lot of ad-hoc code"
+  - COMPARISON FINDINGS (mangafire.py vs mangabuddy.py, read side by side):
+    Two parsers differ for two reasons; only one is reducible.
+    * IRREDUCIBLE (site-shape, keep as-is): mangak.io has an OPEN JSON API
+      (curl_cffi hits `api.mangak.io` directly); MangaFire's data calls are
+      vrf-gated by obfuscated JS so it MUST drive a browser (capture_xhr /
+      fetch_json_in_page). And descramble (slice-shuffle) is MangaFire-only.
+      These are not cruft — the site fights harder.
+    * REDUCIBLE (MangaFire predates the tooling): the image-download path. The
+      `curl_cffi.Session(impersonate="chrome")` + Referer + 5-try retry loop is
+      copy-pasted in `mangafire.page_data`, `mangabuddy.page_data`, AND emitted by
+      `scaffold.py` — THREE copies. MangaFire also calls curl_cffi directly,
+      bypassing `CurlCffiFetcher` (which was extracted DURING the mangabuddy work
+      and whose docstring literally says it mirrors what MangaFire does), and it
+      reimplements base.page_data's retry/validate instead of sharing it.
+  - PLAN: add ONE shared image-download helper (a `CurlCffiFetcher`-based
+    downloader: impersonate-chrome GET + optional Referer/cookies + retry +
+    image-verify, returning the base's `(page_num, bytes, status)` triple).
+    mangabuddy.page_data becomes a thin call to it; mangafire.page_data calls it
+    then applies `descramble` as a post-download HOOK (offset from the url
+    fragment); scaffold emits a call to the helper instead of an inline loop.
+  - DONE-WHEN: one download impl reused by both parsers + scaffold; descramble is
+    a hook on top; mangafire's bespoke loop + direct-curl_cffi gone; tests green.
+  - VERDICT on the original question: MangaFire needs NO rewrite. vrf + descramble
+    are irreducibly site-specific; the only genuine "ad-hoc" debt is the
+    duplicated download loop (this item) — fixing it makes MangaFire look much
+    more like mangabuddy without losing what's actually different.
 
 ## Wave D — identity / cosmetic (low value alone; fold rename into B if rebuilding)
 

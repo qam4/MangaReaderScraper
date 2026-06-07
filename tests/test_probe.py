@@ -161,6 +161,42 @@ def test_analyze_large_cf_page_is_not_a_challenge():
     assert report.cloudflare_infra  # still noted as behind CF
 
 
+def test_weak_markers_suppressed_when_real_content_present():
+    # CF infra markers on a SMALL page that nonetheless carries real content
+    # (has_real_content=True) -> the browser cleared the challenge; not a wall.
+    small_with_markers = "<script src='/cdn-cgi/challenge-platform'></script>"
+    assert detect_challenge(small_with_markers)  # no content signal -> wall
+    assert detect_challenge(small_with_markers, has_real_content=True) == []
+
+
+def test_analyze_small_cf_page_with_chapter_links_is_not_a_challenge():
+    # Regression for the C9 false positive: a fully-rendered MangaFire-shaped
+    # page -- under 100k chars, carries a `turnstile` CF script tag, but ALSO
+    # has real chapter links -- must NOT be reported as a challenge wall.
+    html = (
+        "<html><body>"
+        "<script src='/cdn-cgi/challenge-platform/turnstile'></script>"
+        "<ul>"
+        '<li><a href="/read/ad-astra.lww3/en/chapter-81" data-number="81">Chap 81</a></li>'
+        '<li><a href="/read/ad-astra.lww3/en/chapter-80" data-number="80">Chap 80</a></li>'
+        "</ul>"
+        "</body></html>"
+    )
+    report = analyze_html(html)
+    assert not report.looks_like_challenge  # real content -> cleared, not a wall
+    assert report.chapter_links  # the content the browser actually rendered
+    assert report.cloudflare_infra  # still noted as behind CF (informational)
+
+
+def test_analyze_small_cf_page_without_content_still_flags_challenge():
+    # The other side: a small CF page with NO real content is still a wall.
+    html = (
+        "<html><body><script src='/cdn-cgi/challenge-platform'></script></body></html>"
+    )
+    report = analyze_html(html)
+    assert report.looks_like_challenge
+
+
 # ========================= compare_fetches / strategy ====================
 
 

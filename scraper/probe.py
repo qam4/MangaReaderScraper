@@ -152,21 +152,31 @@ _WEAK_CHALLENGE_MARKERS = (
 _CHALLENGE_SIZE_HINT = 100_000
 
 
-def detect_challenge(html: str) -> List[str]:
+def detect_challenge(html: str, has_real_content: bool = False) -> List[str]:
     """
     Return challenge markers indicating the page is a Cloudflare/bot **wall**
     (not the real content). Pure -- no network.
 
-    Strong interstitial phrases always count. Cloudflare's always-on
-    infrastructure (challenge-platform script, __cf_chl, turnstile) appears on
-    normal pages too, so it only counts when the page is also small
-    (``< _CHALLENGE_SIZE_HINT`` chars) -- a real wall is tiny, real content is
-    large. This avoids flagging every CF-fronted site as "blocked".
+    Strong interstitial phrases ("just a moment", "verify you are human") always
+    count -- they only appear on an actual wall.
+
+    Cloudflare's always-on infrastructure (challenge-platform script, __cf_chl,
+    turnstile) is injected into EVERY page of a CF-fronted site, so it is a weak
+    signal. It counts as a wall only when the page is BOTH:
+      * small (``< _CHALLENGE_SIZE_HINT`` chars -- a real wall is tiny), AND
+      * devoid of real content (``has_real_content`` is False).
+    If the page carries real content (chapter links, data-number cards, page
+    images), the browser already cleared the challenge and the CF markers are
+    just the always-on script -- NOT a wall. This is what stops the
+    false-positive where a fully-rendered MangaFire page (84 chapter links, but
+    a ``turnstile`` script tag and < 100k chars) was reported as a challenge.
     """
     low = html.lower()
     strong = [m for m in _STRONG_CHALLENGE_MARKERS if m in low]
     if strong:
         return strong
+    if has_real_content:
+        return []
     if len(html) < _CHALLENGE_SIZE_HINT:
         weak = [m for m in _WEAK_CHALLENGE_MARKERS if m in low]
         if weak:
@@ -334,7 +344,6 @@ def analyze_html(html: str) -> ProbeReport:
     soup = BeautifulSoup(html, "lxml")
     report = ProbeReport()
     report.page_size = len(html)
-    report.challenge_markers = detect_challenge(html)
     report.cloudflare_infra = cloudflare_infrastructure(html)
 
     seen_links = set()
@@ -362,6 +371,17 @@ def analyze_html(html: str) -> ProbeReport:
                 report.largest_img_container = img.parent.name
                 report.img_container_count = count
                 break
+
+    # A page carrying real content (chapter links, data-number cards, or a
+    # cluster of page images) means the browser cleared any CF challenge -- so
+    # weak CF infra markers must NOT be reported as a wall (the C9 fix).
+    has_real_content = bool(
+        report.chapter_links
+        or report.data_number_samples
+        or report.data_src_samples
+        or report.img_container_count > 1
+    )
+    report.challenge_markers = detect_challenge(html, has_real_content)
 
     return report
 
