@@ -355,7 +355,7 @@ def _fetcher_import_line(cfg: ParserConfig) -> str:
     Req 6.2) and -- only when the chosen fetcher is the browser -- ``BrowserFetcher``
     to pass to it.
     """
-    names = {_data_fetcher_class(cfg), "FetchResult"}
+    names = {_data_fetcher_class(cfg), "FetchResult", "download_image"}
     if cfg.images.source == "next_data":
         names.update({"CurlCffiFetcher", "BrowserFetcher"})
     elif cfg.images.source == "html":
@@ -703,40 +703,20 @@ _MANGA_HOOKS = r'''    # ---- optional site-specific hooks (NOT wired; enable if
         raise NotImplementedError("site-specific: vrf / signed request token")'''
 
 
-# Page-image DOWNLOAD: mirrors the shipped mangabuddy parser -- curl_cffi with
-# Chrome impersonation + a Referer, since image CDNs often reject non-browser
-# TLS fingerprints. This is the one place a direct library call is allowed (the
-# task's shipped download pattern); the DATA path stays on the fetchers.
+# Page-image DOWNLOAD: uses the shared ``download_image`` helper (curl_cffi with
+# Chrome impersonation + a Referer), since image CDNs often reject non-browser
+# TLS fingerprints. The DATA path stays on the fetchers; this is the one shared
+# CDN-download primitive both shipped parsers (mangafire/mangabuddy) use too.
 _PAGE_DATA_METHOD = r'''    def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
         """Download a page image with curl_cffi (Chrome impersonation) + Referer.
 
-        The image CDN may reject non-browser TLS fingerprints, so we impersonate
-        Chrome rather than using the base requests downloader.
+        The image CDN may reject non-browser TLS fingerprints, so the shared
+        ``download_image`` helper impersonates Chrome rather than using the base
+        requests downloader.
         """
-        from curl_cffi import requests as creq  # type: ignore
-
         page_num, url = page_url
-        attempt, max_tries = 0, 5
-        content = b""
-        while attempt < max_tries:
-            try:
-                session = creq.Session(impersonate="chrome")
-                resp = session.get(url, headers=self.headers, timeout=60)
-                if resp.status_code == 200:
-                    content = resp.content
-                    break
-                logger.warning(
-                    f"page {page_num} attempt {attempt + 1}/{max_tries} "
-                    f"status {resp.status_code}: {url}"
-                )
-            except Exception as err:
-                logger.warning(
-                    f"page {page_num} attempt {attempt + 1}/{max_tries} failed: {err}"
-                )
-            attempt += 1
-
-        if not content:
-            logger.error(f"Download FAILED page {page_num} at {url}")
+        content = download_image(url, headers=self.headers, label=f"page {page_num}")
+        if content is None:
             return (
                 int(page_num),
                 self.create_page(f"Page {page_num} missing\n{url}"),

@@ -251,7 +251,7 @@ Each item has a done-when so "done" is unambiguous.
   - DONE-WHEN: each is working+on a shared base, or removed if the site is gone.
     No duplicated bespoke skeleton remains.
 
-- [ ] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
+- [x] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
   answer to "MangaFire has a lot of ad-hoc code"
   - COMPARISON FINDINGS (mangafire.py vs mangabuddy.py, read side by side):
     Two parsers differ for two reasons; only one is reducible.
@@ -261,24 +261,23 @@ Each item has a done-when so "done" is unambiguous.
       fetch_json_in_page). And descramble (slice-shuffle) is MangaFire-only.
       These are not cruft — the site fights harder.
     * REDUCIBLE (MangaFire predates the tooling): the image-download path. The
-      `curl_cffi.Session(impersonate="chrome")` + Referer + 5-try retry loop is
+      `curl_cffi.Session(impersonate="chrome")` + Referer + 5-try retry loop was
       copy-pasted in `mangafire.page_data`, `mangabuddy.page_data`, AND emitted by
-      `scaffold.py` — THREE copies. MangaFire also calls curl_cffi directly,
-      bypassing `CurlCffiFetcher` (which was extracted DURING the mangabuddy work
-      and whose docstring literally says it mirrors what MangaFire does), and it
-      reimplements base.page_data's retry/validate instead of sharing it.
-  - PLAN: add ONE shared image-download helper (a `CurlCffiFetcher`-based
-    downloader: impersonate-chrome GET + optional Referer/cookies + retry +
-    image-verify, returning the base's `(page_num, bytes, status)` triple).
-    mangabuddy.page_data becomes a thin call to it; mangafire.page_data calls it
-    then applies `descramble` as a post-download HOOK (offset from the url
-    fragment); scaffold emits a call to the helper instead of an inline loop.
-  - DONE-WHEN: one download impl reused by both parsers + scaffold; descramble is
-    a hook on top; mangafire's bespoke loop + direct-curl_cffi gone; tests green.
-  - VERDICT on the original question: MangaFire needs NO rewrite. vrf + descramble
-    are irreducibly site-specific; the only genuine "ad-hoc" debt is the
-    duplicated download loop (this item) — fixing it makes MangaFire look much
-    more like mangabuddy without losing what's actually different.
+      `scaffold.py` — THREE copies.
+  - DONE: added `download_image(url, headers, cookies, max_tries, timeout,
+    impersonate, label)` to `fetchers.py` — the single curl_cffi+Chrome+retry
+    download loop, returning `bytes | None` (callers own placeholder-on-fail,
+    validation, descramble). `mangabuddy.page_data` is now a thin call to it;
+    `mangafire.page_data` calls it (passing harvested `cookies`) then applies
+    `descramble` as a post-download HOOK; the scaffold's `_PAGE_DATA_METHOD`
+    emits a `download_image(...)` call instead of an inline loop (+ imports it).
+    Removed all three bespoke loops + the direct `from curl_cffi import requests`
+    in both parsers. Added 4 `download_image` unit tests (success, retry-then-
+    success, exhausted→None, cookies propagation); updated the scaffold import-line
+    assertion. Gates green, 328 pass.
+  - VERDICT on the original question: MangaFire needed NO rewrite. vrf + descramble
+    are irreducibly site-specific; the only genuine "ad-hoc" debt was the
+    duplicated download loop — now one shared helper, descramble a hook on top.
 
 ## Wave D — identity / cosmetic (low value alone; fold rename into B if rebuilding)
 

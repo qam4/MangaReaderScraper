@@ -29,7 +29,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
-from scraper.fetchers import BrowserFetcher, _make_marker_predicate
+from scraper.fetchers import BrowserFetcher, _make_marker_predicate, download_image
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
@@ -147,37 +147,19 @@ class MangafireMangaParser(BaseMangaParser):
         it if the url fragment marks it scrambled. Overrides the base requests
         implementation because the CDN rejects non-browser TLS fingerprints.
         """
-        from curl_cffi import requests as creq
-
         page_num, raw_url = page_url
         url, _, frag = raw_url.partition("#")
         offset = 0
         if frag.startswith(f"{_SCRAMBLE_TAG}_"):
             offset = int(frag.rsplit("_", 1)[-1])
 
-        attempt, max_tries = 0, 5
-        content = b""
-        while attempt < max_tries:
-            try:
-                session = creq.Session(impersonate="chrome")
-                if self.cookies:
-                    session.cookies.update(self.cookies)
-                resp = session.get(url, headers=self.headers, timeout=60)
-                if resp.status_code == 200:
-                    content = resp.content
-                    break
-                logger.warning(
-                    f"page {page_num} attempt {attempt + 1}/{max_tries} "
-                    f"status {resp.status_code}: {url}"
-                )
-            except Exception as err:
-                logger.warning(
-                    f"page {page_num} attempt {attempt + 1}/{max_tries} failed: {err}"
-                )
-            attempt += 1
-
-        if not content:
-            logger.error(f"Download FAILED page {page_num} at {url}")
+        content = download_image(
+            url,
+            headers=self.headers,
+            cookies=self.cookies or None,
+            label=f"page {page_num}",
+        )
+        if content is None:
             return (
                 int(page_num),
                 self.create_page(f"Page {page_num} missing\n{url}"),

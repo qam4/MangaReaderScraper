@@ -21,6 +21,7 @@ from scraper.fetchers import (
     RequestsFetcher,
     _in_page_fetch_js,
     _make_marker_predicate,
+    download_image,
     fetch_soup,
 )
 
@@ -139,6 +140,67 @@ def test_curlcffi_fetcher_does_not_raise_on_404():
         res = CurlCffiFetcher().get("http://x")
     assert res.status == 404
     assert not res.ok
+
+
+# ============================ download_image =============================
+
+
+def _fake_curl_module(responses):
+    """Build a fake ``curl_cffi`` module whose Session.get returns the queued
+    responses in order; a response that is an Exception is raised instead."""
+    session = mock.Mock()
+
+    def _get(url, headers=None, timeout=None):
+        item = responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    session.get.side_effect = _get
+    creq = mock.Mock()
+    creq.Session.return_value = session
+    return mock.Mock(requests=creq), session
+
+
+def test_download_image_returns_bytes_on_success():
+    ok = mock.Mock(status_code=200, content=b"\xff\xd8jpeg")
+    module, session = _fake_curl_module([ok])
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        out = download_image("http://cdn/p.jpg", headers={"Referer": "http://x/"})
+    assert out == b"\xff\xd8jpeg"
+    session.get.assert_called_once_with(
+        "http://cdn/p.jpg", headers={"Referer": "http://x/"}, timeout=60
+    )
+
+
+def test_download_image_retries_then_succeeds():
+    responses = [
+        mock.Mock(status_code=503, content=b""),
+        Exception("connection reset"),
+        mock.Mock(status_code=200, content=b"img"),
+    ]
+    module, session = _fake_curl_module(responses)
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        out = download_image("http://cdn/p.jpg")
+    assert out == b"img"
+    assert session.get.call_count == 3
+
+
+def test_download_image_returns_none_when_exhausted():
+    responses = [mock.Mock(status_code=403, content=b"") for _ in range(5)]
+    module, session = _fake_curl_module(responses)
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        out = download_image("http://cdn/p.jpg", max_tries=5)
+    assert out is None
+    assert session.get.call_count == 5
+
+
+def test_download_image_updates_session_cookies():
+    ok = mock.Mock(status_code=200, content=b"img")
+    module, session = _fake_curl_module([ok])
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        download_image("http://cdn/p.jpg", cookies={"cf_clearance": "abc"})
+    session.cookies.update.assert_called_once_with({"cf_clearance": "abc"})
 
 
 # ============================ protocol check =============================

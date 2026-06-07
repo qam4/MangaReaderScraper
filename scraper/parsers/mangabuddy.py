@@ -50,7 +50,12 @@ import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
-from scraper.fetchers import BrowserFetcher, CurlCffiFetcher, FetchResult
+from scraper.fetchers import (
+    BrowserFetcher,
+    CurlCffiFetcher,
+    FetchResult,
+    download_image,
+)
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
@@ -319,30 +324,9 @@ class MangabuddyMangaParser(BaseMangaParser):
         The image CDN may reject non-browser TLS fingerprints (like mangafire),
         so we impersonate Chrome rather than using the base requests downloader.
         """
-        from curl_cffi import requests as creq  # type: ignore
-
         page_num, url = page_url
-        attempt, max_tries = 0, 5
-        content = b""
-        while attempt < max_tries:
-            try:
-                session = creq.Session(impersonate="chrome")
-                resp = session.get(url, headers=self.headers, timeout=60)
-                if resp.status_code == 200:
-                    content = resp.content
-                    break
-                logger.warning(
-                    f"page {page_num} attempt {attempt + 1}/{max_tries} "
-                    f"status {resp.status_code}: {url}"
-                )
-            except Exception as err:
-                logger.warning(
-                    f"page {page_num} attempt {attempt + 1}/{max_tries} failed: {err}"
-                )
-            attempt += 1
-
-        if not content:
-            logger.error(f"Download FAILED page {page_num} at {url}")
+        content = download_image(url, headers=self.headers, label=f"page {page_num}")
+        if content is None:
             return (
                 int(page_num),
                 self.create_page(f"Page {page_num} missing\n{url}"),

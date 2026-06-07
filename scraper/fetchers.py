@@ -140,6 +140,52 @@ class CurlCffiFetcher:
         )
 
 
+def download_image(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    cookies: Optional[Dict[str, str]] = None,
+    max_tries: int = 5,
+    timeout: int = 60,
+    impersonate: str = "chrome",
+    label: str = "image",
+) -> Optional[bytes]:
+    """Download a page image via ``curl_cffi`` with Chrome TLS impersonation.
+
+    This is the single shared CDN-facing download loop for image parsers
+    (mangafire, mangabuddy) and the scaffold-generated ``page_data``. Image CDNs
+    routinely reject non-browser TLS fingerprints, so we impersonate Chrome
+    rather than use the plain ``requests`` downloader; ``cookies`` carries the
+    browser session a site like MangaFire harvests during page-list capture.
+
+    Retries up to ``max_tries`` times on a non-200 or a request exception.
+    Returns the raw image bytes on success, or ``None`` once exhausted. Callers
+    own the post-download steps that genuinely differ between sites -- building
+    the placeholder page on failure, image validation, and descrambling.
+    """
+    from curl_cffi import requests as creq  # type: ignore
+
+    attempt = 0
+    while attempt < max_tries:
+        try:
+            session = creq.Session(impersonate=impersonate)  # type: ignore[arg-type]
+            if cookies:
+                session.cookies.update(cookies)
+            resp = session.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                return resp.content
+            logger.warning(
+                f"{label} attempt {attempt + 1}/{max_tries} "
+                f"status {resp.status_code}: {url}"
+            )
+        except Exception as err:
+            logger.warning(
+                f"{label} attempt {attempt + 1}/{max_tries} failed: {url} - {err}"
+            )
+        attempt += 1
+    logger.error(f"Download FAILED {label} at {url}")
+    return None
+
+
 class RequestsFetcher:
     """Plain ``requests`` GET (lightweight fallback). Does not raise on HTTP
     error -- inspect ``FetchResult.ok`` / ``status`` or call

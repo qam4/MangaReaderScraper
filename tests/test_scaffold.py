@@ -399,8 +399,9 @@ def test_generated_parser_html_mode_uses_browser_fetch_when_configured():
     # never a direct browser-library call on the data path (Req 6.2).
     html_src = generate_parser(load_parser_config(HTML_IMAGES_TOML))  # fetcher=browser
     assert "fetch_soup(url, BrowserFetcher())" in html_src
-    assert "from scraper.fetchers import BrowserFetcher, FetchResult, fetch_soup" in (
-        html_src
+    assert (
+        "from scraper.fetchers import "
+        "BrowserFetcher, FetchResult, download_image, fetch_soup" in html_src
     )
 
 
