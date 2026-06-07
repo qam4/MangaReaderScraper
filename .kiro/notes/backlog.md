@@ -161,33 +161,51 @@ Each item has a done-when so "done" is unambiguous.
     * curl_cffi clears CF (200) where plain requests gets 403 — consistent with
       the parser; but api_backends only tested manifest/panel/reading-get (cap 3,
       vrf data endpoints not among them).
-  - DECISION: **cleanup, not rewrite.** Core assumptions hold. Follow-ups → C6/C7/C8.
+  - DECISION: **cleanup, not rewrite.** Core assumptions hold. Follow-ups → C8/C9.
+  - REALITY CHECK (user, after analysis): the existing MangaFire parser WORKS
+    end-to-end RIGHT NOW with no manual captcha. That reframes the findings:
+    * The probe's "CHALLENGE WALL DETECTED" (turnstile / challenge-platform
+      markers) is a **FALSE POSITIVE** here — the browser auto-cleared it and the
+      live parser reaches every data path. The detector is tripping on Cloudflare
+      *infrastructure* markers in the HTML, not an actual block. → C9.
+    * The no-vrf chapter-list endpoint `/ajax/manga/<id>/chapter/en` is exercised
+      by a working run (all_volume_ids → fetch_json_in_page) → it WORKS. The C1
+      probe just never pointed at it (coverage gap, not a parser problem). C6
+      dropped.
+    * Search: a slug download (`--manga <slug>`) doesn't exercise search, so
+      "it works" may not cover the search path — C7 stays as a (low-pri) confirm.
 
-- [ ] **C6 [PROBE] Confirm the no-vrf chapter-list endpoint** `/ajax/manga/<id>/chapter/en`
-  - The parser depends on it but the C1 probe never exercised it (manga page
-    server-renders chapters; reader page uses the vrf `/ajax/read/<id>/chapter/en`).
-    Verify it still 200s with curl_cffi: `python -m scraper.probe
-    https://mangafire.to/ajax/manga/lww3/chapter/en --site mangafire/chapterlist`
-    (or just curl_cffi it). If it's gone, switch all_volume_ids to read the
-    server-rendered list off the /manga/ page, or the vrf reader variant.
-  - DONE-WHEN: know whether the parser's endpoint still works, or the parser is
-    pointed at a confirmed-live source.
+- [ ] **C7 [PROBE, LOW-PRI] Confirm MangaFire search path** — the C1 search run
+  tripped the probe's (false-positive) challenge detector and captured no
+  `ajax/manga/search`. A slug download doesn't exercise search, so it's the one
+  stage not yet confirmed working. Validate via the parser's own `capture_xhr`
+  (the parser sets `i.value` + dispatches input/keyup, unlike the probe's
+  send_keys+Enter) or a `--search` re-probe.
+  - DONE-WHEN: `ajax/manga/search` shape confirmed (parser parses `a.unit` cards
+    → `/manga/<slug>` + `Chap N`), or a live search via the parser returns hits.
 
-- [ ] **C7 [PROBE] Re-probe MangaFire search past Turnstile** — the C1 search run
-  was blocked by a Cloudflare Turnstile challenge (no `ajax/manga/search`
-  captured). The probe's generic search-driving (send_keys + Enter) also differs
-  from the parser's actual trigger (set `i.value` + dispatch input/keyup, then
-  capture_xhr). Re-probe (retry past the challenge / solve once headful), OR
-  validate the search path directly through the parser's own `capture_xhr`.
-  - DONE-WHEN: the `ajax/manga/search` response shape is confirmed (the parser
-    parses `a.unit` cards → `/manga/<slug>` + `Chap N`).
+- [ ] **C8 [QUICK, LOW-PRI] Verify MangaFire descramble on a scrambled chapter** —
+  the C1 image capture had offset 0 on every page (no scramble), so `descramble()`
+  was not exercised. If you happen onto a chapter with offset > 0, confirm it
+  round-trips to a valid JPEG; else this is just unverified, not broken (the
+  parser works on non-scrambled chapters today).
 
-- [ ] **C8 [QUICK] Verify MangaFire descramble on a scrambled chapter** — the C1
-  image capture had offset 0 on every page (no scramble), so `descramble()` was
-  not exercised. Find a chapter/manga that actually scrambles (offset > 0) and
-  confirm `descramble(content, offset)` still yields a valid JPEG.
-  - DONE-WHEN: a non-zero-offset page round-trips to a valid image (or we learn
-    MangaFire dropped scrambling and the descramble branch is dead code to retire).
+- [ ] **C9 [QUICK] Probe: challenge detection is too trigger-happy (false positive)**
+  - SURFACED by C1: the probe yelled "CHALLENGE WALL DETECTED" on all three
+    MangaFire pages purely from Cloudflare infra markers (`turnstile`,
+    `/cdn-cgi/challenge-platform`) in otherwise-fine HTML — yet the browser
+    cleared CF automatically and the shipped parser reaches every endpoint. The
+    loud warning oversells the situation and could push someone toward a needless
+    rewrite. Note: candidates.txt ALSO prints a calmer "behind Cloudflare (infra
+    markers present) -- informational, not a block" line right above the scary
+    one — they contradict each other.
+  - FIX IDEA: only raise the hard "CHALLENGE WALL" when the page actually lacks
+    real content (e.g. tiny page + challenge markers + no chapter links / no data
+    captured), not whenever CF infra markers appear. If real content (chapter
+    links, api bodies) was captured, downgrade to the informational line.
+  - DONE-WHEN: a page that the browser cleared (real content present) no longer
+    reports a hard challenge wall; genuine interstitials still do. Unit-testable
+    against captured HTML (pure detector).
 
 - [ ] **C4 [QUICK] Probe: auto-namespace output by URL stage + guard overwrites**
   - WHY (surfaced this session): every probe run writes fixed filenames via
