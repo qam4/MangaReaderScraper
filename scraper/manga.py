@@ -3,18 +3,12 @@ Manga building blocks & factories
 """
 
 import logging
-import tempfile
 import warnings
-import zipfile
 from dataclasses import dataclass, field
-from io import BytesIO
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from typing import Callable, Dict, Generator, Iterable, List, Optional
+from typing import Dict, Generator, Iterable, List, Optional
 
-from PIL import Image
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfgen import canvas
 from tqdm import TqdmExperimentalWarning  # type: ignore
 from tqdm.contrib.logging import logging_redirect_tqdm  # type: ignore
 from tqdm.rich import tqdm  # type: ignore
@@ -30,6 +24,7 @@ from scraper.new_types import PageData, VolumeData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
 from scraper.utils import configure_logging, get_adapter, settings
+from scraper.writers import get_writer
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +217,7 @@ class MangaBuilder:
         self.parser: SiteParser = parser
         self.adapter = get_adapter(logger, self.parser.manga.manga_url)
         self.type: str = filetype
+        self.writer = get_writer(filetype)
         self.manga: Optional[Manga] = None
 
     def _get_volume_data_wrapped(self, arg):
@@ -284,9 +280,8 @@ class MangaBuilder:
             self.adapter.info(f"Saving volume {volume_id}")
             self._create_manga_dir(self.manga.name)
 
-            save_method = self._get_save_method(self.type)
-            if save_method:
-                save_method(self.manga.volumes_dict[volume_id])
+            if self.writer:
+                self.writer.write(self.manga.volumes_dict[volume_id])
             self.adapter.info(f"Volume {volume_id} done")
 
             # Return the page data so the PARENT can assemble its Manga. Under
@@ -327,54 +322,6 @@ class MangaBuilder:
         download_dir = settings()["config"]["manga_directory"]
         manga_dir = Path(download_dir) / manga_name
         manga_dir.mkdir(parents=True, exist_ok=True)
-
-    def _to_pdf(self, volume: Volume) -> None:
-        """
-        Save all pages to a PDF file
-        """
-        if not volume.pages:
-            return None
-        self.adapter.info(f"Volume {volume.number} saved to {volume.file_path}")
-        c = canvas.Canvas(str(volume.file_path))
-        for page in volume.pages:
-            img = BytesIO(page.img)
-            cover = Image.open(img)
-            width, height = cover.size
-            c.setPageSize((width, height))
-            imgreader = ImageReader(img)
-            c.drawImage(imgreader, x=0, y=0)
-            c.showPage()
-        c.save()
-
-    def _to_cbz(self, volume: Volume) -> None:
-        """
-        Save all pages to a CBZ file
-
-        The naming schema is important. If too much info is
-        within the jpg file name the page order can be read
-        wrong in some CBZ readers. The most reliable format is
-        like 001_1.jpg (<pag_num>_<vol_num>.jpg).
-
-        See forum post for more details:
-            https://tinyurl.com/uu5kvjf
-        """
-        if not volume.pages:
-            return None
-        self.adapter.info(f"Volume {volume.number} saved to {volume.file_path}")
-        with zipfile.ZipFile(str(volume.file_path), "w") as cbz:
-            for page in volume.pages:
-                jpgfilename = f"{page.number:03d}_{volume.number}.jpg"
-                tmp_jpg = Path(tempfile.gettempdir()) / jpgfilename
-                tmp_jpg.write_bytes(page.img)
-                cbz.write(tmp_jpg, jpgfilename)
-                tmp_jpg.unlink()
-
-    def _get_save_method(self, filetype) -> Callable:
-        """
-        Returns the appropriate image conversion method.
-        """
-        conversion_method = {"pdf": self._to_pdf, "cbz": self._to_cbz}
-        return conversion_method.get(filetype)
 
     def get_manga_volumes(
         self,

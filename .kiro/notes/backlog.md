@@ -77,10 +77,19 @@ Each item has a done-when so "done" is unambiguous.
   - DEFERRED to B2-redesign (below): a test exercising the REAL pool (opting out of
     mocked_pool_imap), and the question of retiring mocked_pool_imap entirely.
 
-- [ ] **B3 [STRUCT] Split format writers out of `MangaBuilder`** (god-module A5)
+- [x] **B3 [STRUCT] Split format writers out of `MangaBuilder`** (god-module A5)
   - WHERE: move `_to_pdf`/`_to_cbz`/`_get_save_method` to e.g. `writers.py`,
     injected into the builder; `manga.py` keeps model + orchestration only.
-  - DONE-WHEN: writers independently testable; builder depends on an interface.
+  - DONE: new `scraper/writers.py` with a `VolumeWriter` Protocol + `PdfWriter`/
+    `CbzWriter` + `get_writer(filetype)` factory. `MangaBuilder.__init__` now
+    holds `self.writer = get_writer(filetype)` and `_get_volume_data` calls
+    `self.writer.write(volume)` instead of the in-class save methods. Removed
+    `_to_pdf`/`_to_cbz`/`_get_save_method` and the now-unused imports (zipfile,
+    tempfile, BytesIO, PIL.Image, ImageReader, canvas, Callable) from manga.py.
+    Writers duck-type Volume (TYPE_CHECKING import) so no circular import. Added
+    `tests/test_writers.py` (5 tests: factory, pdf/cbz signatures, cbz naming
+    schema + order, empty-volume no-op) — writers are now independently testable.
+    Gates green, 323 pass.
 
 - [x] **B4 [STRUCT] Remove `sys.exit()` from parser layer** (L5)
   - WHERE: `parsers/base.py` `BaseSearchParser._scrape_results`.
