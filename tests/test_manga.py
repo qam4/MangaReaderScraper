@@ -251,6 +251,44 @@ def test_manga_builder_preferred_name(parser):
     assert manga.volumes_dict["1"] == v1
 
 
+def test_builder_assembles_pages_from_worker_return_value(monkeypatch):
+    # Characterization of the B2 fix: the parent Manga's pages must come from
+    # what _get_volumes_data RETURNS, not from worker-side mutation of
+    # self.manga. Under a spawn Pool the child mutates a private copy that never
+    # reaches the parent, so only the return value can be trusted. We stub
+    # _get_volumes_data to return canned (volume_id, pages_data) and assert the
+    # parent assembled the pages from it -- independent of any real pool.
+    builder = MangaBuilder(MockedSiteParser())
+    canned_pages = [(1, b"img1", "success"), (2, b"img2", "success")]
+
+    def fake_get_volumes_data(vol_ids):
+        # mimic the worker: return (volume_id, pages_data) per requested volume,
+        # WITHOUT touching builder.manga (the spawn-process reality)
+        return [(vol_id, canned_pages) for vol_id in vol_ids]
+
+    monkeypatch.setattr(builder, "_get_volumes_data", fake_get_volumes_data)
+    manga = builder.get_manga_volumes(vol_ids=["1"])
+
+    assert [p.number for p in manga.volumes_dict["1"].pages] == [1, 2]
+    assert manga.volumes_dict["1"].page[1].img == b"img1"
+
+
+def test_builder_skips_pages_for_volumes_worker_returned_none(monkeypatch):
+    # A worker returns None for a skipped volume (already on disk / no pages).
+    # The parent still lists the volume (metadata) but with no pages -- it must
+    # not invent pages for a None result.
+    builder = MangaBuilder(MockedSiteParser())
+
+    def fake_get_volumes_data(vol_ids):
+        return [None for _ in vol_ids]
+
+    monkeypatch.setattr(builder, "_get_volumes_data", fake_get_volumes_data)
+    manga = builder.get_manga_volumes(vol_ids=["1"])
+
+    assert "1" in manga.volumes_dict
+    assert manga.volumes_dict["1"].pages == []
+
+
 class _GappyDecimalParser(MockedSiteParser):
     """Site whose chapters have a gap (no 11) and a decimal (9.22).
 

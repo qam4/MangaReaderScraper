@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from typing import Callable, Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Generator, Iterable, List, Optional
 
 from PIL import Image
 from reportlab.lib.utils import ImageReader
@@ -229,7 +229,7 @@ class MangaBuilder:
 
     def _get_volume_data(
         self, volume_index: int, volume_id: str
-    ) -> Optional[Tuple[str, Optional[VolumeData]]]:
+    ) -> Optional[VolumeData]:
         """
         Download pages of a volume, and save them to disk (in pdf or cbz)
         Returns volume number & each pages raw data
@@ -289,14 +289,21 @@ class MangaBuilder:
                 save_method(self.manga.volumes_dict[volume_id])
             self.adapter.info(f"Volume {volume_id} done")
 
-            return (volume_id, None)
+            # Return the page data so the PARENT can assemble its Manga. Under
+            # spawn, the child's mutations to self.manga above are on a private
+            # copy and never reach the parent; only this return value crosses
+            # the process boundary. (See get_manga_volumes for assembly.)
+            return (volume_id, pages_data)
         return None
 
-    def _get_volumes_data(self, vol_ids: Iterable[str] = []) -> List[VolumeData]:
+    def _get_volumes_data(
+        self, vol_ids: Iterable[str] = []
+    ) -> List[Optional[VolumeData]]:
         """
         Download a list of volumes
         Each volume is processed in parallel processes
-        Returns list of raw volume data
+        Returns a list of (volume_id, pages_data) results (None for volumes that
+        were skipped: already on disk, or no pages found)
         """
         self.adapter.info("Downloading volumes data...")
         self.adapter.debug(f"self.manga.name={self.manga.name}")
@@ -312,8 +319,6 @@ class MangaBuilder:
                     )
                 )
                 return volumes_data
-        # no multi-process version:
-        # return list(tqdm(map(self._get_volume_data, vol_ids), total=len(vol_ids)))
 
     def _create_manga_dir(self, manga_name: str) -> None:
         """
@@ -408,17 +413,24 @@ class MangaBuilder:
             vol_ids = select_chapters(vol_ids, all_volume_ids)
         self.adapter.debug(f"vol_ids={vol_ids}")
 
-        # Download the volumes
-        _ = self._get_volumes_data(vol_ids)
+        # Download the volumes. Each worker returns (volume_id, pages_data) on
+        # success, or None when the volume was skipped (already on disk / no
+        # pages). We assemble the parent's Manga from these RETURN values rather
+        # than from child-side mutations, which don't survive a spawn Pool.
+        volumes_data = self._get_volumes_data(vol_ids)
+        pages_by_volume = {
+            result[0]: result[1] for result in volumes_data if result is not None
+        }
 
-        # Add volumes to manga
+        # Add volumes to the manga, populating pages from the worker results.
         for index, volume_id in enumerate(vol_ids, start=1):
-            # this if statement is needed for unit tests which are not multithreaded
-            # to make sure we do not get VolumeAlreadyPresent
             if not self.manga.volumes_dict.get(volume_id):
                 volume_complete = self.manga.volume_exists(volume_id, index)
                 self.manga.add_volume(
                     volume_id, volume_index=index, complete=volume_complete
                 )
+            pages = pages_by_volume.get(volume_id)
+            if pages and not self.manga.volumes_dict[volume_id].pages:
+                self.manga.volumes_dict[volume_id].pages = list(pages)
 
         return self.manga

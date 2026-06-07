@@ -51,13 +51,31 @@ Each item has a done-when so "done" is unambiguous.
   - DONE-WHEN: no argv re-serialization/recursion; not-found→search is a plain
     branch; `test_cli.py` updated (READ FIRST — pins current behavior).
 
-- [ ] **B2 [STRUCT] Multiprocess boundary returns data, not disk-roundtrip** (H1)
+- [x] **B2 [STRUCT] Multiprocess boundary returns data, not disk-roundtrip** (H1)
   - WHERE: `manga.py` `MangaBuilder._get_volume_data`/`_get_volumes_data` — child
     procs mutate their own `self.manga` copy (discarded); parent re-derives from
     disk; in-memory `Manga.pages` empty in prod (tests pass only single-threaded).
-  - DONE-WHEN: child returns page data; parent assembles Manga; characterization
-    test (picklable fake parser through a REAL Pool) shows parent pages populated.
-  - PRE-REQ: write that characterization test FIRST to confirm H1 before changing.
+  - CONFIRMED EMPIRICALLY (this session): on Windows **spawn**, a real-`Pool`
+    download leaves the parent `manga.volumes_dict[id]._pages` EMPTY (0 pages) —
+    image data lives only on disk. The parent's Manga model is a lie after a real
+    run; downstream (upload/remove/bundle) survives only because it's all
+    file-path based.
+  - ROOT OF WHY TESTS MISS IT: `tests/conftest.py::mocked_pool_imap` (session
+    autouse) patches `scraper.manga.Pool.imap` → plain `map`, so the WHOLE suite
+    runs single-process. Child mutations stick → builder tests assert
+    `volume.page[1]` exists and pass. The suite is structurally blind to the
+    multiprocess data flow BY DESIGN of that fixture. (This fixture is part of
+    the problem — a real-pool test must opt out of it.)
+  - DONE (honest fix): `_get_volume_data` now returns `(volume_id, pages_data)`
+    (was `(volume_id, None)`); typed `Optional[VolumeData]`. `get_manga_volumes`
+    builds a `pages_by_volume` dict from the worker RETURN values and populates
+    each volume's `.pages` from it — so the parent's Manga is correct after a real
+    spawn Pool run, not just single-threaded. Two characterization tests added
+    (`test_builder_assembles_pages_from_worker_return_value`,
+    `..._skips_pages_for_volumes_worker_returned_none`) that stub `_get_volumes_data`
+    to assert the parent-side assembly without spawn flakiness. Gates green.
+  - DEFERRED to B2-redesign (below): a test exercising the REAL pool (opting out of
+    mocked_pool_imap), and the question of retiring mocked_pool_imap entirely.
 
 - [ ] **B3 [STRUCT] Split format writers out of `MangaBuilder`** (god-module A5)
   - WHERE: move `_to_pdf`/`_to_cbz`/`_get_save_method` to e.g. `writers.py`,
@@ -67,6 +85,28 @@ Each item has a done-when so "done" is unambiguous.
 - [ ] **B4 [STRUCT] Remove `sys.exit()` from parser layer** (L5)
   - WHERE: `parsers/base.py` `BaseSearchParser._scrape_results`.
   - DONE-WHEN: raises a domain exception; CLI maps it to exit; tests updated.
+
+- [ ] **B2-redesign [STRUCT] Proper multiprocess boundary + retire the mask** (follow-up to B2)
+  - WHY: B2 was an honest minimal fix (parent assembles from worker returns). The
+    deeper problems remain: (a) workers still mutate a throwaway `self.manga` and
+    redo `add_volume` + disk save inside the child, while the parent ALSO does
+    add_volume — duplicated, split-brain ownership; (b) settings/config aren't
+    cleanly propagated to spawned workers (worker re-reads ini via initializer);
+    (c) `mocked_pool_imap` (session autouse in conftest) still forces the whole
+    suite single-process, hiding the real spawn data flow.
+  - STEPS:
+    1. Make the worker a PURE function: download pages → return
+       `(volume_id, pages_data, complete)`; do NOT touch `self.manga` or save to
+       disk inside the child. Parent owns Manga assembly AND disk writing (or a
+       dedicated writer — see B3).
+    2. Pass everything the worker needs explicitly (urls/config), so it doesn't
+       depend on parent mutable state surviving spawn.
+    3. Add ONE real-pool characterization test that opts out of `mocked_pool_imap`
+       (e.g. an opt-out marker/fixture) and asserts parent `.pages` populated.
+    4. Decide the fate of `mocked_pool_imap`: scope it to the few tests that truly
+       need single-process determinism instead of session-autouse, OR remove it.
+  - DONE-WHEN: worker is side-effect-free w.r.t. parent state; a real-pool test
+    proves parent Manga is correct under spawn; the global mask is gone or scoped.
 
 ## Wave C — finish the parser refactor (PROBE-gated; user runs live probes)
 
