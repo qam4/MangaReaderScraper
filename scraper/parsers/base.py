@@ -5,7 +5,6 @@ Abstract base classes for all parsers
 import abc
 import io
 import logging
-import sys
 import time
 from functools import lru_cache
 from typing import Iterable, List, Optional, Tuple, Type
@@ -14,7 +13,10 @@ import requests  # type: ignore
 from bs4.element import Tag
 from PIL import Image, ImageDraw, ImageFont
 
-from scraper.exceptions import MangaParserNotSet  # , PageDoesNotExist
+from scraper.exceptions import (  # , PageDoesNotExist
+    MangaParserNotSet,
+    NoSearchResultsFound,
+)
 from scraper.fetchers import BrowserFetcher, fetch_soup
 from scraper.new_types import SearchResults
 from scraper.utils import request_session
@@ -143,8 +145,7 @@ class BaseSearchParser:
         # logging.debug(f"html_response={html_response}")
         search_results = html_response.find_all("div", {"class": div_class})
         if not search_results:
-            logging.error(f"No search results found for {self.query}\nExiting...")
-            sys.exit()
+            raise NoSearchResultsFound(f"No search results found for {self.query}")
         self.results = search_results
         # logging.debug(f"search_results={search_results}")
         return search_results  # type: ignore[return-value]

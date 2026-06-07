@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple, Type
 
 from scraper.bundle import Bundle
 from scraper.download import Download
-from scraper.exceptions import MangaDoesNotExist
+from scraper.exceptions import MangaDoesNotExist, NoSearchResultsFound
 from scraper.manga import Manga
 from scraper.menu import SearchMenu
 from scraper.parsers.types import SiteParserClass
@@ -202,7 +202,13 @@ def cli_entry() -> None:
     however, we need cli() to take args for unit testing
     purposes. Hence the need for this function.
     """
-    cli(sys.argv[1:])
+    try:
+        cli(sys.argv[1:])
+    except NoSearchResultsFound as err:
+        # The parser layer no longer calls sys.exit(); the CLI owns process
+        # termination. Report the empty result and exit cleanly.
+        logging.error(str(err))
+        sys.exit(1)
 
 
 def get_parser() -> argparse.ArgumentParser:

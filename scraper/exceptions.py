@@ -37,3 +37,13 @@ class MangaParserNotSet(Exception):
 
 class CannotExtractChapter(Exception):
     pass
+
+
+class NoSearchResultsFound(Exception):
+    """Raised by the search parser layer when a query yields no results.
+
+    The parser layer must not terminate the process; the CLI entry point maps
+    this to a clean exit.
+    """
+
+    pass

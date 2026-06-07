@@ -2,7 +2,7 @@ from unittest import mock
 
 import pytest
 
-from scraper.exceptions import VolumeDoesntExist
+from scraper.exceptions import NoSearchResultsFound, VolumeDoesntExist
 from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser, MangaKakaSearch
 from tests.helpers import as_search_results, mocked_request_session
 
@@ -261,10 +261,9 @@ def test_get_search_results(mangakaka_search_html):
 def test_get_search_results_with_invalid_query(caplog, mangakaka_invalid_search_html):
     with mock.patch("scraper.parsers.base.fetch_soup") as mocked_func:
         mocked_func.return_value = mangakaka_invalid_search_html
-        with pytest.raises(SystemExit):
-            mangasearch = MangaKakaSearch("gibbersish")
+        mangasearch = MangaKakaSearch("gibbersish")
+        with pytest.raises(NoSearchResultsFound, match="No search results found"):
             mangasearch.search()
-            assert caplog.text == "No search results found for gibberish"
 
 
 def test_mangakaka_test_search_parser(mangakaka_search_html):

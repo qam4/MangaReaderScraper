@@ -82,9 +82,17 @@ Each item has a done-when so "done" is unambiguous.
     injected into the builder; `manga.py` keeps model + orchestration only.
   - DONE-WHEN: writers independently testable; builder depends on an interface.
 
-- [ ] **B4 [STRUCT] Remove `sys.exit()` from parser layer** (L5)
+- [x] **B4 [STRUCT] Remove `sys.exit()` from parser layer** (L5)
   - WHERE: `parsers/base.py` `BaseSearchParser._scrape_results`.
-  - DONE-WHEN: raises a domain exception; CLI maps it to exit; tests updated.
+  - DONE: added `NoSearchResultsFound` domain exception (exceptions.py); the
+    parser now raises it instead of `sys.exit()` (removed the `import sys` there);
+    `cli_entry()` catches it, logs the message, and `sys.exit(1)` — so process
+    termination is the CLI's job, not the parser's. `cli()` itself stays
+    exception-raising (testable). Updated the three parser tests
+    (mangafast/mangareader/mangakaka `..._with_invalid_query`) to expect
+    `NoSearchResultsFound` instead of `SystemExit` (they were also asserting
+    inside the raises block, i.e. dead asserts — now assert the message via
+    `match=`). Gates green, 318 pass.
 
 - [ ] **B2-redesign [STRUCT] Proper multiprocess boundary + retire the mask** (follow-up to B2)
   - WHY: B2 was an honest minimal fix (parent assembles from worker returns). The
