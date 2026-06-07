@@ -182,33 +182,6 @@ class MockedPyCloudFail(MockedPyCloud):
         return {"error": "something happened"}
 
 
-class MockedMega:
-    def __init__(self, *args, **kwargs):
-        self.found = ["start", "finish"]
-
-    def login(self, *args, **kwargs):
-        return self
-
-    def find(self, *args, **kwargs):
-        return self.found
-
-    def create_folder(self, *args, **kwargs):
-        return {"dir": "one", "subdir": "two"}
-
-    def upload(self, *args, **kwargs):
-        return {"status": "success"}
-
-
-class MockedMegaNotFound(MockedMega):
-    """
-    Causes self.find to return False
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        self.found = False
-
-
 class MockedDropbox:
     def __init__(self, *args, **kwargs):
         self.match_found = True

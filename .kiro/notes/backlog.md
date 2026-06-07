@@ -371,11 +371,13 @@ STILL OPEN — folded into the waves above or added here:
     generate_tests already emits the matching fixture-backed test. So each Wave C
     re-probe (C1 mangafire, C2 mangago/mangapark) naturally yields its parser
     test — R1's parser tier is a byproduct of probing, not separate work.
-- [ ] **R2 [QUICK][P3] `--upload mega` dead choice.** `__main__` argparse
-  `choices={"dropbox","mega","pcloud"}` but MegaUploader is commented out →
-  advertises a mode that errors. Drop "mega" from choices. Also remove the
-  `mega.*` entry in pyproject mypy overrides + commented MegaUploader/Mega mocks
-  if we want the sweep complete.
+- [x] **R2 [QUICK][P3] `--upload mega` dead choice.** DONE: dropped `"mega"` from
+  the `--upload` argparse choices (the user-facing bug — it advertised a mode
+  that errored) and from the `services` dict in `__main__`. Swept the rest:
+  removed the `mega.*` pyproject mypy override, the commented `MegaUploader`
+  class + `from mega.mega import Mega` import in uploaders.py, the
+  `MockedMega`/`MockedMegaNotFound` mocks in helpers.py, and the commented Mega
+  tests/parametrize in test_uploaders.py. Gates green.
 - [ ] **R3 [QUICK][P2] `kcc-c2e` unchecked external binary** — bundle.py already
   RuntimeErrors if missing (improved since review); verify that's sufficient,
   else close. (Likely already adequate — confirm during D4 bundle cleanup.)

@@ -103,7 +103,6 @@ no_strict_optional = true
 [[tool.mypy.overrides]]
 module = [
     "dropbox.*",
-    "mega.*",
     "bs4.*",
     "urllib3.*",
     "PIL",

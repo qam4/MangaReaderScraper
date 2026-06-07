@@ -101,7 +101,6 @@ def upload(manga: Manga, service: str) -> Uploader:
 
     services: Dict[str, Type[Uploader]] = {
         "dropbox": DropboxUploader,
-        # "mega": MegaUploader,
         "pcloud": PcloudUploader,
     }
     uploader = services[service]()
@@ -236,7 +235,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--upload",
         "-u",
         type=str,
-        choices={"dropbox", "mega", "pcloud"},
+        choices={"dropbox", "pcloud"},
         help="upload manga to a cloud storage service",
     )
     parser.add_argument(
