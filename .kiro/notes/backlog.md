@@ -139,27 +139,55 @@ Each item has a done-when so "done" is unambiguous.
 
 ## Wave C — finish the parser refactor (PROBE-gated; user runs live probes)
 
-- [ ] **C1 [PROBE] Re-probe MangaFire** — verify vrf/scramble/endpoints still hold
-  - Commands (live, headful browser; user runs). Slug: `ad-astra-scipio-and-hanniball.lww3`.
-    IMPORTANT: all three URLs share the `mangafire.to` host, so the probe derives
-    the SAME folder (`probe_out/mangafire/`) for each and OVERWRITES the shared
-    summary files (recommendation.txt, page.html, ajax_log.txt, candidates.txt,
-    api_backends.txt) on every run — and leaves stale `api_*.json` (indexed
-    per-run, not cleared). Use `--site mangafire/<stage>` to isolate each run:
-    - chapters (the `/manga/<slug>` series page — chapter list):
-      `python -m scraper.probe https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3 --site mangafire/chapters`
-    - images (the `/read/.../chapter-1` reader page — vrf/scramble/image list):
-      `python -m scraper.probe https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-1 --site mangafire/images`
-    - search (drives the search box on /home):
-      `python -m scraper.probe https://mangafire.to/home --search "ad astra" --site mangafire/search`
-  - Inspect each subfolder's recommendation.txt, api_backends.txt (can
-    curl_cffi reach the no-vrf chapter list?), ajax_log/api_*.json shapes.
-  - DONE-WHEN: know if shapes hold → decide cleanup vs rewrite; record findings.
-  - NOTE: the probe is STAGE-AGNOSTIC at capture time — there is no `--stage`
-    flag. It captures whatever the URL you point it at fires; the search/chapters/
-    images split happens in analysis (synthesize_recommendation pattern-matches the
-    captured endpoints). You probe 3 URLs because each page only fires its own
-    stage's traffic, NOT to "select" a stage. (See C4/C5 to make this friendlier.)
+- [x] **C1 [PROBE] Re-probe MangaFire** — verify vrf/scramble/endpoints still hold
+  - CAPTURED (user, live headful, 3x `--site mangafire/{chapters,images,search}`).
+  - FINDINGS (analysis of the captures):
+    * **images — HOLDS.** `images/api_08_*.json` = `result.images` array of
+      `[url, ?, offset]` triples, exactly what `page_urls` reads (`entry[0]` url,
+      `entry[2]` offset). Image call still vrf-gated
+      (`/ajax/read/chapter/<id>?vrf=...`) → browser `capture_xhr` still required.
+      CAVEAT: every offset was 0 here (this manga isn't scrambled now), so the
+      `descramble()` path was NOT exercised — shape intact, descramble unverified.
+    * **chapters — shape HOLDS, parser endpoint NOT exercised (gap).**
+      `images/api_06_en.json` confirms the `<li><a data-number=.. data-id=..>`
+      shape (decimals present: 28.22/21.22/9.22 → ChapterId decimal handling
+      matters & works). BUT the parser calls `/ajax/manga/<id>/chapter/en`
+      (no vrf) and the probe never hit it — the `/manga/` page server-renders the
+      chapter <li>s, and the reader page uses a DIFFERENT endpoint
+      `/ajax/read/<id>/chapter/en?vrf=...`. So the parser's specific no-vrf
+      endpoint is unconfirmed by this probe.
+    * **search — INCONCLUSIVE.** Search action hit a Cloudflare Turnstile wall;
+      no `ajax/manga/search` captured (recommendation: "no search endpoint seen").
+    * curl_cffi clears CF (200) where plain requests gets 403 — consistent with
+      the parser; but api_backends only tested manifest/panel/reading-get (cap 3,
+      vrf data endpoints not among them).
+  - DECISION: **cleanup, not rewrite.** Core assumptions hold. Follow-ups → C6/C7/C8.
+
+- [ ] **C6 [PROBE] Confirm the no-vrf chapter-list endpoint** `/ajax/manga/<id>/chapter/en`
+  - The parser depends on it but the C1 probe never exercised it (manga page
+    server-renders chapters; reader page uses the vrf `/ajax/read/<id>/chapter/en`).
+    Verify it still 200s with curl_cffi: `python -m scraper.probe
+    https://mangafire.to/ajax/manga/lww3/chapter/en --site mangafire/chapterlist`
+    (or just curl_cffi it). If it's gone, switch all_volume_ids to read the
+    server-rendered list off the /manga/ page, or the vrf reader variant.
+  - DONE-WHEN: know whether the parser's endpoint still works, or the parser is
+    pointed at a confirmed-live source.
+
+- [ ] **C7 [PROBE] Re-probe MangaFire search past Turnstile** — the C1 search run
+  was blocked by a Cloudflare Turnstile challenge (no `ajax/manga/search`
+  captured). The probe's generic search-driving (send_keys + Enter) also differs
+  from the parser's actual trigger (set `i.value` + dispatch input/keyup, then
+  capture_xhr). Re-probe (retry past the challenge / solve once headful), OR
+  validate the search path directly through the parser's own `capture_xhr`.
+  - DONE-WHEN: the `ajax/manga/search` response shape is confirmed (the parser
+    parses `a.unit` cards → `/manga/<slug>` + `Chap N`).
+
+- [ ] **C8 [QUICK] Verify MangaFire descramble on a scrambled chapter** — the C1
+  image capture had offset 0 on every page (no scramble), so `descramble()` was
+  not exercised. Find a chapter/manga that actually scrambles (offset > 0) and
+  confirm `descramble(content, offset)` still yields a valid JPEG.
+  - DONE-WHEN: a non-zero-offset page round-trips to a valid image (or we learn
+    MangaFire dropped scrambling and the descramble branch is dead code to retire).
 
 - [ ] **C4 [QUICK] Probe: auto-namespace output by URL stage + guard overwrites**
   - WHY (surfaced this session): every probe run writes fixed filenames via
