@@ -13,9 +13,9 @@ A parser has three stages — **search**, **chapter list**, and **page images** 
 and a site serves each from a different page, so you probe a few URLs:
 
 ```bash
-python -m scraper.probe https://example.com/manga/<slug> --site example/chapters
-python -m scraper.probe https://example.com/read/<slug>/chapter-1 --site example/images
-python -m scraper.probe https://example.com/home --search "naruto" --site example/search
+python -m scraper.probe https://example.com/manga/<slug>
+python -m scraper.probe https://example.com/read/<slug>/chapter-1
+python -m scraper.probe https://example.com/home --search "naruto"
 ```
 
 The probe is **stage-agnostic** at capture time — there is no `--stage` flag. It
@@ -26,17 +26,17 @@ search / chapter-list / image stages later, during analysis (in
 its own stage's calls — the reader page never makes the search request, the home
 page never makes the image-list call — not because you're "selecting" a stage.
 
-> **Heads-up — same host, same folder, silent overwrites.** The output folder is
-> derived from the URL *host*, so probing three `example.com` pages all target
-> `probe_out/example/` and each run **overwrites** the shared summary files
-> (`recommendation.txt`, `page.html`, `ajax_log.txt`, `candidates.txt`,
-> `api_backends.txt`) and can leave stale `api_*.json` behind. Pass
-> **`--site example/<stage>`** (as above) to give each run its own subfolder so
-> the captures don't clobber each other. (`probe_out/` is gitignored scratch, so
-> extra subfolders cost nothing — promote a curated subset to
-> `tests/test_files/<site>/` by hand.)
+By default each run is written to **`probe_out/<host>/<stage>/`**, where `<stage>`
+is inferred from the URL path (`/manga/` → `chapters`, `/read/` or `chapter-..`
+→ `images`, a `--search` run → `search`, anything else → `home`). So the three
+commands above land in `probe_out/example/{chapters,images,search}/` and don't
+overwrite each other — no `--site` needed. If you re-run a stage into a folder
+that already has a capture, the probe refuses unless you pass `--force` (so a
+prior run's `recommendation.txt` isn't silently clobbered). Pass `--site NAME` to
+override the subpath verbatim. `probe_out/` is gitignored scratch — promote a
+curated subset to `tests/test_files/<site>/` by hand.
 
-For each URL it writes into `probe_out/<site>/` (or your `--site` subfolder):
+For each URL it writes into `probe_out/<host>/<stage>/`:
 
 - **`ajax_log.txt`** — every ajax/API/JSON URL the page fired. This alone often
   hands you the search, chapter-list, and page-list endpoints. Some sites are

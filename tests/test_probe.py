@@ -4,6 +4,7 @@ Tests for the probe's pure analysis helpers (no browser needed).
 
 import json
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -33,6 +34,7 @@ from scraper.probe import (
     render_matches,
     sibling_mismatch_check,
     site_name_from_url,
+    stage_from_url,
     summarize_backend_probe,
     synthesize_recommendation,
     write_field_map,
@@ -49,6 +51,33 @@ def test_site_name_strips_www_and_tld():
 
 def test_site_name_handles_port():
     assert site_name_from_url("http://localhost:8080/x") == "localhost"
+
+
+# ============================ stage_from_url =============================
+
+
+def test_stage_from_url_classifies_reader_as_images():
+    assert stage_from_url("https://mangafire.to/read/foo.lww3/en/chapter-1") == "images"
+    assert stage_from_url("https://site.com/foo/chapter-12") == "images"
+    assert stage_from_url("https://site.com/title/foo/chapter_5") == "images"
+
+
+def test_stage_from_url_classifies_series_as_chapters():
+    assert stage_from_url("https://mangafire.to/manga/foo.lww3") == "chapters"
+    assert stage_from_url("https://site.com/title/foo") == "chapters"
+    assert stage_from_url("https://site.com/series/foo") == "chapters"
+    assert stage_from_url("https://site.com/comic/foo") == "chapters"
+
+
+def test_stage_from_url_search_flag_wins():
+    # a --search run is the search stage regardless of which page it starts on
+    assert stage_from_url("https://mangafire.to/home", searching=True) == "search"
+    assert stage_from_url("https://mangafire.to/manga/foo", searching=True) == "search"
+
+
+def test_stage_from_url_unknown_is_home():
+    assert stage_from_url("https://mangafire.to/home") == "home"
+    assert stage_from_url("https://site.com/") == "home"
 
 
 # ============================ analyze_html ===============================
@@ -1023,6 +1052,38 @@ def test_main_map_by_example_rejects_bad_token(tmp_path):
                 "--map-by-example",
                 "noequals",
             ]
+        )
+
+
+def test_main_namespaces_capture_by_host_and_stage(tmp_path, monkeypatch):
+    # C4: with no --site, a reader URL lands in <host>/images by default, so a
+    # site's stages don't overwrite each other. We stub _probe + inject a fake
+    # nodriver so no real browser/package is needed, and record the out_dir.
+    seen = {}
+
+    def _fake_probe(url, out_dir, **kwargs):
+        seen["out_dir"] = out_dir
+
+    fake_loop = type("L", (), {"run_until_complete": staticmethod(lambda coro: None)})()
+    fake_nodriver = mock.Mock(loop=lambda: fake_loop)
+    monkeypatch.setattr("scraper.probe._probe", _fake_probe)
+
+    with mock.patch.dict("sys.modules", {"nodriver": fake_nodriver}):
+        rc = main(
+            ["https://mangafire.to/read/foo.lww3/en/chapter-1", "--out", str(tmp_path)]
+        )
+    assert rc == 0
+    assert seen["out_dir"] == tmp_path / "mangafire" / "images"
+
+
+def test_main_refuses_to_overwrite_nonempty_capture_dir(tmp_path):
+    # C4: a fresh capture into a populated dir is refused (would clobber the
+    # previous run's summary files) -- clean argparse error, not a silent stomp.
+    out_dir = tmp_path / "mangafire" / "images"
+    _seed_captures(out_dir)  # pre-existing capture
+    with pytest.raises(SystemExit):
+        main(
+            ["https://mangafire.to/read/foo.lww3/en/chapter-1", "--out", str(tmp_path)]
         )
 
 

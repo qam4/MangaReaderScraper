@@ -331,6 +331,34 @@ def site_name_from_url(url: str) -> str:
     return parts[0] if parts else "site"
 
 
+def stage_from_url(url: str, searching: bool = False) -> str:
+    """Classify a probe URL into a parser-stage subfolder name.
+
+    A site serves each parser stage from a different page, and probing several
+    pages of one site into a single ``probe_out/<host>/`` folder silently
+    overwrites the shared summary files. Deriving a per-stage subfolder from the
+    URL PATH keeps the three captures apart by default (no ``--site`` needed):
+
+      * a ``--search`` run                       -> ``"search"``
+      * a reader/chapter page (``/read/``,
+        ``chapter-..`` / ``chapter_..`` / ``/chapter/``) -> ``"images"``
+      * a series/manga page (``/manga/``,
+        ``/title/``, ``/series/``, ``/comic/``)  -> ``"chapters"``
+      * anything else (home, unknown)            -> ``"home"``
+
+    Pure -- no IO. ``searching`` takes precedence because the search action is
+    what that run is capturing regardless of which page it starts on.
+    """
+    if searching:
+        return "search"
+    path = urlparse(url).path.lower()
+    if "/read/" in path or "/chapter/" in path or re.search(r"chapter[-_]", path):
+        return "images"
+    if any(seg in path for seg in ("/manga/", "/title/", "/series/", "/comic/")):
+        return "chapters"
+    return "home"
+
+
 def analyze_html(html: str) -> ProbeReport:
     """
     Surface candidate selectors from rendered HTML. Pure -- no network.
@@ -1925,7 +1953,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("url", help="page URL to probe (manga page, home, search, ...)")
     ap.add_argument(
         "--site",
-        help="output subfolder name (default: derived from the URL host)",
+        help="output subfolder name, verbatim (default: derived as "
+        "<url-host>/<stage>, where stage is chapters/images/search/home inferred "
+        "from the URL path -- so a site's stages don't overwrite each other)",
     )
     ap.add_argument(
         "--out",
@@ -1933,6 +1963,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="base output dir (default: probe_out/, which is gitignored). "
         "Probe captures are exploratory scratch -- promote a curated subset to "
         "tests/test_files/<site>/ by hand once you know what to keep.",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing non-empty output dir (otherwise the probe "
+        "refuses, so a prior stage's capture is not silently clobbered)",
     )
     ap.add_argument(
         "--search",
@@ -1956,9 +1992,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    site = args.site or site_name_from_url(args.url)
-    out_dir = Path(args.out) / site
+    # Default the output dir to <host>/<stage> so the chapters/images/search runs
+    # of one site land in distinct folders and don't overwrite each other's
+    # summary files. --site overrides the whole subpath verbatim.
+    if args.site:
+        out_dir = Path(args.out) / args.site
+        site = args.site
+    else:
+        host = site_name_from_url(args.url)
+        stage = stage_from_url(args.url, searching=bool(args.search))
+        site = f"{host}/{stage}"
+        out_dir = Path(args.out) / host / stage
     print(f"[probe] site={site} -> {out_dir}")
+
+    # Overwrite guard: map-by-example deliberately reads EXISTING captures, so it
+    # is exempt. A fresh capture into a populated dir would clobber the previous
+    # run's recommendation.txt et al., so refuse unless --force.
+    if not args.map_by_example and out_dir.exists() and any(out_dir.iterdir()):
+        if not args.force:
+            ap.error(
+                f"output dir {out_dir} is not empty -- a previous capture is "
+                "there. Re-run with --force to overwrite it, or pass a different "
+                "--site / --out to keep both."
+            )
+        print(f"[probe] --force: overwriting existing capture in {out_dir}")
 
     # Map-by-example is a standalone, browser-free mode: it reads the artifacts
     # already in out_dir and writes field_map.txt. It returns BEFORE importing

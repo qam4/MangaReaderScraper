@@ -204,20 +204,21 @@ Each item has a done-when so "done" is unambiguous.
     still flags. Added 3 regression tests (incl. the MangaFire shape: small +
     turnstile script + chapter links → NOT a challenge). Gates green, 324 pass.
 
-- [ ] **C4 [QUICK] Probe: auto-namespace output by URL stage + guard overwrites**
+- [x] **C4 [QUICK] Probe: auto-namespace output by URL stage + guard overwrites**
   - WHY (surfaced this session): every probe run writes fixed filenames via
     `_write` (plain `write_text`, no clearing); repeated runs into the same
     `probe_out/<host>/` silently clobber recommendation.txt et al. and orphan
     stale `api_*.json`. A tool meant to be run several times per site overwrites
     its headline output with no warning — a footgun (hit during C1).
-  - STEPS: (a) derive the out subfolder from the URL PATH, not just the host
-    (`/manga/` → chapters, `/read/`|`chapter` → images, a `--search` run →
-    search), so the 3 stage runs land in distinct folders WITHOUT needing
-    `--site`; (b) when about to write into a non-empty out_dir, warn (or require
-    `--fresh`/`--force`) before overwriting an existing recommendation.txt.
-  - DONE-WHEN: 3 stage probes of one site no longer collide by default; a
-    re-run into a populated dir is either namespaced or explicitly confirmed.
-    Offline-testable (path→subfolder mapping is pure). Low risk.
+  - DONE: added `stage_from_url(url, searching)` (pure) classifying a URL into
+    chapters/images/search/home by path. `main()` now defaults the out dir to
+    `probe_out/<host>/<stage>/` (so the 3 stage runs of one site no longer
+    collide without needing `--site`); `--site NAME` still overrides the subpath
+    verbatim. Added a `--force` flag + guard: a fresh capture into a non-empty
+    out dir is refused (clean argparse error) unless `--force`; `--map-by-example`
+    is exempt (it reads existing captures by design). Updated docs/adding-a-source.md
+    (no more `--site` heads-up; documents the namespacing + `--force`). Added 6
+    tests (stage_from_url cases + namespacing + overwrite-guard). Gates green, 334.
 
 - [ ] **C5 [STRUCT][NORTH STAR] Single-entry multi-stage probe** — `probe <manga-url>
   [--search "term"]` captures ALL stages in one run
