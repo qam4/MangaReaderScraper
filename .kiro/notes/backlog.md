@@ -554,9 +554,21 @@ STILL OPEN — folded into the waves above or added here:
   class + `from mega.mega import Mega` import in uploaders.py, the
   `MockedMega`/`MockedMegaNotFound` mocks in helpers.py, and the commented Mega
   tests/parametrize in test_uploaders.py. Gates green.
-- [ ] **R3 [QUICK][P2] `kcc-c2e` unchecked external binary** — bundle.py already
-  RuntimeErrors if missing (improved since review); verify that's sufficient,
-  else close. (Likely already adequate — confirm during D4 bundle cleanup.)
+- [x] **R3 [QUICK][P2] `kcc-c2e` (and other) unchecked external deps** — DONE.
+  - Audited all external-binary/subprocess use: `kcc-c2e` is the only subprocess
+    call. Its PRESENCE check (RuntimeError when missing) was adequate, but the
+    RESULT was ignored: `subprocess.run(command)` had no return-code check, so a
+    kcc-c2e FAILURE (bad input, or its own kindlegen dep missing) silently
+    produced a missing/partial MOBI. Extracted `Bundle._convert_to_mobi(cbz,
+    mobi)` which now checks `returncode == 0` AND the output exists, raising with
+    kcc-c2e's stderr tail otherwise (capture_output=True). 4 unit tests
+    (missing / nonzero-exit / missing-output / success).
+  - FOUND ELSEWHERE (the "kcc-c2e might not be the only one" hunch paid off):
+    `base.create_page` used `ImageFont.truetype("arial.ttf", 20)` — arial.ttf is
+    Windows-only, and create_page runs on the download-FAILURE path, so on
+    Linux/macOS/CI a failed page made the error handler ITSELF raise OSError.
+    Added `_placeholder_font(size)` that falls back to `ImageFont.load_default()`
+    when arial is absent; 2 tests. Gates green, 363 pass.
 - [ ] **R4 [P3] `mypy.ini`/pyproject: `no_strict_optional = True`** masks the
   real None-return bugs (the page_urls Optional issue, B-wave). Revisit tightening
   AFTER B fixes the None returns, else it'll surface many errors at once.

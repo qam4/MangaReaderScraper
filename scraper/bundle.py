@@ -116,6 +116,34 @@ class Bundle:
     def create_volume_wrapped(self, arg):
         return self.create_volume(*arg)  # Unpacks args
 
+    def _convert_to_mobi(self, cbz_path: str, mobi_path: str) -> None:
+        """Convert a volume ``.cbz`` to ``.mobi`` via kcc-c2e.
+
+        Raises a clear RuntimeError if kcc-c2e is missing OR the conversion
+        fails -- previously the result of ``subprocess.run`` was ignored, so a
+        kcc-c2e failure (bad input, or its own kindlegen dependency missing)
+        produced a missing/partial MOBI silently. We check the exit code AND
+        that the expected output exists, surfacing kcc-c2e's stderr on failure.
+        """
+        if shutil.which("kcc-c2e") is None:
+            raise RuntimeError(
+                "kcc-c2e not found on PATH -- MOBI bundling needs the KCC "
+                "fork installed. See the README 'Bundling to MOBI' section: "
+                "`git submodule update --init` then `uv pip install -e kcc/` "
+                "(and the vendored kindlegen for the MOBI step)."
+            )
+        command = ["kcc-c2e", "-u", "-o", os.path.dirname(mobi_path), cbz_path]
+        logger.info(f"command={command}")
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0 or not os.path.exists(mobi_path):
+            stderr_tail = (result.stderr or "").strip()[-500:]
+            raise RuntimeError(
+                f"kcc-c2e failed converting {cbz_path} to MOBI "
+                f"(exit {result.returncode}); expected {mobi_path}. "
+                "Is kindlegen available to KCC?"
+                + (f"\nkcc-c2e stderr:\n{stderr_tail}" if stderr_tail else "")
+            )
+
     def create_volume(self, volume_index: int, volume_digits: int):
         """
         Create a bundled volume
@@ -219,22 +247,7 @@ class Bundle:
         # check if the mobi file needs an update
         if self.is_obsolete(volume_mobi_path, [volume_cbz_path]):
             logger.info(f"Creating {volume_mobi_path}...")
-            if shutil.which("kcc-c2e") is None:
-                raise RuntimeError(
-                    "kcc-c2e not found on PATH -- MOBI bundling needs the KCC "
-                    "fork installed. See the README 'Bundling to MOBI' section: "
-                    "`git submodule update --init` then `uv pip install -e kcc/` "
-                    "(and the vendored kindlegen for the MOBI step)."
-                )
-            command = [
-                "kcc-c2e",
-                "-u",
-                "-o",
-                os.path.dirname(volume_mobi_path),
-                volume_cbz_path,
-            ]
-            logger.info(f"command={command}")
-            subprocess.run(command)
+            self._convert_to_mobi(volume_cbz_path, volume_mobi_path)
 
         elapsed_time = time.time() - start_time
         time_str = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))

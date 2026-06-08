@@ -24,6 +24,20 @@ from scraper.utils import request_session
 logger = logging.getLogger(__name__)
 
 
+def _placeholder_font(size: int):
+    """Font for placeholder ("page missing/corrupted") images.
+
+    Prefer arial.ttf when present; fall back to Pillow's always-available
+    bundled font. This matters because ``create_page`` runs on the
+    download-failure path -- it must never raise just because a TTF is absent
+    (arial.ttf is Windows-only; Linux/macOS/CI don't have it).
+    """
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except OSError:
+        return ImageFont.load_default()
+
+
 class BaseMangaParser:
     """
     Parses data associated with a given manga
@@ -108,8 +122,11 @@ class BaseMangaParser:
         # Create a drawing object
         draw = ImageDraw.Draw(image)
 
-        # Choose a font
-        font = ImageFont.truetype("arial.ttf", 20)
+        # Choose a font. create_page runs on the download-FAILURE path, and
+        # arial.ttf isn't present on every platform (Linux/macOS/CI), so fall
+        # back to Pillow's bundled default rather than letting the error handler
+        # itself raise OSError.
+        font = _placeholder_font(20)
 
         # Add text to the image
         draw.text((50, 70), text, font=font, fill=(255, 255, 255))
