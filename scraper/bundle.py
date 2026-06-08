@@ -123,25 +123,46 @@ class Bundle:
         fails -- previously the result of ``subprocess.run`` was ignored, so a
         kcc-c2e failure (bad input, or its own kindlegen dependency missing)
         produced a missing/partial MOBI silently. We check the exit code AND
-        that the expected output exists, surfacing kcc-c2e's stderr on failure.
+        that the expected output exists, surfacing kcc-c2e's output on failure.
+
+        ``--tempdir`` makes KCC create its ``KCC-*`` work dirs next to the
+        source ``.cbz`` instead of in the system temp dir. This is what lets us
+        run conversions in parallel (see ``bundle``'s Pool): without it, every
+        kcc-c2e process deletes *all* ``KCC-*`` dirs in the system temp at
+        startup (its ``checkPre`` orphan sweep), wiping the in-progress work
+        dirs of its siblings -- verified to corrupt concurrent runs. This is
+        also why we no longer need the patched KCC fork; upstream's
+        ``--tempdir`` solves the concurrency problem cleanly.
         """
         if shutil.which("kcc-c2e") is None:
             raise RuntimeError(
-                "kcc-c2e not found on PATH -- MOBI bundling needs the KCC "
-                "fork installed. See the README 'Bundling to MOBI' section: "
+                "kcc-c2e not found on PATH -- MOBI bundling needs Kindle Comic "
+                "Converter installed. See the README 'Bundling to MOBI' section: "
                 "`git submodule update --init` then `uv pip install -e kcc/` "
-                "(and the vendored kindlegen for the MOBI step)."
+                "(plus 7-Zip on PATH and kindlegen for the MOBI step)."
             )
-        command = ["kcc-c2e", "-u", "-o", os.path.dirname(mobi_path), cbz_path]
+        command = [
+            "kcc-c2e",
+            "-u",
+            "--tempdir",
+            "-o",
+            os.path.dirname(mobi_path),
+            cbz_path,
+        ]
         logger.info(f"command={command}")
         result = subprocess.run(command, capture_output=True, text=True)
+        # KCC's own output (incl. its `print('ERROR: ...')` lines) goes to
+        # stdout, so surface debug runs and -- on failure -- BOTH streams.
+        combined = ((result.stdout or "") + (result.stderr or "")).strip()
+        if combined:
+            logger.debug(f"kcc-c2e output for {cbz_path}:\n{combined}")
         if result.returncode != 0 or not os.path.exists(mobi_path):
-            stderr_tail = (result.stderr or "").strip()[-500:]
+            output_tail = combined[-800:]
             raise RuntimeError(
                 f"kcc-c2e failed converting {cbz_path} to MOBI "
                 f"(exit {result.returncode}); expected {mobi_path}. "
                 "Is kindlegen available to KCC?"
-                + (f"\nkcc-c2e stderr:\n{stderr_tail}" if stderr_tail else "")
+                + (f"\nkcc-c2e output:\n{output_tail}" if output_tail else "")
             )
 
     def create_volume(self, volume_index: int, volume_digits: int):

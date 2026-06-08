@@ -45,7 +45,7 @@ def test_convert_to_mobi_raises_when_kcc_missing():
 
 def test_convert_to_mobi_raises_on_nonzero_exit():
     bundle = _bundle()
-    fail = mock.Mock(returncode=1, stderr="kindlegen: not found")
+    fail = mock.Mock(returncode=1, stdout="", stderr="kindlegen: not found")
     with mock.patch("scraper.bundle.shutil.which", return_value="/usr/bin/kcc-c2e"):
         with mock.patch("scraper.bundle.subprocess.run", return_value=fail):
             # even if a file somehow exists, a non-zero exit must raise
@@ -54,9 +54,21 @@ def test_convert_to_mobi_raises_on_nonzero_exit():
                     bundle._convert_to_mobi("v.cbz", "v.mobi")
 
 
+def test_convert_to_mobi_surfaces_stdout_in_error():
+    # KCC prints its errors to stdout (e.g. 'ERROR: 7z is missing!'), so a
+    # failure diagnostic must include stdout, not only stderr.
+    bundle = _bundle()
+    fail = mock.Mock(returncode=1, stdout="ERROR: 7z is missing!", stderr="")
+    with mock.patch("scraper.bundle.shutil.which", return_value="/usr/bin/kcc-c2e"):
+        with mock.patch("scraper.bundle.subprocess.run", return_value=fail):
+            with mock.patch("scraper.bundle.os.path.exists", return_value=False):
+                with pytest.raises(RuntimeError, match="7z is missing"):
+                    bundle._convert_to_mobi("v.cbz", "v.mobi")
+
+
 def test_convert_to_mobi_raises_when_output_missing():
     bundle = _bundle()
-    ok = mock.Mock(returncode=0, stderr="")
+    ok = mock.Mock(returncode=0, stdout="", stderr="")
     with mock.patch("scraper.bundle.shutil.which", return_value="/usr/bin/kcc-c2e"):
         with mock.patch("scraper.bundle.subprocess.run", return_value=ok):
             # exit 0 but no MOBI produced -> still an error (don't claim success)
@@ -67,12 +79,15 @@ def test_convert_to_mobi_raises_when_output_missing():
 
 def test_convert_to_mobi_succeeds_when_output_present():
     bundle = _bundle()
-    ok = mock.Mock(returncode=0, stderr="")
+    ok = mock.Mock(returncode=0, stdout="", stderr="")
     with mock.patch("scraper.bundle.shutil.which", return_value="/usr/bin/kcc-c2e"):
         with mock.patch("scraper.bundle.subprocess.run", return_value=ok) as run:
             with mock.patch("scraper.bundle.os.path.exists", return_value=True):
                 bundle._convert_to_mobi("v.cbz", "out/v.mobi")
     # invoked kcc-c2e with the output dir + cbz
-    assert run.call_args[0][0][0] == "kcc-c2e"
-    assert "out" in run.call_args[0][0]
-    assert "v.cbz" in run.call_args[0][0]
+    cmd = run.call_args[0][0]
+    assert cmd[0] == "kcc-c2e"
+    assert "out" in cmd
+    assert "v.cbz" in cmd
+    # --tempdir keeps concurrent conversions from wiping each other's work dirs
+    assert "--tempdir" in cmd

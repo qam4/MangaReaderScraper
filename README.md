@@ -153,11 +153,11 @@ usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
 
 The `--bundle` option groups chapters into volumes and converts each to **MOBI**
 (preferred over EPUB for Kindle manga quality). This requires extra setup beyond
-the base install, because it shells out to a patched Kindle Comic Converter:
+the base install, because it shells out to [Kindle Comic Converter
+(KCC)](https://github.com/ciromattia/kcc):
 
-1. **Fetch the KCC fork** (a git submodule -- a fork patched for correct
-   multithreading / tmp-folder handling that upstream KCC lacks). A plain
-   `git clone` does not pull submodules, so fetch it explicitly:
+1. **Fetch KCC** (a git submodule pinned to upstream KCC). A plain `git clone`
+   does not pull submodules, so fetch it explicitly:
    ```bash
    git submodule update --init
    ```
@@ -166,10 +166,19 @@ the base install, because it shells out to a patched Kindle Comic Converter:
    ```bash
    uv pip install -e kcc/
    ```
-3. **kindlegen** does the final CBZ/EPUB -> MOBI step. Amazon discontinued and
-   no longer distributes it, so a Windows build (`kindlegen.exe`) is vendored at
-   the repo root. On other platforms you must supply your own `kindlegen` on
-   PATH.
+3. **7-Zip** (`7z` on your PATH) is required by KCC for archive handling.
+   Install it from [7-zip.org](https://www.7-zip.org/) (Windows users: add the
+   install dir, e.g. `C:\Program Files\7-Zip`, to PATH).
+4. **kindlegen** does the final CBZ/EPUB -> MOBI step. Amazon folded it into the
+   Kindle Previewer app and no longer ships the standalone binary, so a Windows
+   build (`kindlegen.exe`) is vendored at the repo root. On other platforms you
+   must supply your own `kindlegen` on PATH.
+
+Bundling runs conversions in parallel, so the scraper passes KCC's `--tempdir`
+flag: this keeps each conversion's temporary files on the source drive instead
+of the shared system temp dir, which is what makes concurrent runs safe (a
+plain parallel KCC would otherwise wipe its siblings' in-progress work dirs at
+startup). This is why no patched KCC fork is needed.
 
 Without these, `--bundle` raises a clear error (it never silently produces
 nothing). Plain PDF/CBZ downloads need none of this.
