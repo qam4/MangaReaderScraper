@@ -335,6 +335,33 @@ Each item has a done-when so "done" is unambiguous.
     fetcher that avoids a browser, especially per-chapter. Pure analysis
     unit-tested; network behind the existing fetch seam.
 
+- [ ] **C11 [STRUCT] Manual captcha-solve + persistent browser session** — the
+  honest answer to "what do we do at a hard wall?" Today the wall ladder is
+  curl_cffi (TLS impersonation) → cloudscraper (JS IUAM) → headful `nodriver`
+  AUTO-clearance, and the cleared session's cookies CAN be harvested
+  (`capture_xhr(with_cookies=True)` reads them via CDP) and reused by cheap
+  fetchers (`download_image(cookies=...)` / curl_cffi) — that's how MangaFire
+  avoids a browser per image. What's MISSING is human-in-the-loop solve:
+    * `BrowserFetcher` is headful but never DETECTS a remaining challenge,
+      PAUSES for the user to solve it, then resumes — it relies on auto-clear
+      within a fixed `wait`. The probe even names a `nodriver-manual` strategy
+      ("user solves it in the window") that no fetcher implements.
+    * each `BrowserFetcher` call spins a FRESH throwaway profile
+      (`mkdtemp` per call) and `browser.stop()`s in `finally`, so a
+      manually-cleared session does NOT persist across calls; only explicitly
+      harvested cookies carry forward. No reused `user_data_dir`.
+  - WHY (user): curl_cffi / headless often dodge captchas, but some sites are
+    genuinely captcha-protected; a manual-solve-once-then-continue path is a
+    useful escape hatch even if rarely hit.
+  - DONE-WHEN: (a) an opt-in persistent browser profile (reuse `user_data_dir`
+    across runs so a solved challenge + cookies survive); and/or (b) an
+    interactive flow: detect challenge → prompt user to solve in the headful
+    window → wait for clearance → harvest cookies → continue on curl_cffi.
+    Gated behind a flag/env (never blocks an unattended/CI run); the
+    challenge-detection + cookie-harvest seams reuse `probe.detect_challenge`
+    and `capture_xhr(with_cookies=True)`. Motivating case: manganato images
+    ("Just a moment…") if curl_cffi/cloudscraper can't clear it.
+
 - [ ] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
     cloudflare-403 notes → likely already broken. Follow the "Re-probing an
