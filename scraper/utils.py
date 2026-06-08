@@ -110,8 +110,9 @@ class CustomAdapter(LoggerAdapter):
     def process(
         self, msg: str, kwargs: MutableMapping[str, Union[str, int]]
     ) -> Tuple[str, MutableMapping[str, Union[str, int]]]:
-        manga = self.extra.get("manga")
-        volume = self.extra.get("volume")
+        extra = self.extra or {}
+        manga = extra.get("manga")
+        volume = extra.get("volume")
         if volume:
             return f"[{manga}:{volume}] {msg}", kwargs
         return f"[{manga}] {msg}", kwargs

@@ -218,7 +218,9 @@ class RequestsFetcher:
             url=url,
             status=resp.status_code,
             text=resp.text,
-            cookies=dict(resp.cookies),
+            # RequestsCookieJar values are typed str|None; coerce to a clean
+            # Dict[str, str] for FetchResult.cookies.
+            cookies={k: v for k, v in resp.cookies.items() if v is not None},
             final_url=resp.url,
         )
 
@@ -391,6 +393,9 @@ class BrowserFetcher:
 
             await asyncio.wait_for(found.wait(), timeout=self.timeout)
             captured_url = state["url"]
+            # found.wait() only completes once a handler set state["url"], so it
+            # is non-None here -- assert it for the type checker.
+            assert captured_url is not None
 
             body = await asyncio.wait_for(
                 tab.evaluate(_in_page_fetch_js(captured_url), await_promise=True),

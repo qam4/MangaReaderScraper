@@ -81,7 +81,7 @@ def get_manga_parser(source: str) -> SiteParserClass:
 
 def download_manga(
     manga_url: str,
-    manga_title: str,
+    manga_title: Optional[str],
     volumes: Optional[List[str]],
     filetype: str,
     parser: SiteParserClass,

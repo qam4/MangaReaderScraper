@@ -60,7 +60,7 @@ class KakalotMangaParser(BaseMangaParser):
     def _manga_page_url(self) -> str:
         return self.manga_path.format(base_url=self.base_url, slug=self.manga_url)
 
-    def _scrape_volume(self, volume: str) -> Optional[BeautifulSoup]:
+    def _scrape_volume(self, volume: str) -> BeautifulSoup:
         try:
             url = self.volume_url(volume)
             logger.debug(f"Volume url={url}")
@@ -79,14 +79,12 @@ class KakalotMangaParser(BaseMangaParser):
                 )
             raise e
 
-    def page_urls(self, volume: str) -> Optional[List[Tuple[int, str]]]:
+    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         volume_html = self._scrape_volume(volume)
-        if volume_html:
-            container = volume_html.find("div", {"class": "container-chapter-reader"})
-            all_img_tags = container.find_all("img")  # type: ignore[union-attr]
-            all_page_urls = [attr(img, self.page_img_attr) for img in all_img_tags]
-            return list(enumerate(all_page_urls, start=1))
-        return None
+        container = volume_html.find("div", {"class": "container-chapter-reader"})
+        all_img_tags = container.find_all("img")  # type: ignore[union-attr]
+        all_page_urls = [attr(img, self.page_img_attr) for img in all_img_tags]
+        return list(enumerate(all_page_urls, start=1))
 
     def _extract_number(self, href: str) -> str:
         """Pull the chapter number off a chapter href, e.g. ``chapter-55`` or

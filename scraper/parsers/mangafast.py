@@ -29,7 +29,7 @@ class MangaFastMangaParser(BaseMangaParser):
             volume_html = fetch_soup(self.volume_url(volume))
             return volume_html
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response is not None and e.response.status_code == 404:
                 raise MangaDoesNotExist(
                     f"Manga {self.manga_url} or volume {volume} does not exist"
                 )
@@ -62,7 +62,7 @@ class MangaFastMangaParser(BaseMangaParser):
             highest_volume = ChapterId(volume_ids[0])
             return [vol for vol in volume_ids if ChapterId(vol) <= highest_volume]
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response is not None and e.response.status_code == 404:
                 raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
             raise e
 

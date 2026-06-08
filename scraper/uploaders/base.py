@@ -19,7 +19,17 @@ class BaseUploader:
         self.service: str = service
         self.config: SectionProxy = self._get_config()
         self.api: Any = self._get_api_object()
-        self.adapter: Optional[CustomAdapter] = None
+        self._adapter: Optional[CustomAdapter] = None
+
+    @property
+    def adapter(self) -> CustomAdapter:
+        """The per-manga logging adapter. Set by ``_setup_adapter`` at the start
+        of ``upload`` before any ``upload_volume`` runs; accessing it earlier is
+        a programming error (hence the explicit raise rather than an Optional
+        every call site must None-check)."""
+        if self._adapter is None:
+            raise RuntimeError("adapter not initialized; call _setup_adapter first")
+        return self._adapter
 
     def _get_config(self):
         return settings()[self.service]
@@ -42,14 +52,14 @@ class BaseUploader:
         pass
 
     def _setup_adapter(self, manga: Manga) -> None:
-        self.adapter = get_adapter(logger, manga.name)
+        self._adapter = get_adapter(logger, manga.name)
 
     def upload(self, manga: Manga) -> List[Any]:
         """
         Uploads all volumes in a given Manga object
         """
         if not manga.volumes:
-            return None
+            return []
         self._setup_adapter(manga)
         self.adapter.info(f"Uploading to {self.service.title()}")
         with ThreadPool() as pool:

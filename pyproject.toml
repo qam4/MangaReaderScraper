@@ -97,7 +97,18 @@ markers = [
 
 [tool.mypy]
 check_untyped_defs = true
-no_strict_optional = true
+# strict optional is ON (mypy default) so None-returns are type errors. The
+# three parsers below are temporarily exempted: they are the Wave C
+# "fix-or-retire" targets (mangago/mangapark/mangareader) and carry pre-existing
+# Optional violations; C2 removes this exemption when it reworks/retires them.
+
+[[tool.mypy.overrides]]
+module = [
+    "scraper.parsers.mangago",
+    "scraper.parsers.mangapark",
+    "scraper.parsers.mangareader",
+]
+strict_optional = false
 
 [[tool.mypy.overrides]]
 module = [

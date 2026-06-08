@@ -302,6 +302,10 @@ Each item has a done-when so "done" is unambiguous.
     another registered source (or a fake), so it's not a pure delete.
   - DONE-WHEN: each of mangago/mangapark/mangareader is either working+fixtured or
     cleanly retired (no dangling refs across scraper/ + tests/ + docs/).
+  - ALSO (R4 hand-off): these three are exempted from strict optional via a
+    per-module `strict_optional = false` override in pyproject. When you fix or
+    retire each, remove it from that override list (and fix the surfaced Optional
+    errors if keeping the parser) so strict optional covers it too.
 
 - [x] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
   answer to "MangaFire has a lot of ad-hoc code"
@@ -569,9 +573,24 @@ STILL OPEN — folded into the waves above or added here:
     Linux/macOS/CI a failed page made the error handler ITSELF raise OSError.
     Added `_placeholder_font(size)` that falls back to `ImageFont.load_default()`
     when arial is absent; 2 tests. Gates green, 363 pass.
-- [ ] **R4 [P3] `mypy.ini`/pyproject: `no_strict_optional = True`** masks the
-  real None-return bugs (the page_urls Optional issue, B-wave). Revisit tightening
-  AFTER B fixes the None returns, else it'll surface many errors at once.
+- [x] **R4 [P3] Enable strict optional (drop `no_strict_optional`)** — DONE
+  (partial, by design).
+  - Exploratory `mypy --strict-optional` surfaced 25 errors in 10 files (the
+    "many at once" the note predicted). Categorised + fixed the 7 files NOT in
+    Wave C's territory: utils CustomAdapter.process (guard `self.extra`),
+    fetchers RequestsFetcher cookies (str|None coerce) + capture_xhr assert on
+    the captured url, kakalot `_scrape_volume`/`page_urls` dropped the spurious
+    Optional (they raise, never return None) to match the base signature,
+    mangafast two `e.response is not None` guards, uploaders BaseUploader
+    `adapter` is now a non-Optional property over `_adapter` (raises if used
+    before `_setup_adapter`) + `upload` returns `[]` not None, `__main__`
+    download_manga `manga_title: Optional[str]`.
+  - EXEMPTED (per-module `strict_optional = false` override): mangago, mangapark,
+    mangareader — they're C2's fix-or-retire targets and carry pre-existing
+    Optional violations; C2 removes the exemption when it reworks/retires them.
+    This keeps strict optional ON for all core + kept-parser code now, without
+    colliding with the in-flight C2 work.
+  - Gates green, mypy clean (33 files), 363 pass.
 - NOTE: `extract_chapter_number` is NOT orphan (review §3 P3 guessed unused) —
   it has parametrized tests in test_utils.py. Leave it; verify relevance only if
   touching that area.
