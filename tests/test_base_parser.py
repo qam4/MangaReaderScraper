@@ -21,10 +21,13 @@ def test_placeholder_font_falls_back_when_arial_missing():
     # create_page runs on the download-FAILURE path, so it must never raise --
     # it falls back to Pillow's bundled default font.
     sentinel = object()
-    with mock.patch(
-        "scraper.parsers.base.ImageFont.truetype", side_effect=OSError("no arial")
-    ), mock.patch(
-        "scraper.parsers.base.ImageFont.load_default", return_value=sentinel
-    ) as default:
+    with (
+        mock.patch(
+            "scraper.parsers.base.ImageFont.truetype", side_effect=OSError("no arial")
+        ),
+        mock.patch(
+            "scraper.parsers.base.ImageFont.load_default", return_value=sentinel
+        ) as default,
+    ):
         assert _placeholder_font(20) is sentinel
     default.assert_called_once()
