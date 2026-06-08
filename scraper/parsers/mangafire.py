@@ -283,18 +283,18 @@ class MangafireSearch(BaseSearchParser):
             title = title_tag.get_text(strip=True) if title_tag else slug
 
             # latest chapter: the span that looks like "Chap 81"
-            chapters = ""
+            latest_chapter = ""
             for span in unit.select(".info span"):
                 txt = span.get_text(strip=True)
                 cm = re.search(r"Chap(?:ter)?\s*([\d.]+)", txt, re.I)
                 if cm:
-                    chapters = cm.group(1)
+                    latest_chapter = cm.group(1)
                     break
 
             metadata[str(key)] = SearchResult(
                 title=title,
                 manga_url=slug,
-                chapters=chapters,
+                latest_chapter=latest_chapter,
                 source="mangafire",
             )
             key += 1

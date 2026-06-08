@@ -117,13 +117,13 @@ class MangagoSearch(BaseSearchParser):
         # fred: last chapters are in "row-5 gray"
         last_chapter = result.find("a", {"class": "chico"})
         if last_chapter:
-            chapters = text(last_chapter.find("span"))  # type: ignore[arg-type]
+            latest_chapter = text(last_chapter.find("span"))  # type: ignore[arg-type]
         else:
-            chapters = ""
+            latest_chapter = ""
         return SearchResult(
             title=manga_title,
             manga_url=manga_url_short,
-            chapters=chapters,
+            latest_chapter=latest_chapter,
             source="mangago",
         )
 

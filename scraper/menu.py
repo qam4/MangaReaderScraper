@@ -40,7 +40,7 @@ class SearchMenu:
             # accented titles, and the old `.encode("ascii", errors="ignore")`
             # silently dropped those characters (mangling e.g. JP titles to "").
             title = metadata["title"]
-            chapters = metadata["chapters"]
+            chapters = metadata["latest_chapter"]
             source = metadata["source"]
             title = (
                 title

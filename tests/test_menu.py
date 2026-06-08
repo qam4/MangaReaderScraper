@@ -52,13 +52,13 @@ def test_table_preserves_unicode_titles():
                 "1": SearchResult(
                     title="鋼の錬金術師",  # Fullmetal Alchemist (JP)
                     manga_url="fma",
-                    chapters="108",
+                    latest_chapter="108",
                     source="mangafire",
                 ),
                 "2": SearchResult(
                     title="Pokémon Adventures",  # accented
                     manga_url="pokemon",
-                    chapters="600",
+                    latest_chapter="600",
                     source="mangafire",
                 ),
             }

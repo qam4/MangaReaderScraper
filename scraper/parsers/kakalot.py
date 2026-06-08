@@ -137,7 +137,7 @@ class KakalotSearchParser(BaseSearchParser):
         manga_url = attr(result.find("a"), "href")
         return Path(manga_url).stem.split("/")[-1]
 
-    def _chapters(self, result: Tag) -> str:
+    def _latest_chapter(self, result: Tag) -> str:
         """Latest-chapter number off the card. Default: the ``story_chapter``
         anchor's href tail. Subclasses override for other layouts."""
         last = result.find("em", {"class": "story_chapter"})
@@ -152,7 +152,7 @@ class KakalotSearchParser(BaseSearchParser):
         return SearchResult(
             title=self._title(result),
             manga_url=self._slug(result),
-            chapters=self._chapters(result),
+            latest_chapter=self._latest_chapter(result),
             source=self.source,
         )
 

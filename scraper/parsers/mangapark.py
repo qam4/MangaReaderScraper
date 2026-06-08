@@ -117,13 +117,13 @@ class MangaparkSearch(BaseSearchParser):
             "a", {"class": "link-hover link-primary visited:link-accent"}
         )
         if last_chapter:
-            chapters = text(last_chapter.find("span"))  # type: ignore[arg-type]
+            latest_chapter = text(last_chapter.find("span"))  # type: ignore[arg-type]
         else:
-            chapters = ""
+            latest_chapter = ""
         return SearchResult(
             title=manga_title,
             manga_url=manga_url_short,
-            chapters=chapters,
+            latest_chapter=latest_chapter,
             source="mangapark",
         )
 

@@ -100,11 +100,11 @@ class MangaReaderSearch(BaseSearchParser):
         manga_name = result.find("div", {"class": "d57"})
         title = text(manga_name)
         manga_url = attr(manga_name.find("a"), "href")  # type: ignore[union-attr]
-        chapters = text(result.find("div", {"class": "d58"}))
+        latest_chapter = text(result.find("div", {"class": "d58"}))
         return SearchResult(
             title=title.replace("\n", ""),
             manga_url=manga_url[1:],
-            chapters=re.sub(r"\D", "", chapters),
+            latest_chapter=re.sub(r"\D", "", latest_chapter),
             source="mangareader",
         )
 

@@ -20,37 +20,37 @@ METADATA = {
     "1": SearchResult(
         title="Dragon Ball: Episode of Bardock",
         manga_url="dragon-ball-episode-of-bardock",
-        chapters="3",
+        latest_chapter="3",
         source="mangareader",
     ),
     "2": SearchResult(
         title="Dragon Ball SD",
         manga_url="dragon-ball-sd",
-        chapters="35",
+        latest_chapter="35",
         source="mangareader",
     ),
     "3": SearchResult(
         title="DragonBall Next Gen",
         manga_url="dragonball-next-gen",
-        chapters="4",
+        latest_chapter="4",
         source="mangareader",
     ),
     "4": SearchResult(
         title="Dragon Ball",
         manga_url="dragon-ball",
-        chapters="520",
+        latest_chapter="520",
         source="mangareader",
     ),
     "5": SearchResult(
         title="Dragon Ball Z - Rebirth of F",
         manga_url="dragon-ball-z-rebirth-of-f",
-        chapters="3",
+        latest_chapter="3",
         source="mangareader",
     ),
     "6": SearchResult(
         title="Dragon Ball Super",
         manga_url="dragon-ball-super",
-        chapters="62",
+        latest_chapter="62",
         source="mangareader",
     ),
 }

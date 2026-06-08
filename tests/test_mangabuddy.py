@@ -109,7 +109,7 @@ def test_parse_search_items_real_shape():
     assert results["1"] == SearchResult(
         title="Naruto",
         manga_url="naruto",
-        chapters="700.5",  # from latest chapter name, not chapters_count
+        latest_chapter="700.5",  # from latest chapter name, not chapters_count
         source="mangabuddy",
     )
     assert results["2"].manga_url == "naruto-the-seventh-hokage-reborn"

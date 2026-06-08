@@ -39,7 +39,7 @@ class ManganatoSearch(KakalotSearchParser):
         manga_url = attr(result.find("a"), "href")
         return Path(manga_url).stem.split("-")[-1]
 
-    def _chapters(self, result: Tag) -> str:
+    def _latest_chapter(self, result: Tag) -> str:
         last = result.find("a", {"class": "item-chapter a-h text-nowrap"})
         if not last:
             return ""

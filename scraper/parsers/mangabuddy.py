@@ -97,26 +97,26 @@ def _query_from_slug(slug: str) -> str:
 def _parse_search_items(payload: dict, source: str, start: int) -> SearchResults:
     """Map an ``api.mangak.io/titles/search`` JSON payload to SearchResults.
 
-    Pulls title/slug/latest-chapter from each item. ``chapters`` is the latest
-    chapter's *displayed* number (from its name) when available, else the
+    Pulls title/slug/latest-chapter from each item. ``latest_chapter`` is the
+    latest chapter's *displayed* number (from its name) when available, else the
     ``stats.chapters_count``. Pure and unit-tested.
     """
     items = payload.get("data", {}).get("items", [])
     results: SearchResults = {}
     for key, item in enumerate(items, start=start):
-        chapters = ""
+        latest_chapter = ""
         latest = item.get("latest_chapters") or []
         if latest:
             num = _chapter_number_from_name(latest[0].get("name", ""))
             if num:
-                chapters = num
-        if not chapters:
+                latest_chapter = num
+        if not latest_chapter:
             count = item.get("stats", {}).get("chapters_count")
-            chapters = str(count) if count is not None else ""
+            latest_chapter = str(count) if count is not None else ""
         results[str(key)] = SearchResult(
             title=item.get("name", item.get("slug", "")),
             manga_url=item.get("slug", ""),
-            chapters=chapters,
+            latest_chapter=latest_chapter,
             source=source,
         )
     return results

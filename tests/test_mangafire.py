@@ -81,7 +81,7 @@ def test_search_parses_real_response():
     assert results["1"] == SearchResult(
         title="Ad Astra Per Aspera",
         manga_url="ad-astra-per-asperaa.mqmwp",
-        chapters="7",
+        latest_chapter="7",
         source="mangafire",
     )
 
@@ -89,7 +89,7 @@ def test_search_parses_real_response():
     slugs = {v["manga_url"]: v for v in results.values()}
     target = slugs["ad-astra-scipio-and-hanniball.lww3"]
     assert target["title"] == "Ad Astra - Scipio and Hannibal"
-    assert target["chapters"] == "81"
+    assert target["latest_chapter"] == "81"
 
 
 def test_search_excludes_view_all_link():

@@ -74,11 +74,11 @@ class MangaFastSearch(BaseSearchParser):
     def _extract_text(self, result: Tag) -> SearchResult:
         title = text(result.find("h3")).strip()
         manga_url = attr(result.find("a"), "href")
-        chapters = text(result.find("b"))
+        latest_chapter = text(result.find("b"))
         return SearchResult(
             title=title,
             manga_url=manga_url.split("/")[-2],
-            chapters=re.sub(r"\D", "", chapters),
+            latest_chapter=re.sub(r"\D", "", latest_chapter),
             source="mangafast",
         )
 

@@ -333,9 +333,22 @@ Each item has a done-when so "done" is unambiguous.
 
 ## Wave D — identity / cosmetic (low value alone; fold rename into B if rebuilding)
 
-- [ ] **D1 [QUICK] Rename `SearchResult.chapters` → `chapters_hint`** (+docstring
-  "display-only; format varies by site"). NOT `latest_chapter` (meaning varies).
-  Only reader is `menu.py`. Update parser construction sites + fixtures.
+- [x] **D1 [QUICK] Rename `SearchResult.chapters` → `latest_chapter`** — DONE.
+  - Renamed the field in `new_types.SearchResult` (+ `__post_init__` normalization)
+    with a docstring marking it DISPLAY-ONLY ("Latest Volume" column hint, meaning
+    varies by site, never used for selection — that's the real chapter list via
+    scraper.selection). Updated all 7 parser construction sites (mangafire,
+    mangafast, kakalot, mangapark, mangareader, mangago, mangabuddy), the
+    `menu.table()` read, the scaffold's emitted `_parse_search_items` + comments,
+    and all test fixtures (helpers METADATA, mangakaka/mangafast dicts via
+    as_search_results, mangabuddy/mangafire/menu). Renamed the WHOLE path, not
+    just the kwarg: feeding local vars `chapters` → `latest_chapter`, and the
+    kakalot/manganato `_chapters()` method → `_latest_chapter()`. Gates green,
+    339 pass. (Chose `latest_chapter` over `chapters_hint`: it says what the value
+    IS, not just what not to trust; matches the column.)
+  - NOTE: the menu column HEADER is still literally "Latest Volume" (audit L7 —
+    header vs field-name mismatch). Left as-is: it's user-facing display text and
+    "Latest Volume" conveys intent; renaming the field was the substantive fix.
 
 - [x] **D2 [QUICK] `menu.py table()` unicode + magic number** — DONE.
   - Truncation magic number → `TITLE_MAX_WIDTH` constant (done in B1 part 2).

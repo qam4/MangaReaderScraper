@@ -522,7 +522,7 @@ _NEXT_DATA_HELPER = r'''def _next_data_from_html(html: str) -> Optional[dict]:
         return None'''
 
 # Search-payload mapping: items via SEARCH_ITEMS, per-item title/slug via
-# SEARCH_TITLE / SEARCH_SLUG (Req 6.2). The displayed ``chapters`` count is not
+# SEARCH_TITLE / SEARCH_SLUG (Req 6.2). The displayed ``latest_chapter`` is not
 # part of the field map (site-specific), so it is left blank -- fill in if the
 # site exposes it.
 _PARSE_SEARCH_HELPER = r'''def _parse_search_items(payload: object, start: int = 1) -> SearchResults:
@@ -530,8 +530,9 @@ _PARSE_SEARCH_HELPER = r'''def _parse_search_items(payload: object, start: int =
 
     Reads the items array at ``SEARCH_ITEMS`` and each item's title/slug at
     ``SEARCH_TITLE`` / ``SEARCH_SLUG`` via ``get_by_path`` (Req 6.2). The
-    ``chapters`` count is not part of the confirmed field map, so it is left
-    blank -- fill it in if the site exposes it. Pure mapping logic.
+    ``latest_chapter`` (display-only "Latest Volume" column) is not part of the
+    confirmed field map, so it is left blank -- fill it in if the site exposes
+    it. Pure mapping logic.
     """
     raw_items = _get(payload, SEARCH_ITEMS)
     items = raw_items if isinstance(raw_items, list) else []
@@ -542,7 +543,7 @@ _PARSE_SEARCH_HELPER = r'''def _parse_search_items(payload: object, start: int =
         results[str(key)] = SearchResult(
             title=str(title) if title is not None else "",
             manga_url=str(slug) if slug is not None else "",
-            chapters="",
+            latest_chapter="",
             source=SOURCE,
         )
     return results'''

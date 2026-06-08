@@ -194,13 +194,13 @@ def test_get_search_results(mangafast_search_html):
     expected = as_search_results(
         {
             "1": {
-                "chapters": "17",
+                "latest_chapter": "17",
                 "manga_url": "super-dragon-ball-heroes-dark-demon-realm-mission",
                 "source": "mangafast",
                 "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
             },
             "2": {
-                "chapters": "62",
+                "latest_chapter": "62",
                 "manga_url": "dragon-ball-super",
                 "source": "mangafast",
                 "title": "Dragon Ball Super",
@@ -227,13 +227,13 @@ def test_mangafast_search_parser(mangafast_search_html):
     expected = as_search_results(
         {
             "1": {
-                "chapters": "17",
+                "latest_chapter": "17",
                 "manga_url": "super-dragon-ball-heroes-dark-demon-realm-mission",
                 "source": "mangafast",
                 "title": "Super Dragon Ball Heroes: Dark Demon Realm Mission!",
             },
             "2": {
-                "chapters": "62",
+                "latest_chapter": "62",
                 "manga_url": "dragon-ball-super",
                 "source": "mangafast",
                 "title": "Dragon Ball Super",
