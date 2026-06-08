@@ -13,6 +13,7 @@ from scraper.utils import (
     get_adapter,
     menu_input,
     request_session,
+    resolve_jobs,
     settings,
 )
 
@@ -79,6 +80,46 @@ def test_settings_creates_base_config():
     with mock.patch("scraper.utils.Path.home", lambda: Path("/tmp")):
         settings()
         assert Path("/tmp/.config/mangascraper.ini").exists()
+
+
+def test_resolve_jobs_cli_value_wins_and_floors_at_one():
+    # an explicit CLI value takes precedence over ini/default, never below 1
+    assert resolve_jobs(2) == 2
+    assert resolve_jobs(0) == 1
+    assert resolve_jobs(-5) == 1
+
+
+def test_resolve_jobs_reads_ini_when_no_cli_value():
+    cfg = {"config": {"jobs": "7"}}
+    with mock.patch("scraper.utils.settings", return_value=cfg):
+        assert resolve_jobs(None) == 7
+
+
+def test_resolve_jobs_invalid_ini_falls_back_to_default():
+    cfg = {"config": {"jobs": "lots"}}
+    with (
+        mock.patch("scraper.utils.settings", return_value=cfg),
+        mock.patch("scraper.utils._default_jobs", return_value=3),
+    ):
+        assert resolve_jobs(None) == 3
+
+
+def test_resolve_jobs_default_caps_at_four_on_many_cores():
+    cfg = {"config": {}}
+    with (
+        mock.patch("scraper.utils.settings", return_value=cfg),
+        mock.patch("scraper.utils.os.cpu_count", return_value=16),
+    ):
+        assert resolve_jobs(None) == 4
+
+
+def test_resolve_jobs_default_respects_low_core_count():
+    cfg = {"config": {}}
+    with (
+        mock.patch("scraper.utils.settings", return_value=cfg),
+        mock.patch("scraper.utils.os.cpu_count", return_value=2),
+    ):
+        assert resolve_jobs(None) == 2
 
 
 def test_requests_session():

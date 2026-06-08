@@ -204,6 +204,7 @@ def test_ioerror_remove_upload_args():
 def test_download_via_cli(arguments, expected):
     args = cli(arguments)
     args.pop("log_level", None)  # routing test; log level is asserted elsewhere
+    args.pop("jobs", None)  # routing config; pool size asserted in test_utils
     assert args == expected
 
 
@@ -236,6 +237,7 @@ def test_search_via_cli(
         monkeypatch.setattr("builtins.input", lambda x: next(gen))
         args = cli(arguments)
         args.pop("log_level", None)  # routing test; log level asserted elsewhere
+        args.pop("jobs", None)  # routing config; pool size asserted in test_utils
         assert args == expected
 
 
@@ -259,6 +261,7 @@ def test_search_if_failed_manga_match(monkeypatch, mangareader_search_html):
             mocked_func.return_value = ("manga title", "search activated", "2")
             args = cli(["--manga", "dragonballzz"])
             args.pop("log_level", None)  # routing test; log level asserted elsewhere
+            args.pop("jobs", None)  # routing config; pool size asserted in test_utils
             expected = {
                 "manga": "search activated",
                 "search": ["dragonballzz"],

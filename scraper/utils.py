@@ -201,6 +201,30 @@ def settings() -> configparser.ConfigParser:
     return _read_settings(str(user_config))
 
 
+# A polite default: cap parallelism at 4 even on many-core machines (we're being
+# kind to the source), but never exceed the core count.
+def _default_jobs() -> int:
+    return min(4, os.cpu_count() or 1)
+
+
+def resolve_jobs(cli_jobs: Optional[int] = None) -> int:
+    """Resolve the download/bundle worker pool size.
+
+    Precedence: explicit CLI value > ini ``[config] jobs`` > a CPU-aware default
+    (``min(4, cpu_count)``). Always returns at least 1; an invalid ini value is
+    warned about and ignored. Lower values are gentler on the source.
+    """
+    if cli_jobs is not None:
+        return max(1, cli_jobs)
+    raw = settings()["config"].get("jobs", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            logging.warning("Invalid [config] jobs=%r; using default", raw)
+    return _default_jobs()
+
+
 def extract_chapter_number(chapter_string: str) -> str:
     """
     Extracts the chapter digit substring in a string that

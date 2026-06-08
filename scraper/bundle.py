@@ -11,7 +11,7 @@ import zipfile
 from itertools import repeat
 from logging import LoggerAdapter
 from multiprocessing.pool import Pool
-from typing import List
+from typing import List, Optional
 
 from scraper.manga import Manga
 from scraper.utils import (
@@ -19,6 +19,7 @@ from scraper.utils import (
     configure_logging,
     get_adapter,
     get_console,
+    resolve_jobs,
     settings,
 )
 
@@ -72,11 +73,14 @@ class Bundle:
     Also convert to MOBI
     """
 
-    def __init__(self, manga: Manga, chapters_per_volume: int) -> None:
+    def __init__(
+        self, manga: Manga, chapters_per_volume: int, jobs: Optional[int] = None
+    ) -> None:
         self.manga: Manga = manga
         self.chapters_per_volume: int = chapters_per_volume
         self.adapter: LoggerAdapter = get_adapter(logger, manga.name)
         self.writer = _configured_writer()
+        self.jobs: int = resolve_jobs(jobs)
         self.comic_info_template = """<?xml version="1.0" encoding="utf-8"?>
         <ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
         <Series>{series}</Series>
@@ -251,7 +255,7 @@ class Bundle:
             TimeElapsedColumn,
         )
 
-        with Pool(initializer=configure_logging) as pool:
+        with Pool(self.jobs, initializer=configure_logging) as pool:
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),

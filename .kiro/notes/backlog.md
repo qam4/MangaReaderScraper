@@ -467,14 +467,20 @@ Two distinct root causes found:
     the three writers were each missing — fixes the corruption bug AND the
     partial-file problem (same family as F2) in one place.
 
-- [ ] **F3 [QUICK, LOW-PRI] Configurable worker pool size (be a gentler default)**
-  - WHERE: `manga.py` `_get_volumes_data` hardcodes `Pool(4)`; `bundle.py` uses
+- [x] **F3 [QUICK, LOW-PRI] Configurable worker pool size (be a gentler default)**
+  - WHERE: `manga.py` `_get_volumes_data` hardcoded `Pool(4)`; `bundle.py` used
     `Pool()` (all cores). No way to turn concurrency down to be kinder to a site.
-  - FIX: make the pool size configurable — a `--jobs`/`-j` CLI arg and/or an ini
-    `[config] jobs` key, defaulting to something CPU-aware
-    (e.g. `min(4, os.cpu_count() or 1)`). Lower = gentler on the site.
-  - DONE-WHEN: pool size is configurable (CLI/ini) with a sane CPU-based default;
-    both manga + bundle pools honor it.
+  - DONE: added `utils.resolve_jobs(cli_jobs)` — precedence CLI > ini
+    `[config] jobs` > CPU-aware default `min(4, cpu_count)` (helper
+    `_default_jobs`); always >= 1, invalid ini warned + ignored. `--jobs`/`-j`
+    CLI arg threaded through `download_manga` → `Download` → `MangaBuilder.jobs`
+    (used in its `Pool(self.jobs, ...)`) and `bundle` → `Bundle.jobs` (its
+    `Pool`). Both pools now honor it; `bundle.py` no longer fans out to all
+    cores. 5 resolve_jobs unit tests (CLI wins/floors, ini value, invalid-ini
+    fallback, cap-at-4 on many cores, low-core respect); test_cli pops the new
+    `jobs` arg like `log_level`. Gates green, 348 pass.
+  - NOTE: `jobs` is read from ini via `.get` (not written to base config) so the
+    default stays CPU-aware rather than baking a fixed number into new configs.
 
 - [ ] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure**
   - VALUE (user): the multiprocessing is to be fast on the happy path, but when a

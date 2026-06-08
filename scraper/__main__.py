@@ -86,9 +86,10 @@ def download_manga(
     filetype: str,
     parser: SiteParserClass,
     preferred_name: Optional[str] = None,
+    jobs: Optional[int] = None,
 ) -> Manga:
     """Download a manga"""
-    downloader = Download(manga_url, filetype, parser)
+    downloader = Download(manga_url, filetype, parser, jobs=jobs)
     manga = downloader.download_volumes(volumes, manga_title, preferred_name)
     return manga
 
@@ -107,8 +108,8 @@ def upload(manga: Manga, service: str) -> Uploader:
     return uploader(manga)
 
 
-def bundle(manga: Manga, chapter_per_volume: int):
-    bundle = Bundle(manga, chapter_per_volume)
+def bundle(manga: Manga, chapter_per_volume: int, jobs: Optional[int] = None):
+    bundle = Bundle(manga, chapter_per_volume, jobs=jobs)
     return bundle.bundle()
 
 
@@ -153,6 +154,7 @@ def cli(arguments: List[str]) -> dict:
             filetype=args["filetype"],
             parser=manga_parser,
             preferred_name=args["override_name"],
+            jobs=args.get("jobs"),
         )
     except MangaDoesNotExist:
         # The direct slug lookup failed. Fall back to a search for the same
@@ -173,6 +175,7 @@ def cli(arguments: List[str]) -> dict:
             filetype=args["filetype"],
             parser=manga_parser,
             preferred_name=args["override_name"],
+            jobs=args.get("jobs"),
         )
 
     if args["upload"]:
@@ -183,7 +186,7 @@ def cli(arguments: List[str]) -> dict:
             volume.file_path.unlink()
 
     if args["bundle"]:
-        bundle(manga, args["bundle"])
+        bundle(manga, args["bundle"], jobs=args.get("jobs"))
 
     return args
 
@@ -261,6 +264,14 @@ def get_parser() -> argparse.ArgumentParser:
         "--bundle",
         type=int,
         help="Specify the number of chapters per volume in the output manga",
+    )
+    parser.add_argument(
+        "--jobs",
+        "-j",
+        type=int,
+        default=None,
+        help="number of parallel download/bundle workers (lower is gentler on "
+        "the source; default: ini [config] jobs, else min(4, CPU count))",
     )
     parser.add_argument(
         "--log-level",

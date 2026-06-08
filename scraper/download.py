@@ -18,10 +18,16 @@ class Download:
     Downloads the manga in the desired format
     """
 
-    def __init__(self, manga_url: str, filetype: str, parser: SiteParserClass) -> None:
+    def __init__(
+        self,
+        manga_url: str,
+        filetype: str,
+        parser: SiteParserClass,
+        jobs: Optional[int] = None,
+    ) -> None:
         self.manga_url: str = manga_url
         self.factory: MangaBuilder = MangaBuilder(
-            parser=parser(manga_url), filetype=filetype
+            parser=parser(manga_url), filetype=filetype, jobs=jobs
         )
         self.adapter: LoggerAdapter = get_adapter(logger, manga_url)
         self.type: str = filetype

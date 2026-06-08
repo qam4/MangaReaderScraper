@@ -18,7 +18,13 @@ from scraper.exceptions import (
 from scraper.new_types import PageData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
-from scraper.utils import configure_logging, get_adapter, get_console, settings
+from scraper.utils import (
+    configure_logging,
+    get_adapter,
+    get_console,
+    resolve_jobs,
+    settings,
+)
 from scraper.writers import get_writer
 
 logger = logging.getLogger(__name__)
@@ -224,11 +230,14 @@ class MangaBuilder:
     Creates Manga objects
     """
 
-    def __init__(self, parser: SiteParser, filetype="pdf") -> None:
+    def __init__(
+        self, parser: SiteParser, filetype="pdf", jobs: Optional[int] = None
+    ) -> None:
         self.parser: SiteParser = parser
         self.adapter = get_adapter(logger, self.parser.manga.manga_url)
         self.type: str = filetype
         self.writer = get_writer(filetype)
+        self.jobs: int = resolve_jobs(jobs)
         self.manga: Optional[Manga] = None
 
     def _get_volume_data_wrapped(self, arg):
@@ -322,7 +331,7 @@ class MangaBuilder:
         )
 
         results: List[VolumeDownload] = []
-        with Pool(4, initializer=configure_logging) as pool:
+        with Pool(self.jobs, initializer=configure_logging) as pool:
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
