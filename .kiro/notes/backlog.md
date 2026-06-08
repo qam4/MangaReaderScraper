@@ -279,6 +279,16 @@ Each item has a done-when so "done" is unambiguous.
       already opens the site, finds the search box, types, and triggers the
       search. So the irreducible input is the search TERM; `probe <manga-url>
       --search "term"` is the realistic "one command" ceiling.
+  - REFINEMENT [SEARCH-FIRST ENTRY] (raised this session, supersedes the
+    manga-url entry point): start from the HOMEPAGE + a search term, not a
+    manga-url. The chain becomes: run search → take the first result (a
+    known-good series URL) → capture chapters from it → follow the first chapter
+    link → capture images. This makes the series URL DERIVED, not supplied, so
+    the only input is the search term — eliminating the stale-slug problem that
+    polluted the tools/probe_batch.py sweep (guessed chapters/images slugs 404'd
+    while search confirmed the site was alive). Same machinery as above, just
+    reordered to enter at search. Still STRUCT (browser nav + fragile
+    result-link/search-box finding, live-only to validate).
   - CAVEATS (why it's STRUCT, not QUICK): adds browser navigation/wait
     orchestration; the chapter-link-follow and search-box-find are the fragile
     site-specific bits; live-only to validate; pushes against the probe's current
@@ -287,6 +297,25 @@ Each item has a done-when so "done" is unambiguous.
   - DONE-WHEN: a single `probe <manga-url> --search "term"` yields per-stage
     captures + one combined recommendation, with the multi-page navigation
     covered by tests (mock the browser/nav seam) where possible.
+
+- [ ] **C10 [STRUCT] Probe: verify page images are fetchable by OUR fetchers** —
+  the symmetric other end of C5. Today the image stage captures the image-URL
+  LIST but barely checks the URLs are retrievable: `_check_image` →
+  `image_check.txt` tries ONLY plain `requests` (bare, then +Referer) on the
+  FIRST `data-src` sample, and merely *advises* "may need curl_cffi". Gaps:
+    * never tries the actual fetcher ladder (curl_cffi / cloudscraper / browser
+      session) — so it doesn't confirm what the parser would use actually works;
+    * carries no cookies — hotlink-protected CDNs usually need the live browser
+      session's cookies + Referer, which the probe has on hand but doesn't pass;
+    * only `data-src[0]` — if images come via `<img src>`, an API, or
+      `__NEXT_DATA__`, `data_src_samples` is empty and the check doesn't run; a
+      single sample can be a logo/placeholder, not a page image.
+  - DONE-WHEN: for a chapter page, the probe tests representative image URLs
+    against the fetcher ladder (requests → curl_cffi → cloudscraper → browser+
+    cookies), reusing the captured session cookies + page Referer, and reports
+    the cheapest fetcher that returns a real image (or "needs browser session").
+    Handles src/data-src/API/next_data image sources. Pure analysis unit-tested;
+    network behind the existing fetch seam.
 
 - [ ] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
