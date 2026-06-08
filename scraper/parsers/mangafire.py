@@ -94,6 +94,23 @@ def _encode_page_url(url: str, offset: int) -> str:
     return url
 
 
+def _authors_from_html(html: str) -> Optional[str]:
+    """Extract author(s) from a MangaFire ``/manga/<slug>`` series page.
+
+    Authors are schema.org microdata anchors (``<a itemprop="author">Name</a>``,
+    possibly several, in the ``#info-rating`` block). Returns a comma-separated
+    string (de-duped, order preserved) or ``None`` if none are present. Pure --
+    unit-tested against a captured-shape fixture.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    names: List[str] = []
+    for a in soup.select('a[itemprop="author"]'):
+        name = a.get_text(strip=True)
+        if name and name not in names:
+            names.append(name)
+    return ", ".join(names) if names else None
+
+
 # ================================ parser =================================
 
 
@@ -230,6 +247,22 @@ class MangafireMangaParser(BaseMangaParser):
                 f"No chapters found for {self.manga_url} (bad slug or page blocked)"
             )
         return sort_chapter_ids(volume_ids)
+
+    def author(self) -> Optional[str]:
+        """Author(s) from the ``/manga/<slug>`` series page
+        (``a[itemprop="author"]``). Best effort: the page is Cloudflare-walled so
+        we drive a browser; any failure returns None (the builder treats author
+        as optional). NOTE: this is a second browser navigation on top of
+        all_volume_ids' -- a future optimization could capture the series HTML
+        during that existing session.
+        """
+        series_url = f"{self.base_url}/manga/{self.manga_url}"
+        try:
+            html = BrowserFetcher().get(series_url).text
+        except Exception as err:  # pragma: no cover - browser/network failures
+            logger.debug(f"author lookup failed for {series_url}: {err}")
+            return None
+        return _authors_from_html(html)
 
 
 class MangafireSearch(BaseSearchParser):

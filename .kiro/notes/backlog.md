@@ -373,41 +373,32 @@ Each item has a done-when so "done" is unambiguous.
 
 ## Wave E — features (new capability, not cleanup)
 
-- [ ] **E1 [STRUCT-lite] Extract author(s) into the pipeline → ComicInfo `<Writer>`**
-  - WHY: `bundle.py` hardcodes `WRITER_DEFAULT = "Fred Marchais"` (the maintainer)
-    as the `<Writer>` in every ComicInfo.xml because nothing in the pipeline
-    carries an author. User wanted real author extraction but couldn't — turns out
-    the data IS available, the plumbing just never existed.
-  - EVIDENCE (from the C1 probe capture, probe_out/mangafire/chapters/page.html):
-    the author lives on the `/manga/<slug>` SERIES page, inside a
-    `class="collapse" id="info-rating"` block (hidden by default — why eyeballing
-    missed it), as `<a itemprop="author" href="/author/..">Mihachi Kagano</a>`.
-    The `itemprop="author"` (schema.org microdata) is the clean, stable selector;
-    multiple authors = multiple such `<a>`. NOTE: the parser never parses this
-    page today — `all_volume_ids` hits the `/ajax/manga/<id>/chapter/en` endpoint
-    (chapter <li>s only, no author) and `page_urls` uses the reader page. So
-    fetching author means parsing the series page (or finding an author field in
-    an API/embedded payload on API sites).
-  - SHAPE (design-first; crosses the data model):
-    1. `Manga` gains an optional `author: Optional[str]` (or `List[str]`) field.
-       Decide single string vs list (sites may list author + artist separately).
-    2. `BaseMangaParser` gains an optional `author()` hook returning `None` by
-       default; each parser implements it where the site exposes it (MangaFire:
-       `a[itemprop="author"]` on the series page). Most sites have schema.org
-       microdata or a labelled meta block; some have none → None.
-    3. `MangaBuilder.get_manga_volumes` sets `self.manga.author` (parent-side).
-    4. `bundle.py` reads `manga.author` for `<Writer>`, falling back to a NEUTRAL
-       default ("Unknown") — never the maintainer's name (this also closes D4).
-  - PER-SITE / LIVE caveat: author extraction is site-specific (selector varies)
-    and only confirmable against a live page or a captured fixture — so each
-    parser's author selector is verified like any other extracted field (probe →
-    fixture → test). MangaFire is the worked example (fixture-backed test from the
-    existing C1 capture).
-  - OPEN QUESTIONS (user to decide when scheduled): single author vs list;
-    surface author in SearchResult/menu too, or just ComicInfo `<Writer>`.
-  - DONE-WHEN: `Manga` carries author; MangaFire extracts it via
-    `itemprop="author"` (fixture-backed test); bundle.py writes it to `<Writer>`
-    with a neutral fallback; other parsers default to None gracefully.
+- [x] **E1 [STRUCT-lite] Extract author(s) into the pipeline → ComicInfo `<Writer>`**
+  - WHY: nothing in the pipeline carried an author, so every ComicInfo.xml got
+    the neutral/maintainer default. The data IS available; the plumbing didn't
+    exist.
+  - DONE (the full SHAPE below, single comma-separated string):
+    1. `Manga` gained `author: Optional[str] = None` (set parent-side).
+    2. `BaseMangaParser.author()` hook returns None by default; parsers override.
+    3. `MangaBuilder.get_manga_volumes` sets `self.manga.author` from the hook,
+       best-effort (try/except — a failing lookup must not abort the download).
+    4. `bundle.py` `Bundle.__init__` uses `manga.author or _configured_writer()`
+       — extracted author wins, else the neutral/ini default (never a person).
+    5. MangaFire implements `author()`: fetches the `/manga/<slug>` series page
+       (BrowserFetcher) and parses `a[itemprop="author"]` via the pure
+       `_authors_from_html` (de-dupes, joins multiple with ", ").
+  - TESTS: `_authors_from_html` against a captured-shape `series_page.html`
+    fixture (single + multiple/de-dupe + absent); `author()` fetch+parse and
+    fetch-failure→None; builder sets author from the hook + swallows a failing
+    hook; new `test_bundle.py` for the writer precedence. Gates green, 357 pass.
+  - DECISIONS MADE: single comma-separated string (not List) — maps directly to
+    ComicInfo `<Writer>`; author surfaced only in `<Writer>` for now, NOT in
+    SearchResult/menu (no demand, keeps SearchResult lean).
+  - COST NOTE: MangaFire's `author()` is a SECOND browser navigation on top of
+    `all_volume_ids`. Acceptable (once per download, best-effort) but a future
+    optimization could capture the series HTML during that existing session.
+  - SUPERSEDES D4's interim fix: the `<Writer>` is now the real author when
+    available; D4's neutral fallback remains for when it isn't.
 
 ## Wave F — download robustness (user-reported: incomplete chapters on first run)
 

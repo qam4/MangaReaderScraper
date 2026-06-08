@@ -79,7 +79,9 @@ class Bundle:
         self.manga: Manga = manga
         self.chapters_per_volume: int = chapters_per_volume
         self.adapter: LoggerAdapter = get_adapter(logger, manga.name)
-        self.writer = _configured_writer()
+        # Prefer the extracted author (ComicInfo <Writer>); fall back to the ini
+        # [config] writer or the neutral default. Never the maintainer's name.
+        self.writer = manga.author or _configured_writer()
         self.jobs: int = resolve_jobs(jobs)
         self.comic_info_template = """<?xml version="1.0" encoding="utf-8"?>
         <ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">

@@ -126,6 +126,15 @@ class BaseMangaParser:
         """
         pass
 
+    def author(self) -> Optional[str]:
+        """
+        The manga's author(s), for ComicInfo <Writer>, or None when the site
+        doesn't expose one. Default is None; parsers override where the site
+        carries an author (e.g. MangaFire's series page). Multiple authors should
+        be returned as a single comma-separated string.
+        """
+        return None
+
 
 class BaseSearchParser:
     """

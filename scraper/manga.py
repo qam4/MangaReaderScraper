@@ -144,6 +144,10 @@ class Manga:
 
     name: str
     filetype: str
+    # Optional author(s) for ComicInfo <Writer>; set parent-side by MangaBuilder
+    # from the parser's author() hook. None when the site/parser doesn't expose
+    # one (most don't) -> bundle falls back to a neutral default.
+    author: Optional[str] = None
     _volumes: Dict[str, Volume] = field(default_factory=dict, repr=False)
 
     def __repr__(self) -> str:
@@ -376,6 +380,13 @@ class MangaBuilder:
         )
         # Create a Manga instance
         self.manga = Manga(preferred_name, self.type)
+        # Author (parent-side) for ComicInfo <Writer>; None for parsers/sites
+        # that don't expose one. Best-effort: a failure here must not abort a
+        # download, so swallow and leave author unset.
+        try:
+            self.manga.author = self.parser.manga.author()
+        except Exception as err:
+            self.adapter.debug(f"author lookup failed: {err}")
         # Find the list of volumes for that manga, in canonical chapter order
         all_volume_ids = sort_chapter_ids(self.parser.manga.all_volume_ids())
 

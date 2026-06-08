@@ -18,6 +18,7 @@ from scraper.parsers.mangafire import (
     Mangafire,
     MangafireMangaParser,
     MangafireSearch,
+    _authors_from_html,
     _encode_page_url,
     descramble,
 )
@@ -26,6 +27,9 @@ CHAPTER_JSON = Path("tests/test_files/mangafire/chapter_list.json").read_text(
     encoding="utf-8"
 )
 SEARCH_JSON = Path("tests/test_files/mangafire/search.json").read_text(encoding="utf-8")
+SERIES_HTML = Path("tests/test_files/mangafire/series_page.html").read_text(
+    encoding="utf-8"
+)
 
 
 # ============================== chapter list =============================
@@ -188,3 +192,47 @@ def test_site_parser_wires_subparsers():
     site = Mangafire("ad-astra-scipio-and-hanniball.lww3")
     assert site.base_url == "https://mangafire.to"
     assert isinstance(site.manga, MangafireMangaParser)
+
+
+# ================================ author =================================
+
+
+def test_authors_from_html_extracts_itemprop_author():
+    # the real series-page shape: a[itemprop=author] in the #info-rating block
+    assert _authors_from_html(SERIES_HTML) == "Mihachi Kagano"
+
+
+def test_authors_from_html_joins_and_dedupes_multiple():
+    html = (
+        '<a itemprop="author" href="/a/1">Alice</a>'
+        '<a itemprop="author" href="/a/2">Bob</a>'
+        '<a itemprop="author" href="/a/1">Alice</a>'  # dupe
+    )
+    assert _authors_from_html(html) == "Alice, Bob"
+
+
+def test_authors_from_html_none_when_absent():
+    assert _authors_from_html("<html><body>no author here</body></html>") is None
+
+
+def test_author_fetches_series_page_and_parses():
+    parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.get",
+        return_value=mock.Mock(text=SERIES_HTML),
+    ) as get:
+        author = parser.author()
+    # fetched the /manga/<slug> series page
+    assert get.call_args[0][0] == (
+        "https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3"
+    )
+    assert author == "Mihachi Kagano"
+
+
+def test_author_returns_none_on_fetch_failure():
+    parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.get",
+        side_effect=Exception("cf blocked"),
+    ):
+        assert parser.author() is None

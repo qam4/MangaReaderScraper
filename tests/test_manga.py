@@ -297,6 +297,43 @@ def test_builder_skips_pages_for_volumes_worker_returned_none(monkeypatch):
     assert manga.volumes_dict["1"].pages == []
 
 
+def _stub_volumes_data(builder, monkeypatch):
+    """Stub the parallel download so author tests don't touch a pool."""
+    monkeypatch.setattr(
+        builder,
+        "_get_volumes_data",
+        lambda vol_ids: [
+            VolumeDownload(vol_id, i, pages=None, complete=False)
+            for i, vol_id in enumerate(vol_ids, start=1)
+        ],
+    )
+
+
+def test_builder_sets_author_from_parser_hook(monkeypatch):
+    # E1: the parent reads the parser's author() hook into manga.author.
+    builder = MangaBuilder(MockedSiteParser())
+    _stub_volumes_data(builder, monkeypatch)
+    monkeypatch.setattr(
+        builder.parser.manga, "author", lambda: "Mihachi Kagano", raising=False
+    )
+    manga = builder.get_manga_volumes(vol_ids=["1"])
+    assert manga.author == "Mihachi Kagano"
+
+
+def test_builder_author_failure_is_swallowed(monkeypatch):
+    # author extraction is best-effort: a failing hook must not abort the
+    # download; manga.author just stays None.
+    builder = MangaBuilder(MockedSiteParser())
+    _stub_volumes_data(builder, monkeypatch)
+
+    def boom():
+        raise RuntimeError("series page blocked")
+
+    monkeypatch.setattr(builder.parser.manga, "author", boom, raising=False)
+    manga = builder.get_manga_volumes(vol_ids=["1"])
+    assert manga.author is None
+
+
 @pytest.mark.real_pool
 def test_builder_populates_pages_under_real_pool():
     # B2-redesign: with the REAL multiprocessing Pool (mocked_pool_imap opted
