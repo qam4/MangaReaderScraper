@@ -22,6 +22,8 @@ from scraper.probe import (
     compare_fetches,
     detect_challenge,
     find_text,
+    first_chapter_link,
+    first_search_result_link,
     get_by_path,
     is_api_like_url,
     is_json_mime,
@@ -32,6 +34,7 @@ from scraper.probe import (
     parse_examples,
     render_field_map,
     render_matches,
+    run_multi,
     sibling_mismatch_check,
     site_name_from_url,
     stage_from_url,
@@ -1286,3 +1289,117 @@ def test_recommendation_render_surfaces_all_fields():
     assert "(none seen)" in empty
     assert "open JSON API found: no" in empty
     assert "no stage candidates identified" in empty
+
+
+# ===================== C5: multi-stage link chaining ======================
+# Pure navigation-decision helpers verified against captured fixtures (the
+# browser navigation itself is live-only / mocked).
+
+
+def test_first_search_result_link_manganelo():
+    # Advisory: returns a *candidate* series link. Result-vs-sidebar is
+    # genuinely ambiguous on a results page, so this is a suggestion to confirm,
+    # not a guarantee of "the" result. We only assert it finds a series link.
+    html = Path("tests/test_files/manganelo/naruto_search.html").read_text(
+        encoding="utf-8"
+    )
+    link = first_search_result_link(html, "https://nelomanga.net")
+    assert link is not None and "/manga/" in link
+
+
+def test_first_search_result_link_mangago():
+    html = Path("tests/test_files/mangago/naruto_search.html").read_text(
+        encoding="utf-8"
+    )
+    link = first_search_result_link(html, "https://www.mangago.me")
+    # mangago series links are /read-manga/<slug>
+    assert link is not None
+    assert "/read-manga/" in link
+
+
+def test_first_chapter_link_kakalot_picks_main_list_not_sidebar():
+    # The page has sidebar/"popular" chapter links for OTHER mangas; the
+    # modal-slug rule must pick the main manga's (naruto) chapter list.
+    html = Path("tests/test_files/manganelo/naruto_chapters.html").read_text(
+        encoding="utf-8"
+    )
+    link = first_chapter_link(html, "https://nelomanga.net")
+    assert link is not None
+    assert "/manga/naruto/chapter-" in link
+
+
+def test_first_chapter_link_mangago_by_text():
+    # mangago chapter hrefs carry no "chapter" token; the number is in the
+    # anchor TEXT ("Vol.72 Ch.700.6"), so the text rule must catch it.
+    html = Path("tests/test_files/mangago/naruto_chapters.html").read_text(
+        encoding="utf-8"
+    )
+    link = first_chapter_link(html, "https://www.mangago.me")
+    assert link is not None
+    assert "/read-manga/naruto/" in link
+
+
+def test_first_chapter_link_none_when_no_chapters():
+    assert (
+        first_chapter_link("<html><body><a href='/'>home</a></body></html>", "b")
+        is None
+    )
+
+
+def test_run_multi_chains_search_to_chapters_to_images(tmp_path):
+
+    nelo = Path("tests/test_files/manganelo")
+    search_html = (nelo / "naruto_search.html").read_text(encoding="utf-8")
+    chapters_html = (nelo / "naruto_chapters.html").read_text(encoding="utf-8")
+    reader_html = (nelo / "naruto_reader.html").read_text(encoding="utf-8")
+
+    calls = []
+
+    def fake_run_stage(url, out_dir, search):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        calls.append((url, search))
+        if search:  # search stage
+            (out_dir / "search_page.html").write_text(search_html, encoding="utf-8")
+        elif "chapter" not in url:  # series/chapters page
+            (out_dir / "page.html").write_text(chapters_html, encoding="utf-8")
+        else:  # reader page
+            (out_dir / "page.html").write_text(reader_html, encoding="utf-8")
+
+    stages = run_multi(
+        "https://nelomanga.net", "naruto", tmp_path, "manganelo", fake_run_stage
+    )
+
+    assert set(stages) == {"search", "chapters", "images"}
+    # 1) search triggered on the entry (home) url with the query
+    assert calls[0] == ("https://nelomanga.net", "naruto")
+    # 2) chapters captured from a derived series url (no search)
+    assert "/manga/" in calls[1][0] and calls[1][1] is None
+    # 3) images captured from a derived chapter/reader url
+    assert "/manga/naruto/chapter-" in calls[2][0]
+
+
+def test_run_multi_without_query_treats_entry_as_series(tmp_path):
+
+    nelo = Path("tests/test_files/manganelo")
+    chapters_html = (nelo / "naruto_chapters.html").read_text(encoding="utf-8")
+    calls = []
+
+    def fake_run_stage(url, out_dir, search):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        calls.append((url, search))
+        if "chapter" not in url:
+            (out_dir / "page.html").write_text(chapters_html, encoding="utf-8")
+        else:
+            (out_dir / "page.html").write_text("<html/>", encoding="utf-8")
+
+    stages = run_multi(
+        "https://nelomanga.net/manga/naruto",
+        None,
+        tmp_path,
+        "manganelo",
+        fake_run_stage,
+    )
+    # no search stage; entry is the series page, then images
+    assert "search" not in stages
+    assert "chapters" in stages and "images" in stages
+    assert calls[0][0] == "https://nelomanga.net/manga/naruto"

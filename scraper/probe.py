@@ -49,8 +49,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import urlparse
+from typing import Callable, Dict, List, Optional, Set, Tuple
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -64,6 +64,166 @@ logger = logging.getLogger(__name__)
 
 # a chapter-looking href fragment, e.g. /read/x/en/chapter-28.22 or chapter_55
 _CHAPTER_HREF = re.compile(r"chapter[-_/]([\d.]+)", re.I)
+
+# a chapter-looking link TEXT, e.g. "Chapter 700.6" / "Vol.72 Ch.700.6" / "Ch.5"
+# -- catches sites whose chapter hrefs carry no "chapter" token (e.g. mangago's
+# /read-manga/<slug>/mr/v72/c700.6/pg-1/), where the number lives in the text.
+_CHAPTER_TEXT = re.compile(r"\bch(?:apter)?\.?\s*\d", re.I)
+
+# a series/manga page href (NOT a chapter), used to pick the first real result
+# off a search page: /manga/<slug>, /read-manga/<slug>, /title/, /series/, /comic/.
+_SERIES_HREF = re.compile(r"/(?:manga|read-manga|title|series|comic)/", re.I)
+
+
+def _absolutize(base_url: str, href: str) -> str:
+    """Resolve a possibly-relative ``href`` against ``base_url``. Pure."""
+    return urljoin(base_url, href)
+
+
+def first_chapter_link(html: str, base_url: str) -> Optional[str]:
+    """First chapter link of the MAIN chapter list on a series page, absolute
+    url, or ``None``.
+
+    The C5 chapters->images hop: the reader page is the first chapter's link.
+    Naively taking the first chapter-looking anchor is wrong -- series pages are
+    full of sidebar/"popular"/"latest updates" chapter links for OTHER mangas.
+    The real chapter list is the one manga's own chapters, so they share a
+    common series slug (``/manga/<slug>/chapter-..``) and dominate by count;
+    sidebar entries are one-off different slugs. We therefore pick the MODAL
+    series slug among chapter-looking links and return that group's first link.
+
+    A link is chapter-looking when its href matches ``chapter-<n>`` OR its text
+    reads "Chapter N" / "Vol.. Ch.." (the text rule catches sites whose chapter
+    hrefs carry no "chapter" token, e.g. mangago). Pure / unit-tested against
+    captured fixtures; the navigation itself is the browser's job.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    chapter_hrefs: List[str] = []
+    for anchor in soup.find_all("a", href=True):
+        href = attr(anchor, "href")
+        if not href:
+            continue
+        if _CHAPTER_HREF.search(href) or _CHAPTER_TEXT.search(anchor.get_text()):
+            chapter_hrefs.append(href)
+    if not chapter_hrefs:
+        return None
+    # series slug = the href with its trailing /chapter... (and query) stripped
+    counts: Counter = Counter(_series_key(h) for h in chapter_hrefs)
+    modal_key, _ = counts.most_common(1)[0]
+    for href in chapter_hrefs:
+        if _series_key(href) == modal_key:
+            return _absolutize(base_url, href)
+    return _absolutize(base_url, chapter_hrefs[0])
+
+
+def _series_key(href: str) -> str:
+    """The series-identifying part of a chapter href: everything up to the
+    chapter segment (so all of one manga's chapters share a key, while a
+    different manga's do not). Pure."""
+    low = href.lower()
+    match = re.search(r"(chapter|/c\d|/mr/)", low)
+    return href[: match.start()] if match else href
+
+
+def _read_first_existing(out_dir: Path, names: List[str]) -> Optional[str]:
+    """Return the text of the first of ``names`` that exists in ``out_dir``."""
+    for name in names:
+        path = out_dir / name
+        if path.is_file():
+            try:
+                return path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+    return None
+
+
+def run_multi(
+    entry_url: str,
+    query: Optional[str],
+    out_base: Path,
+    host: str,
+    run_stage: Callable[[str, Path, Optional[str]], None],
+) -> Dict[str, str]:
+    """Orchestrate a single-entry, multi-stage probe (C5).
+
+    Search-first chain (the entry is a HOME url + a query, so the series url is
+    DERIVED, not supplied as a slug -- which is what kept going stale):
+
+        search:   trigger the query on the entry page -> capture results,
+                  then pick the first result -> the series url
+        chapters: capture the series page -> pick the first chapter -> reader url
+        images:   capture the reader page
+
+    If no ``query`` is given the entry url is treated as the series page itself
+    (the original "point at the manga url" mode), so it still does
+    chapters -> images. ``run_stage(url, out_dir, search)`` performs one capture
+    (the live browser work, injected so this orchestration is unit-testable; the
+    navigation DECISIONS -- first_search_result_link / first_chapter_link -- are
+    pure and fixture-tested). Returns the {stage: out_dir} map of stages run.
+
+    Note: each stage drives its own browser pass; the result/chapter picks are
+    advisory heuristics (see those helpers), so a wrong auto-pick is a coverage
+    gap to confirm, not a silent error.
+    """
+    stages: Dict[str, str] = {}
+
+    if query:
+        search_dir = out_base / host / "search"
+        run_stage(entry_url, search_dir, query)
+        stages["search"] = str(search_dir)
+        results_html = _read_first_existing(
+            search_dir, ["search_page.html", "page.html"]
+        )
+        series_url = (
+            first_search_result_link(results_html, entry_url) if results_html else None
+        )
+        if not series_url:
+            print(
+                "[probe] multi: no search result link found -- stopping after the "
+                "search stage (inspect it and probe the series page directly)."
+            )
+            return stages
+        print(f"[probe] multi: search -> series {series_url}")
+    else:
+        series_url = entry_url
+
+    chapters_dir = out_base / host / "chapters"
+    run_stage(series_url, chapters_dir, None)
+    stages["chapters"] = str(chapters_dir)
+    page_html = _read_first_existing(chapters_dir, ["page.html"])
+    reader_url = first_chapter_link(page_html, series_url) if page_html else None
+    if not reader_url:
+        print(
+            "[probe] multi: no chapter link found on the series page -- stopping "
+            "after the chapters stage."
+        )
+        return stages
+    print(f"[probe] multi: chapters -> reader {reader_url}")
+
+    images_dir = out_base / host / "images"
+    run_stage(reader_url, images_dir, None)
+    stages["images"] = str(images_dir)
+    return stages
+
+
+def first_search_result_link(html: str, base_url: str) -> Optional[str]:
+    """First search-result series link, as an absolute url, or ``None``.
+
+    The C5 search-first entry: run a search, then the first result's link is the
+    series (chapters) page -- so the series url is DERIVED from the query, not
+    supplied as a slug (which is what kept going stale). A link counts as a
+    result when its href matches a series path (``/manga/``, ``/read-manga/``,
+    ``/title/`` ...) and is NOT itself a chapter link. First match in document
+    order. Pure / unit-tested against captured search fixtures.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    for anchor in soup.find_all("a", href=True):
+        href = attr(anchor, "href")
+        if not href or _CHAPTER_HREF.search(href):
+            continue
+        if _SERIES_HREF.search(href):
+            return _absolutize(base_url, href)
+    return None
 
 
 @dataclass
@@ -1981,6 +2141,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         "the page) in the HTML and report its element + container selector",
     )
     ap.add_argument(
+        "--multi",
+        action="store_true",
+        help="single-entry multi-stage probe (C5): from the given page run "
+        "search (with --search), follow the first result to the series page "
+        "(chapters), then the first chapter to the reader (images) -- each "
+        "captured to its own <host>/<stage> folder. With --search the entry is a "
+        "HOME url (the series url is derived from the query, no slug needed); "
+        "without it the entry url is treated as the series page.",
+    )
+    ap.add_argument(
         "--map-by-example",
         nargs="+",
         metavar="name=value",
@@ -1991,6 +2161,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         "browser/network), so run a normal probe first.",
     )
     args = ap.parse_args(argv)
+
+    # --multi (C5): single-entry multi-stage probe. Runs its own per-stage
+    # captures into <host>/{search,chapters,images}, so it bypasses the
+    # single-stage out_dir/guard logic below.
+    if args.multi:
+        host = site_name_from_url(args.url)
+        out_base = Path(args.out)
+
+        def _stage_runner(
+            url: str, out_dir: Path, search: Optional[str]
+        ) -> None:  # pragma: no cover - drives the real browser
+            import nodriver as nd
+
+            print(f"[probe] multi stage -> {out_dir}")
+            nd.loop().run_until_complete(_probe(url, out_dir, search=search))
+
+        stages = run_multi(args.url, args.search, out_base, host, _stage_runner)
+        print(
+            f"\nDone (multi). Stages captured: {', '.join(stages) or 'none'}. "
+            "Read each <stage>/recommendation.txt; the result/chapter auto-picks "
+            "are advisory -- confirm them against the captures."
+        )
+        return 0
 
     # Default the output dir to <host>/<stage> so the chapters/images/search runs
     # of one site land in distinct folders and don't overwrite each other's
