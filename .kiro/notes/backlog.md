@@ -298,24 +298,42 @@ Each item has a done-when so "done" is unambiguous.
     captures + one combined recommendation, with the multi-page navigation
     covered by tests (mock the browser/nav seam) where possible.
 
-- [ ] **C10 [STRUCT] Probe: verify page images are fetchable by OUR fetchers** —
-  the symmetric other end of C5. Today the image stage captures the image-URL
-  LIST but barely checks the URLs are retrievable: `_check_image` →
-  `image_check.txt` tries ONLY plain `requests` (bare, then +Referer) on the
-  FIRST `data-src` sample, and merely *advises* "may need curl_cffi". Gaps:
-    * never tries the actual fetcher ladder (curl_cffi / cloudscraper / browser
-      session) — so it doesn't confirm what the parser would use actually works;
-    * carries no cookies — hotlink-protected CDNs usually need the live browser
-      session's cookies + Referer, which the probe has on hand but doesn't pass;
-    * only `data-src[0]` — if images come via `<img src>`, an API, or
-      `__NEXT_DATA__`, `data_src_samples` is empty and the check doesn't run; a
-      single sample can be a logo/placeholder, not a page image.
-  - DONE-WHEN: for a chapter page, the probe tests representative image URLs
-    against the fetcher ladder (requests → curl_cffi → cloudscraper → browser+
-    cookies), reusing the captured session cookies + page Referer, and reports
-    the cheapest fetcher that returns a real image (or "needs browser session").
-    Handles src/data-src/API/next_data image sources. Pure analysis unit-tested;
-    network behind the existing fetch seam.
+- [ ] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
+  (uniform fetcher-ladder reachability)** — the symmetric other end of C5, and
+  the bigger gap behind it. The probe is good at finding WHERE the content is
+  (URLs/endpoints/selectors); it is weak at finding the LEAST-INVOLVED / FASTEST
+  way to GET it. That second question is the high-value one: a parser that opens
+  a browser per chapter is a drag (cf. the "1 browser per chapter" observation)
+  — if curl_cffi/requests works, the parser should use it and skip the browser
+  entirely. Today the "can our fetcher get it?" check is inconsistent across
+  stages and never tries the full ladder:
+    * **page** (any stage's HTML, `fetch_recommendation.txt` / `compare_fetches`)
+      — tries plain **requests vs browser** only; skips curl_cffi + cloudscraper,
+      so it OVER-recommends a browser (the documented "under-sells curl_cffi").
+    * **API endpoints** (`api_backends.txt` / `_check_api_backends`) — tries
+      **requests + curl_cffi** (best coverage), but not cloudscraper.
+    * **images** (`image_check.txt` / `_check_image`) — weakest: plain
+      **requests bare + Referer** on the FIRST `data-src` sample only; no
+      curl_cffi/cloudscraper, no session cookies, and skipped entirely when
+      images come via `<img src>` / API / `__NEXT_DATA__`.
+  - GAPS (all to close):
+    * no stage exercises the FULL ladder requests → curl_cffi → cloudscraper →
+      browser; **`CloudscraperFetcher` is never tried by any check**;
+    * HTML-served search/chapters (mangago, manganelo/nato/kakalot family) only
+      get the page-level requests-vs-browser signal → curl_cffi/cloudscraper
+      blind spot;
+    * checks re-implement ad-hoc `requests.get`/`curl_cffi` instead of exercising
+      `scraper.fetchers` (real headers/session/impersonation the parser uses);
+    * images: no session cookies + Referer carried from the live browser session.
+  - DONE-WHEN: for EACH stage, the probe identifies the data source (HTML page /
+    API endpoint / image URL) and runs the SAME real fetcher ladder via
+    `scraper.fetchers` (RequestsFetcher → CurlCffiFetcher → CloudscraperFetcher →
+    BrowserFetcher), carrying the captured session cookies + page Referer where
+    relevant, and reports the **cheapest fetcher that works per stage** (or
+    "needs browser session"). Images handle src/data-src/API/next_data sources
+    and check several URLs, not one. Goal stated as performance: prefer the
+    fetcher that avoids a browser, especially per-chapter. Pure analysis
+    unit-tested; network behind the existing fetch seam.
 
 - [ ] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
