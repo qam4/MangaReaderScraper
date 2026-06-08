@@ -337,12 +337,12 @@ Each item has a done-when so "done" is unambiguous.
   "display-only; format varies by site"). NOT `latest_chapter` (meaning varies).
   Only reader is `menu.py`. Update parser construction sites + fixtures.
 
-- [ ] **D2 [QUICK] `menu.py table()` unicode + magic number** — stop
-  `.encode("ascii", errors="ignore")` (mangles JP/accented titles); render
-  unicode; extract the 70-char truncation to a named constant.
-  - PARTIAL (B1 part 2): the 70-char truncation is now the `TITLE_MAX_WIDTH`
-    constant. STILL OPEN: the `.encode("ascii", errors="ignore")` that drops
-    non-ASCII title characters — render unicode instead.
+- [x] **D2 [QUICK] `menu.py table()` unicode + magic number** — DONE.
+  - Truncation magic number → `TITLE_MAX_WIDTH` constant (done in B1 part 2).
+  - Unicode: removed `.encode("ascii", errors="ignore")` which silently dropped
+    non-ASCII characters (mangling JP/accented titles to ""); the title now
+    renders as-is. Test asserts a JP title (鋼の錬金術師) and an accented one
+    (Pokémon) survive in the rendered table. Gates green.
 
 - [ ] **D3 [DECISION] Project rename** — `MangaReaderScraper` names a dead site.
   Package (`scraper/`) already neutral; only project/repo/dist/pyproject name +

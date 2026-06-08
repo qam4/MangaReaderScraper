@@ -36,3 +36,34 @@ def test_handle_options_invalid_choice_raises(monkeypatch, mangareader_search_ht
     monkeypatch.setattr("builtins.input", lambda x: "999")
     with pytest.raises(InvalidOption):
         search_menu.handle_options()
+
+
+def test_table_preserves_unicode_titles():
+    # D2: the old `.encode("ascii", errors="ignore")` dropped non-ASCII chars,
+    # mangling Japanese/accented titles. The table must now render them intact.
+    from scraper.new_types import SearchResult
+
+    class UnicodeSearch:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def search(self, *args):
+            return {
+                "1": SearchResult(
+                    title="鋼の錬金術師",  # Fullmetal Alchemist (JP)
+                    manga_url="fma",
+                    chapters="108",
+                    source="mangafire",
+                ),
+                "2": SearchResult(
+                    title="Pokémon Adventures",  # accented
+                    manga_url="pokemon",
+                    chapters="600",
+                    source="mangafire",
+                ),
+            }
+
+    menu = SearchMenu("x", UnicodeSearch)
+    table = menu.table()
+    assert "鋼の錬金術師" in table
+    assert "Pokémon Adventures" in table

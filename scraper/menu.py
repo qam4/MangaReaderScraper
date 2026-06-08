@@ -36,11 +36,12 @@ class SearchMenu:
         columns = ["", "Title", "Latest Volume", "Source"]
         data: List[List[str]] = []
         for number, metadata in self.search_results.items():
-            title, chapters, source = (
-                metadata["title"].encode("ascii", errors="ignore").decode(),
-                metadata["chapters"],
-                metadata["source"],
-            )
+            # Render the title as-is (unicode): many manga have Japanese or
+            # accented titles, and the old `.encode("ascii", errors="ignore")`
+            # silently dropped those characters (mangling e.g. JP titles to "").
+            title = metadata["title"]
+            chapters = metadata["chapters"]
+            source = metadata["source"]
             title = (
                 title
                 if len(title) < TITLE_MAX_WIDTH
