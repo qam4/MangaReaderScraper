@@ -377,10 +377,27 @@ Each item has a done-when so "done" is unambiguous.
     another registered source (or a fake), so it's not a pure delete.
   - DONE-WHEN: each of mangago/mangapark/mangareader is either working+fixtured or
     cleanly retired (no dangling refs across scraper/ + tests/ + docs/).
-  - ALSO (R4 hand-off): these three are exempted from strict optional via a
-    per-module `strict_optional = false` override in pyproject. When you fix or
-    retire each, remove it from that override list (and fix the surfaced Optional
-    errors if keeping the parser) so strict optional covers it too.
+  - PROGRESS (this session, via tools/probe_batch.py 9x3 sweep):
+    * **mangapark → RETIRED** (mangapark.io parked: router.parklogic.com
+      'Privacy error'). Parser/registry/exemption/README removed; commit pushed.
+    * **mangareader → RETIRED** (mangareader.net parked, same). Plus the
+      test-harness detangle (ALL_PARSERS→mangakaka, default source→mangabuddy,
+      removed the mangareader_*/mangafast_* conftest fixtures + unused params).
+    * **mangafast → RETIRED** (mangafast.net parked → DHgate/redirect). Its
+      scaffold-sample volume HTML relocated to tests/test_files/html_samples/.
+    * **mangago → FIXED** (alive). Site changed: chapter urls now
+      /read-manga/<slug>/mr/v<VOL>/c<CHAP>/pg-1/ and reader images are
+      <img id=pageN> (q:key='zn_2' gone). Rewrote chapter/image stages (mirrors
+      mangabuddy number→href map), promoted 3 captures to fixtures + 12 tests.
+    * STRICT-OPTIONAL: all per-module exemptions removed (pyproject) — retired
+      three are gone, mangago rewritten compliant. R4 hand-off complete.
+  - STILL OPEN (alive, lower-risk): **mangakaka** + **manganelo** probed LIVE via
+    plain requests (api=yes) incl. search — their stale "cloudflare-403 on
+    search" comments look outdated; verify the parsers still parse current markup
+    (likely no-ops / comment cleanup; both already have fixtures+tests).
+    **manganato** chapters+search LIVE (requests) but the IMAGES/reader page is
+    CF-walled ("Just a moment…"); needs the C10 check (does curl_cffi/cloudscraper
+    clear it?) before deciding fix-vs-leave — ties to C11.
 
 - [x] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
   answer to "MangaFire has a lot of ad-hoc code"
