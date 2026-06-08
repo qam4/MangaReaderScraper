@@ -402,23 +402,21 @@ User observation: running "download all volumes" often leaves some chapters
 incomplete on the first pass; re-running a few times eventually completes them.
 Two distinct root causes found:
 
-- [ ] **F1 [QUICK-ish] `download_image` retries have NO backoff (the real culprit)**
-  - WHERE: `fetchers.download_image` — 5 tries but the loop just does
-    `attempt += 1` with NO sleep between attempts. It hammers the CDN as fast as
-    it can fail. CDN failures are usually transient/rate-limit, so instant
-    back-to-back retries are the worst response (neither waits out a blip nor
-    backs off a limiter) → missing pages → incomplete volume. This is the path
-    mangafire/mangabuddy use, i.e. the sites the user actually downloads from.
-  - CONTRAST: `base.page_data` (plain-HTTP parsers) DOES sleep
-    `BACKOFF_SECONDS(1) * attempt` (linear 1/2/3/4s). The two retry loops are
-    inconsistent; the curl_cffi CDN one — the more important one — has zero wait.
-  - FIX: add backoff to `download_image` — exponential + jitter
-    (e.g. base * 2**attempt capped, plus random jitter), parameters with sane
-    defaults + overridable. Consider unifying with base.page_data's loop so there
-    is ONE retry policy (ties into C3's shared-download direction).
-  - DONE-WHEN: download_image waits (increasingly) between attempts; a unit test
-    asserts sleep is called with growing intervals (patch sleep, no real wait);
-    fewer incomplete volumes on a real run (live to confirm).
+- [x] **F1 [QUICK-ish] `download_image` retries have NO backoff (the real culprit)**
+  - WHERE: `fetchers.download_image` — 5 tries but the loop just did
+    `attempt += 1` with NO sleep between attempts. It hammered the CDN as fast as
+    it could fail. CDN failures are usually transient/rate-limit, so instant
+    back-to-back retries are the worst response → missing pages → incomplete
+    volume. This is the path mangafire/mangabuddy use.
+  - DONE: added exponential backoff + jitter between attempts —
+    `min(backoff_base * 2**(n-1), backoff_cap)` plus up to half that as random
+    jitter (de-syncs the parallel workers), sleeping between tries but NOT after
+    the final one. `backoff_base` (0.5s) / `backoff_cap` (30s) are params with
+    sane defaults. 4 unit tests (patch `time.sleep`): retry-then-succeed sleeps
+    n-1 times, exhausted sleeps max_tries-1, and waits strictly grow
+    (>=1/2/4/8s with backoff_base=1). Gates green.
+  - FOLLOW-UPS: 429/503-aware longer waits + Retry-After → F4; unify with
+    base.page_data's loop (one retry policy) — still worth doing, ties to C3.
 
 - [ ] **F2 [QUICK-ish] Incomplete-volume files are never cleaned up**
   - WHERE: `manga.py` `Manga.add_volume(complete=False)` writes the volume with a
@@ -437,6 +435,31 @@ Two distinct root causes found:
     duplicate complete+incomplete pair; covered by a test.
   - NOTE: F1 reduces how OFTEN incompletes happen; F2 cleans up when they do.
     Do both — they're complementary.
+
+- [ ] **F3 [QUICK, LOW-PRI] Configurable worker pool size (be a gentler default)**
+  - WHERE: `manga.py` `_get_volumes_data` hardcodes `Pool(4)`; `bundle.py` uses
+    `Pool()` (all cores). No way to turn concurrency down to be kinder to a site.
+  - FIX: make the pool size configurable — a `--jobs`/`-j` CLI arg and/or an ini
+    `[config] jobs` key, defaulting to something CPU-aware
+    (e.g. `min(4, os.cpu_count() or 1)`). Lower = gentler on the site.
+  - DONE-WHEN: pool size is configurable (CLI/ini) with a sane CPU-based default;
+    both manga + bundle pools honor it.
+
+- [ ] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure**
+  - VALUE (user): the multiprocessing is to be fast on the happy path, but when a
+    site is FAILING we should slow down, not keep fanning out at full concurrency.
+    Today F1 only backs off a SINGLE failed request in its own worker; the other
+    workers keep going full tilt. There's no global "the site is unhappy, everyone
+    ease off."
+  - IDEAS: (a) treat 429/503 specially — wait notably longer than a generic blip,
+    and honor a `Retry-After` header when present (the site is telling us how long
+    to wait); (b) a shared/global rate limiter or concurrency reducer across
+    workers when rate-limit signals appear (needs cross-process coordination, same
+    plumbing family as A7's logging queue).
+  - DONE-WHEN: repeated rate-limit responses reduce overall request rate (not just
+    per-request retry delay); Retry-After respected. Live to validate.
+  - PRIORITY: low — F1's backoff is the cheap floor; this is the principled
+    version. Sequence deliberately.
 
 ---
 

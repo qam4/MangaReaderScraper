@@ -180,19 +180,47 @@ def test_download_image_retries_then_succeeds():
         mock.Mock(status_code=200, content=b"img"),
     ]
     module, session = _fake_curl_module(responses)
+    # patch sleep so the backoff doesn't actually wait during the test
     with mock.patch.dict("sys.modules", {"curl_cffi": module}):
-        out = download_image("http://cdn/p.jpg")
+        with mock.patch("time.sleep") as slept:
+            out = download_image("http://cdn/p.jpg")
     assert out == b"img"
     assert session.get.call_count == 3
+    # backoff slept between the 2 failed attempts (not after the success)
+    assert slept.call_count == 2
 
 
 def test_download_image_returns_none_when_exhausted():
     responses = [mock.Mock(status_code=403, content=b"") for _ in range(5)]
     module, session = _fake_curl_module(responses)
     with mock.patch.dict("sys.modules", {"curl_cffi": module}):
-        out = download_image("http://cdn/p.jpg", max_tries=5)
+        with mock.patch("time.sleep") as slept:
+            out = download_image("http://cdn/p.jpg", max_tries=5)
     assert out is None
     assert session.get.call_count == 5
+    # slept between attempts but NOT after the final one: max_tries - 1
+    assert slept.call_count == 4
+
+
+def test_download_image_backoff_grows_between_attempts():
+    # the wait before each retry must increase (exponential) -- the F1 fix for
+    # the old no-sleep loop that hammered the CDN and left chapters incomplete.
+    responses = [mock.Mock(status_code=503, content=b"") for _ in range(4)]
+    responses.append(mock.Mock(status_code=200, content=b"img"))
+    module, _session = _fake_curl_module(responses)
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        with mock.patch("time.sleep") as slept:
+            out = download_image(
+                "http://cdn/p.jpg", backoff_base=1.0, backoff_cap=100.0
+            )
+    assert out == b"img"
+    waits = [call.args[0] for call in slept.call_args_list]
+    assert len(waits) == 4
+    # each wait is >= the exponential floor (base * 2**n), jitter only adds;
+    # and the sequence is strictly increasing across these (no jitter overlap
+    # since each floor doubles and jitter is at most half the delay)
+    assert waits == sorted(waits)
+    assert waits[0] >= 1.0 and waits[1] >= 2.0 and waits[2] >= 4.0 and waits[3] >= 8.0
 
 
 def test_download_image_updates_session_cookies():

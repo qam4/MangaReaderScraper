@@ -148,6 +148,8 @@ def download_image(
     timeout: int = 60,
     impersonate: str = "chrome",
     label: str = "image",
+    backoff_base: float = 0.5,
+    backoff_cap: float = 30.0,
 ) -> Optional[bytes]:
     """Download a page image via ``curl_cffi`` with Chrome TLS impersonation.
 
@@ -157,11 +159,19 @@ def download_image(
     rather than use the plain ``requests`` downloader; ``cookies`` carries the
     browser session a site like MangaFire harvests during page-list capture.
 
-    Retries up to ``max_tries`` times on a non-200 or a request exception.
+    Retries up to ``max_tries`` times on a non-200 or a request exception, with
+    **exponential backoff + jitter** between attempts (``backoff_base * 2**n``
+    capped at ``backoff_cap``, plus up to half that as random jitter). CDN
+    failures are usually transient/rate-limit, so waiting -- increasingly --
+    between tries recovers far more pages than hammering instantly (which is what
+    left chapters incomplete). No sleep is performed after the final attempt.
     Returns the raw image bytes on success, or ``None`` once exhausted. Callers
     own the post-download steps that genuinely differ between sites -- building
     the placeholder page on failure, image validation, and descrambling.
     """
+    import random
+    import time
+
     from curl_cffi import requests as creq  # type: ignore
 
     attempt = 0
@@ -182,6 +192,10 @@ def download_image(
                 f"{label} attempt {attempt + 1}/{max_tries} failed: {url} - {err}"
             )
         attempt += 1
+        if attempt < max_tries:
+            delay = min(backoff_base * (2 ** (attempt - 1)), backoff_cap)
+            delay += random.uniform(0, delay / 2)  # jitter to de-sync workers
+            time.sleep(delay)
     logger.error(f"Download FAILED {label} at {url}")
     return None
 
