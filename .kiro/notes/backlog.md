@@ -398,6 +398,29 @@ Each item has a done-when so "done" is unambiguous.
     **manganato** chapters+search LIVE (requests) but the IMAGES/reader page is
     CF-walled ("Just a moment…"); needs the C10 check (does curl_cffi/cloudscraper
     clear it?) before deciding fix-vs-leave — ties to C11.
+  - KAKALOT-FAMILY DRIFT (confirmed via fresh captures — all 3 sites changed,
+    it's a shared-engine rewrite, NOT no-ops):
+    * Chapter list: `li.a-h` → `div.chapter-list > div.row > span > a`. The
+      anchor href is now the FULL reader url (`{base}/manga/<slug>/chapter-<n>`,
+      number dash-encoded e.g. `chapter-700-6`) and the displayed number is the
+      anchor TEXT ("Chapter 700.6"). So switch the engine to a {number: href}
+      map (number parsed from the text, like mangago/mangabuddy) and have
+      volume_url return the stored href — `volume_path`/`chapter_href_sep`
+      become obsolete.
+    * Series page (manga_path) converged to `{base}/manga/<slug>` for all three
+      (was `/manga/manga-<slug>` nelo, `/manga-<slug>` nato, `/manga/<slug>` kaka).
+    * Image container `div.container-chapter-reader` UNCHANGED (page_urls +
+      page_img_attr still valid; nelo data-src, nato/kaka src).
+    * Search converged on `div.story_item` for all three (title from `img alt` /
+      `h3.story_name`, slug from the card `<a href>`); manganato's
+      `search-story-item` + custom _slug/_latest_chapter overrides are now STALE.
+    * The page also exposes `data-api-url=.../api/manga/<slug>/chapters` — a JSON
+      chapters API option to evaluate, but the HTML chapter list is sufficient.
+    * Plan: rewrite KakalotMangaParser (map-based all_volume_ids/volume_url),
+      simplify the 3 subclasses to {base_url, manga_path, page_img_attr}, refresh
+      fixtures from captures, rewrite test_kakalot.py/test_mangakaka.py. The old
+      mangakaka fixtures + the scaffold sample (test_scaffold MANGAKAKA_VOLUME_HTML)
+      need handling when fixtures are refreshed.
 
 - [x] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
   answer to "MangaFire has a lot of ad-hoc code"
