@@ -16,7 +16,8 @@ Each item has a done-when so "done" is unambiguous.
     `--log-level` arg; cli() sets env + applies; pools use
     `Pool(initializer=configure_logging)`; `change_args_to_search` skips
     log_level (M1 brittleness surfaced + handled).
-    UPDATE (A6): the rich+tqdm interleave caveat is RESOLVED — see A6 below.
+    UPDATE: A6 reworked the bar to rich.progress (dropped tqdm), but the bar is
+    still NOT pinned under multiprocess logging — see A6/A7.
 
 - [x] **A2 [QUICK] Fix stale default source** (mangareader.net is dead)
   - DONE: `utils.create_base_config` default → `mangabuddy`; `test_utils` assertion
@@ -42,21 +43,45 @@ Each item has a done-when so "done" is unambiguous.
   - DONE: now `len(self._pages)` (a count, not `max(page number)`); added
     regression test with a page-number gap (pages 1 & 5 → count 2).
 
-- [x] **A6 [QUICK] Pin the progress bar (rich.progress, shared Console)**
+- [x] **A6 [QUICK] Pin the progress bar (rich.progress, shared Console)** — PARTIAL
   - WHY (surfaced this session): the download/bundle bars used `tqdm.rich` +
     `logging_redirect_tqdm` ALONGSIDE the A1 `RichHandler`. tqdm.rich has its own
     rich `Live`, and `logging_redirect_tqdm` only knows how to pin CLASSIC tqdm,
-    so the bar wasn't kept at the bottom — two uncoordinated Live regions fought
-    and the bar scrolled away. (This was the open A1 caveat.)
-  - DONE: added `utils.get_console()` — one shared `rich.console.Console`
-    (lru_cache'd). `configure_logging` now builds `RichHandler(console=...)` with
-    it, and both `manga.MangaBuilder._get_volumes_data` and `bundle.Bundle.bundle`
-    render a `rich.progress.Progress(console=get_console())` instead of tqdm —
-    so rich coordinates ONE Live region (logs scroll above, bar pinned). Dropped
-    the `tqdm` dependency entirely (pyproject deps + mypy override) and the dead
-    `multi_process` toggle / `else` branch in bundle.py. Gates green, 335 pass.
-  - CAVEAT: visual pinning is live-only to confirm in a real terminal; the code
-    path is exercised by the real-pool test, so it runs without error.
+    so the bar wasn't kept at the bottom.
+  - DONE: added `utils.get_console()` (one shared `rich.console.Console`,
+    lru_cache'd). `configure_logging` builds `RichHandler(console=...)` with it,
+    and both `MangaBuilder._get_volumes_data` and `Bundle.bundle` render a
+    `rich.progress.Progress(console=get_console())` instead of tqdm. Dropped the
+    `tqdm` dependency and the dead `multi_process` toggle. Gates green.
+  - DID NOT ACTUALLY PIN THE BAR (user confirmed live): the bar still scrolls,
+    logs appear everywhere. ROOT CAUSE (diagnosed): the progress bar runs in the
+    PARENT, but the per-volume log lines (`adapter.info("Downloading volume..")`,
+    "done", etc.) are emitted from the WORKER processes — each worker runs
+    `configure_logging` as its Pool initializer and gets its OWN RichHandler/
+    Console (get_console is lru_cache'd PER PROCESS). Worker logs write straight
+    to the shared stderr fd, bypassing the parent's rich Live region. Rich's
+    Live/Progress is single-process by design and CANNOT coordinate a pinned
+    region across processes (confirmed: this is a known tqdm/rich limitation; the
+    ecosystem fix is a logging queue funneling worker output to one process). So
+    A6 fixed only the parent-side console sharing — necessary but insufficient.
+  - REMAINING WORK → A7 below.
+
+- [ ] **A7 [STRUCT-lite, LOW-PRI] Actually pin the progress bar across workers**
+  - The bar can only be pinned if the parent controls ALL terminal writes during
+    the download. Options (pick when scheduled):
+    1. **Logging queue**: workers use a `QueueHandler` (logging only to a
+       multiprocessing Queue); the parent runs a `QueueListener` whose single
+       RichHandler renders through the Progress's Console. Correct + keeps logs
+       visible AND bar pinned, but real spawn-safe multiprocess plumbing.
+    2. **Quiet workers during download** (simplest, robust): workers log only
+       WARNING+ during the parallel phase, so the parent's bar is essentially the
+       only thing drawing. Lose per-volume INFO lines in the terminal (errors
+       still show). Best effort:payoff.
+    3. Accept it / revert to classic tqdm (degrades more gracefully under foreign
+       writes — repaints at the bottom each tick — but never perfectly pinned).
+  - DONE-WHEN: in a real terminal, a real multiprocess download keeps the bar at
+    the bottom. Live-only to validate (mocked suite can't see it).
+  - PRIORITY: low — cosmetic; the download works fine, the bar just scrolls.
 
 ## Wave B — orchestration rebuild (STRUCT; B1+B2 are ONE surface — design together)
 
