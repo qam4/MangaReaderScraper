@@ -281,11 +281,23 @@ Each item has a done-when so "done" is unambiguous.
   run. Possible follow-up: a combined cross-stage recommendation.txt (today each
   stage writes its own).
 
-- [ ] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
-  (uniform fetcher-ladder reachability)** — the symmetric other end of C5, and
-  the bigger gap behind it. The probe is good at finding WHERE the content is
-  (URLs/endpoints/selectors); it is weak at finding the LEAST-INVOLVED / FASTEST
-  way to GET it. That second question is the high-value one: a parser that opens
+- [~] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
+  (uniform fetcher-ladder reachability)** — IMAGE STAGE **DONE** (this session);
+  page/API stages partially covered already; full uniformity is the remaining
+  extension. Delivered: `candidate_image_urls` (page-image cluster, src OR
+  data-src, skips data: placeholders + nav imgs) + `check_image_ladder`
+  (requests → curl_cffi → cloudscraper, carrying page Referer + the live session
+  cookies read via CDP) reporting the cheapest tier that returns a real image —
+  replacing the old bare-requests-on-one-data-src check. `cheapest_working` +
+  url extraction are pure/fixture-tested; the per-tier GET is injected (mocked
+  in tests, real backends live). REMAINING (optional extension): rewire the
+  page check (`compare_fetches`, today requests-vs-browser) and API check
+  (`_check_api_backends`, today requests+curl_cffi) onto the same `FETCHER_LADDER`
+  primitives so cloudscraper is tried everywhere and all three stages report via
+  one uniform mechanism. — the bigger gap behind it. The probe is good at finding
+  WHERE the content is (URLs/endpoints/selectors); it is weak at finding the
+  LEAST-INVOLVED / FASTEST way to GET it. That second question is the high-value
+  one: a parser that opens
   a browser per chapter is a drag (cf. the "1 browser per chapter" observation)
   — if curl_cffi/requests works, the parser should use it and skip the browser
   entirely. Today the "can our fetcher get it?" check is inconsistent across
