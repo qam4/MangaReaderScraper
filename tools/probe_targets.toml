@@ -3,19 +3,25 @@
 # One [[site]] per source, with up to three stage URLs:
 #   chapters - a manga/series page (lists chapters)
 #   images   - a reader/chapter page (the page images)
-#   search   - the page the search box lives on (usually home); the term to
-#              search for goes in `search_query`
+#   search   - the parser's ACTUAL search URL (see note below)
 #
-# The URLs below were derived from each parser's CURRENT url-building code
-# (_manga_page_url / volume_url / all_volume_ids) using a known sample slug, so
-# they match exactly what the parser would hit. Swap in a different series if
-# one of these has since been removed from a site.
+# The URLs were derived from each parser's CURRENT url-building code
+# (_manga_page_url / volume_url / all_volume_ids and the search parsers' search
+# URLs), so they match exactly what the parser would hit. Swap in a different
+# series if one of these has since been removed from a site.
+#
+# search vs search_query:
+#   * Most parsers GET a concrete search URL (e.g. /search/story/<q>,
+#     /r/l_search/?name=<q>, ?s=<q>, api/titles/search?q=<q>). For those, put
+#     that real URL in `search` and OMIT search_query -- the probe just loads it.
+#   * A few sites have no plain search URL and drive a JS search box instead
+#     (mangafire intercepts ajax/manga/search). For those, point `search` at the
+#     page with the box and set search_query -- the probe types it in.
 #
 # Rules:
 #   * Leave a URL as "" to SKIP that stage.
 #   * Any URL containing "TODO" is skipped with a warning.
-#   * The batch runner forces each run into probe_out/<name>/<stage>/, so stages
-#     never overwrite each other (no reliance on URL heuristics).
+#   * The runner forces probe_out/<name>/<stage>/, so stages never collide.
 #
 # Then:  uv run python tools/probe_batch.py run
 #        uv run python tools/probe_batch.py summary
@@ -24,61 +30,53 @@
 name = "mangabuddy"  # mangak.io, API-backed
 chapters = "https://mangak.io/naruto"
 images = "https://mangak.io/naruto/chapter-700-5-uzumaki-naruto"
-search = "https://mangak.io"
-search_query = "naruto"
+search = "https://api.mangak.io/titles/search?q=naruto"
 
 [[site]]
 name = "mangafast"
 chapters = "https://mangafast.net/dragon-ball-super?order=old#table"
 images = "https://mangafast.net/dragon-ball-super-chapter-1"
-search = "https://mangafast.net"
-search_query = "dragon ball super"
+search = "https://mangafast.net/?s=naruto"
 
 [[site]]
-name = "mangafire"
+name = "mangafire"  # search is a JS box + ajax/manga/search XHR -> interactive
 chapters = "https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3"
 images = "https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-1"
 search = "https://mangafire.to"
-search_query = "ad astra"
+search_query = "naruto"
 
 [[site]]
 name = "mangago"
 chapters = "https://www.mangago.me/read-manga/naruto_kw"
 images = "https://www.mangago.me/read-manga/naruto_kw/1"
-search = "https://www.mangago.me"
-search_query = "billy bat"
+search = "https://www.mangago.me/r/l_search/?name=naruto"
 
 [[site]]
 name = "mangakaka"
 chapters = "https://mangakakalot.gg/manga/dragon_ball_super"
 images = "https://mangakakalot.gg/chapter/dragon_ball_super/chapter_55"
-search = "https://mangakakalot.gg"
-search_query = "dragon ball super"
+search = "https://mangakakalot.gg/search/story/naruto"
 
 [[site]]
 name = "manganato"
 chapters = "https://natomanga.com/manga-dragon-ball"
 images = "https://natomanga.com/manga-dragon-ball/chapter-10"
-search = "https://natomanga.com"
-search_query = "dragon ball"
+search = "https://natomanga.com/search/story/naruto"
 
 [[site]]
 name = "manganelo"
 chapters = "https://nelomanga.net/manga/manga-dragon-ball"
 images = "https://nelomanga.net/chapter/manga-dragon-ball/chapter-10"
-search = "https://nelomanga.net"
-search_query = "dragon ball"
+search = "https://nelomanga.net/search/story/naruto"
 
 [[site]]
 name = "mangapark"
 chapters = "https://mangapark.io/title/dragon-ball"
 images = "https://mangapark.io/title/dragon-ball/1"
-search = "https://mangapark.io"
-search_query = "dragon ball"
+search = "https://mangapark.io/search?word=naruto"
 
 [[site]]
 name = "mangareader"
 chapters = "http://mangareader.net/dragon-ball-episode-of-bardock"
 images = "http://mangareader.net/dragon-ball-episode-of-bardock-chapter-1"
-search = "http://mangareader.net"
-search_query = "dragon ball"
+search = "http://mangareader.net/search/?w=naruto&rd=0&status=0&order=0&genre=&p=0"
