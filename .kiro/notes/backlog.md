@@ -627,24 +627,20 @@ ALREADY FIXED (do not re-do):
 - base.page_data target fixed (helpers.mocked_request_session) — done.
 
 STILL OPEN — folded into the waves above or added here:
-- [ ] **R1 [STRUCT][P1] Two-tier test split (engine vs parser).** The smell:
-  generic base-class behavior is tested THROUGH three dead site parsers
-  (`tests/helpers.py` `ALL_PARSERS = [MangaReader, MangaKaka, MangaFast]`,
-  driven by `test_parsers.py`). Test for which tier a test belongs to: "if the
-  site died tomorrow, should the test still mean something?"
-  - ENGINE tests (yes → site-agnostic): base-class/orchestration behavior
-    (ChapterId, select_chapters, MangaBuilder flow, "no manga set" error, menu,
-    fetcher ladder, registry). Test ONCE through a single fake parser
-    (`MockedSiteParser` already exists in helpers.py) — NOT through a list of
-    real sites. Drop `ALL_PARSERS`/`ALL_SCRAPERS` real-site parametrization for
-    these.
-  - PARSER tests (no → legitimately site-specific): does THIS site's parser
-    extract THIS site's captured fixture correctly. One fixture-backed test per
-    SUPPORTED site (what the scaffold generates). Today only mangabuddy/mangafire
-    have these; the others don't.
-  - DONE-WHEN: engine tests run against a fake parser (no dead real sites in the
-    parametrize lists); each live parser has a fixture-backed extraction test;
-    green suite means something about the sites actually used.
+- [x] **R1 [STRUCT][P1] Two-tier test split (engine vs parser).** **DONE** (this
+  session). Engine tests no longer run through real site parsers: `test_parsers.py`
+  now parametrizes over a synthetic site-independent `EngineSiteParser` /
+  `EngineMangaParser` (helpers.py) that exercises the base wiring + the
+  fetch_soup → 404 → MangaDoesNotExist contract with no real markup ("if a site
+  died tomorrow, the engine test still means something"). The
+  `ALL_PARSERS = [MangaReader, MangaKaka, MangaFast]` real-site coupling is gone
+  (those three were retired anyway). Parser-tier extraction tests now exist for
+  every live site — mangabuddy, mangafire, mangago, and the kakalot family
+  (manganelo/manganato/mangakaka via test_kakalot) — all fixture-backed from
+  promoted probe captures. The suite is fully mocked (no live network), so no
+  `integration`-tagged tests exist yet; the marker stays ready for any future
+  genuinely-live test. Gates green, 366 pass.
+  - SMELL (was): generic base-class behavior tested THROUGH dead site parsers.
   - NOTE: user agrees with this framing. NOT "add live sites to ALL_PARSERS" —
     that was the wrong original wording. STRUCT/larger; sequence with the Wave C
     parser work (probe → fixtures → tests) since the fixtures come from probing.
