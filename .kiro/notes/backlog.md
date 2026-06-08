@@ -396,6 +396,48 @@ Each item has a done-when so "done" is unambiguous.
     `itemprop="author"` (fixture-backed test); bundle.py writes it to `<Writer>`
     with a neutral fallback; other parsers default to None gracefully.
 
+## Wave F — download robustness (user-reported: incomplete chapters on first run)
+
+User observation: running "download all volumes" often leaves some chapters
+incomplete on the first pass; re-running a few times eventually completes them.
+Two distinct root causes found:
+
+- [ ] **F1 [QUICK-ish] `download_image` retries have NO backoff (the real culprit)**
+  - WHERE: `fetchers.download_image` — 5 tries but the loop just does
+    `attempt += 1` with NO sleep between attempts. It hammers the CDN as fast as
+    it can fail. CDN failures are usually transient/rate-limit, so instant
+    back-to-back retries are the worst response (neither waits out a blip nor
+    backs off a limiter) → missing pages → incomplete volume. This is the path
+    mangafire/mangabuddy use, i.e. the sites the user actually downloads from.
+  - CONTRAST: `base.page_data` (plain-HTTP parsers) DOES sleep
+    `BACKOFF_SECONDS(1) * attempt` (linear 1/2/3/4s). The two retry loops are
+    inconsistent; the curl_cffi CDN one — the more important one — has zero wait.
+  - FIX: add backoff to `download_image` — exponential + jitter
+    (e.g. base * 2**attempt capped, plus random jitter), parameters with sane
+    defaults + overridable. Consider unifying with base.page_data's loop so there
+    is ONE retry policy (ties into C3's shared-download direction).
+  - DONE-WHEN: download_image waits (increasingly) between attempts; a unit test
+    asserts sleep is called with growing intervals (patch sleep, no real wait);
+    fewer incomplete volumes on a real run (live to confirm).
+
+- [ ] **F2 [QUICK-ish] Incomplete-volume files are never cleaned up**
+  - WHERE: `manga.py` `Manga.add_volume(complete=False)` writes the volume with a
+    `-incomplete` suffix (`<idx>_<id>-incomplete.<ext>`). `volume_exists` only
+    checks the COMPLETE name, so a later run re-downloads (good — that's why
+    retrying works) and writes the clean file — but the stale `-incomplete` file
+    is NEVER deleted, and nothing notices an existing incomplete on disk. Result:
+    orphaned `*-incomplete.*` files accumulate, and you can end up with both the
+    complete and incomplete variants side by side.
+  - FIX: parent-side (B2-redesign put writing/assembly in the parent —
+    `_add_download_to_manga`): when a volume completes, delete any stale
+    `-incomplete` sibling; OR don't persist incompletes at all unless a flag asks
+    for partials; OR on startup, treat an existing `-incomplete` as "needs
+    redownload" and clean it. Decide the policy (keep-partial vs always-clean).
+  - DONE-WHEN: a completed volume leaves no `-incomplete` file behind; no
+    duplicate complete+incomplete pair; covered by a test.
+  - NOTE: F1 reduces how OFTEN incompletes happen; F2 cleans up when they do.
+    Do both — they're complementary.
+
 ---
 
 ## Suggested order
