@@ -5,12 +5,13 @@ from bs4 import BeautifulSoup
 
 from scraper.new_types import SearchResult
 from scraper.parsers.base import BaseSiteParser
-from scraper.parsers.mangafast import MangaFast, MangaFastMangaParser
 from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser
-from scraper.parsers.mangareader import MangaReader, MangaReaderMangaParser
 
-ALL_SCRAPERS = [MangaReader, MangaKaka, MangaFast]
-ALL_PARSERS = [MangaReaderMangaParser, MangaKakaMangaParser, MangaFastMangaParser]
+# The generic base-class parser tests (test_parsers.py) parametrize over the
+# kept HTML parser(s). mangareader/mangafast were retired (dead sites); mangakaka
+# is the live representative. (R1 will fully split engine-vs-parser tiers.)
+ALL_SCRAPERS = [MangaKaka]
+ALL_PARSERS = [MangaKakaMangaParser]
 ALL_SCRAPERS_AND_PARSERS = [
     (scraper, parser) for scraper, parser in zip(ALL_SCRAPERS, ALL_PARSERS)
 ]

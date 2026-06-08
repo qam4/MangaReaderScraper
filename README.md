@@ -18,8 +18,8 @@ optionally bundle into Kindle-ready MOBI volumes.
 `--source` accepts any of the registered sites:
 
 ```
-mangabuddy  mangafast  mangafire  mangago  mangakaka
-manganato   manganelo  mangareader
+mangabuddy  mangafire  mangago  mangakaka
+manganato   manganelo
 ```
 
 Availability varies over time (see the note above). `mangafire` is the most
@@ -128,7 +128,7 @@ chapter number to match against.
 usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
                      [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT]
                      [--filetype {pdf,cbz}]
-                     [--source {mangabuddy,mangafast,mangafire,mangago,mangakaka,manganato,manganelo,mangareader}]
+                     [--source {mangabuddy,mangafire,mangago,mangakaka,manganato,manganelo}]
                      [--override_name OVERRIDE_NAME] [--version]
                      [--bundle BUNDLE]
 ```

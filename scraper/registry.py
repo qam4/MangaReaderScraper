@@ -40,13 +40,11 @@ _T = TypeVar("_T", bound=Type[BaseSiteParser])
 # new site means adding its module here (one line) -- still far less than the
 # previous four edit sites, and this list is the single source of truth.
 _SOURCE_MODULES = [
-    "scraper.parsers.mangareader",
     "scraper.parsers.mangakaka",
     "scraper.parsers.manganelo",
     "scraper.parsers.manganato",
     "scraper.parsers.mangago",
     "scraper.parsers.mangabuddy",
-    "scraper.parsers.mangafast",
     "scraper.parsers.mangafire",
 ]
 

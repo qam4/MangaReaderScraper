@@ -14,7 +14,7 @@ PARAMETERS = [
             "manga": "dragonball",
             "output": "/tmp",
             "search": None,
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": None,
             "upload": None,
             "override_name": None,
@@ -29,7 +29,7 @@ PARAMETERS = [
             "manga": "dragonball",
             "output": "/tmp",
             "search": None,
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["1", "2"],
             "upload": None,
             "override_name": None,
@@ -44,7 +44,7 @@ PARAMETERS = [
             "manga": "one-piece",
             "output": "/tmp",
             "search": None,
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["231"],
             "upload": None,
             "override_name": None,
@@ -59,7 +59,7 @@ PARAMETERS = [
             "manga": "something",
             "output": "/home/me/Downloads",
             "search": None,
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": None,
             "upload": None,
             "override_name": None,
@@ -82,7 +82,7 @@ PARAMETERS = [
             "manga": "something",
             "output": "/tmp",
             "search": None,
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["1-5", "40"],
             "upload": None,
             "override_name": "dragon_kin",
@@ -97,7 +97,7 @@ PARAMETERS = [
             "manga": "something",
             "output": "/tmp",
             "search": None,
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["1-5", "40"],
             "upload": None,
             "override_name": None,
@@ -114,7 +114,7 @@ SEARCH_PARAMETERS = [
         {
             "manga": "dragon-ball-episode-of-bardock",
             "search": ["dragon", "ball"],
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["5"],
             "output": "/tmp",
             "filetype": "pdf",
@@ -130,7 +130,7 @@ SEARCH_PARAMETERS = [
         {
             "manga": "dragon-ball-super",
             "search": ["dragonball"],
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["8", "9"],
             "output": "/tmp",
             "filetype": "pdf",
@@ -146,7 +146,7 @@ SEARCH_PARAMETERS = [
         {
             "manga": "dragon-ball-sd",
             "search": ["dragonball"],
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["6-10"],
             "output": "/tmp",
             "filetype": "pdf",
@@ -162,7 +162,7 @@ SEARCH_PARAMETERS = [
         {
             "manga": "dragon-ball-sd",
             "search": ["dragonball"],
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": None,
             "output": "/tmp",
             "filetype": "pdf",
@@ -178,7 +178,7 @@ SEARCH_PARAMETERS = [
         {
             "manga": "dragon-ball-sd",
             "search": ["dragonball"],
-            "source": "mangareader",
+            "source": "mangabuddy",
             "volumes": ["6-10", "12"],
             "output": "/tmp",
             "filetype": "pdf",
@@ -229,9 +229,7 @@ def test_log_level_arg_sets_level_and_env(monkeypatch):
 
 @pytest.mark.parametrize("arguments,inputs,expected", SEARCH_PARAMETERS)
 @mock.patch("scraper.__main__.download_manga", mock.Mock(return_value=1))
-def test_search_via_cli(
-    arguments, inputs, expected, monkeypatch, mangareader_search_html
-):
+def test_search_via_cli(arguments, inputs, expected, monkeypatch):
     with mock.patch("scraper.__main__.get_manga_parser", return_value=MockedSiteParser):
         gen = (x for x in inputs)
         monkeypatch.setattr("builtins.input", lambda x: next(gen))
@@ -241,7 +239,7 @@ def test_search_via_cli(
         assert args == expected
 
 
-def test_search_if_failed_manga_match(monkeypatch, mangareader_search_html):
+def test_search_if_failed_manga_match(monkeypatch):
     def fake_downloader(*args, **kwargs):
         """
         Will raise an error, which should trigger the manga_search
@@ -265,7 +263,7 @@ def test_search_if_failed_manga_match(monkeypatch, mangareader_search_html):
             expected = {
                 "manga": "search activated",
                 "search": ["dragonballzz"],
-                "source": "mangareader",
+                "source": "mangabuddy",
                 "volumes": ["2"],
                 "output": "/tmp",
                 "filetype": "pdf",

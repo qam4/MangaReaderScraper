@@ -602,8 +602,10 @@ def test_roundtrip_wrong_search_path_yields_empty(tmp_path):
 MANGAKAKA_VOLUME_HTML = Path(
     "tests/test_files/mangakaka/dragonball_super_volume_1.html"
 ).read_text(encoding="utf-8")
+# A retired-source-agnostic HTML sample for the lazy data-src + src-fallback
+# image case (relocated from the retired mangafast fixtures).
 MANGAFAST_VOLUME_HTML = Path(
-    "tests/test_files/mangafast/dragonball_super_volume_1.html"
+    "tests/test_files/html_samples/lazy_src_volume.html"
 ).read_text(encoding="utf-8")
 
 

@@ -9,13 +9,11 @@ from scraper.registry import available_sources, get_source, register_source
 def test_all_known_sources_registered():
     names = available_sources()
     for expected in [
-        "mangareader",
         "mangakaka",
         "manganelo",
         "manganato",
         "mangago",
         "mangabuddy",
-        "mangafast",
         "mangafire",
     ]:
         assert expected in names

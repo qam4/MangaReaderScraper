@@ -216,9 +216,9 @@ Create `scraper/parsers/<site>.py` with a `<Site>MangaParser`,
 - **JSON/ajax site behind a vrf token** → copy `mangafire.py`. It drives the
   browser via `BrowserFetcher` (`capture_xhr` to intercept a vrf-gated call,
   `fetch_json_in_page` for a known endpoint).
-- **plain-HTML site** → copy `mangareader.py` / `mangakaka.py`. They use
-  `fetch_soup(url)` (curl_cffi by default) — or `fetch_soup(url,
-  BrowserFetcher())` for a JS-rendered page.
+- **plain-HTML site** → copy `mangakaka.py` (or its `manganelo` / `manganato`
+  siblings — same engine family). They use `fetch_soup(url)` (curl_cffi by
+  default) — or `fetch_soup(url, BrowserFetcher())` for a JS-rendered page.
 
 Use the shared building blocks:
 - `scraper.fetchers` — `fetch_soup`, `CurlCffiFetcher` (the default, Chrome TLS
@@ -259,7 +259,7 @@ This is a **shortcut for the API-backed search/chapters pattern**, not a
 replacement for the loop: the generator still resolves the slug and lists
 chapters via the API, so a vrf-token site (`mangafire.py`) or a fully plain-HTML
 site whose *search and chapter list* are also scraped from markup
-(`mangareader.py`) is still hand-written — even though its image stage could use
+(`mangakaka.py`) is still hand-written — even though its image stage could use
 the `html` mode above.
 
 #### The config schema
