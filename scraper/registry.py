@@ -44,7 +44,6 @@ _SOURCE_MODULES = [
     "scraper.parsers.mangakaka",
     "scraper.parsers.manganelo",
     "scraper.parsers.manganato",
-    "scraper.parsers.mangapark",
     "scraper.parsers.mangago",
     "scraper.parsers.mangabuddy",
     "scraper.parsers.mangafast",

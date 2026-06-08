@@ -105,7 +105,6 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = [
     "scraper.parsers.mangago",
-    "scraper.parsers.mangapark",
     "scraper.parsers.mangareader",
 ]
 strict_optional = false

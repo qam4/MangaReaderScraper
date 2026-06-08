@@ -13,7 +13,6 @@ def test_all_known_sources_registered():
         "mangakaka",
         "manganelo",
         "manganato",
-        "mangapark",
         "mangago",
         "mangabuddy",
         "mangafast",
