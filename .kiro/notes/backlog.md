@@ -21,7 +21,8 @@ Each item has a done-when so "done" is unambiguous.
 
 - [x] **A2 [QUICK] Fix stale default source** (mangareader.net is dead)
   - DONE: `utils.create_base_config` default → `mangabuddy`; `test_utils` assertion
-    updated. NOTE: README still shows `source = mangareader` — fix in a docs sweep.
+    updated. README config example `source = mangareader` → `mangabuddy` (fixed
+    in the docs sweep).
     conftest/test_cli `mangareader` left as-is (they test the default-flows-through
     mechanism, not the product default; mangareader is still a registered source).
 

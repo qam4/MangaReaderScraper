@@ -195,7 +195,7 @@ manga_directory = /home/dir/Download
 manga_bundle_directory = /home/dir/Manga
 
 # default website to download from
-source = mangareader
+source = mangabuddy
 
 # default filetype to store mangas as
 filetype = pdf
