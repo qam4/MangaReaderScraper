@@ -1,3 +1,12 @@
+"""
+Engine-tier tests (R1): generic ``Base*`` parser behaviour -- the manga
+property wiring and the fetch_soup -> 404 -> MangaDoesNotExist contract --
+exercised through a SYNTHETIC, site-independent parser
+(``tests.helpers.EngineSiteParser``). These deliberately do NOT depend on any
+real site's markup, so a site dying never invalidates them. Site-specific
+parsing lives in the parser-tier ``test_<site>.py`` files (fixture-backed).
+"""
+
 from unittest import mock
 
 import pytest

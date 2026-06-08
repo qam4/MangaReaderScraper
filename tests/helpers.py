@@ -1,17 +1,78 @@
 from pathlib import Path
 from unittest import mock
 
+import requests  # type: ignore
 from bs4 import BeautifulSoup
 
-from scraper.new_types import SearchResult
-from scraper.parsers.base import BaseSiteParser
-from scraper.parsers.mangakaka import MangaKaka, MangaKakaMangaParser
+from scraper.exceptions import MangaDoesNotExist
+from scraper.fetchers import fetch_soup
+from scraper.new_types import SearchResult, SearchResults
+from scraper.parsers._html import attr
+from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 
-# The generic base-class parser tests (test_parsers.py) parametrize over the
-# kept HTML parser(s). mangareader/mangafast were retired (dead sites); mangakaka
-# is the live representative. (R1 will fully split engine-vs-parser tiers.)
-ALL_SCRAPERS = [MangaKaka]
-ALL_PARSERS = [MangaKakaMangaParser]
+# ---------------------------------------------------------------------------
+# R1 -- engine tier: a synthetic, site-INDEPENDENT parser used to test the
+# shared base-class behaviour (BaseSiteParser wiring, the fetch_soup -> 404 ->
+# MangaDoesNotExist contract) WITHOUT coupling those tests to any real site's
+# markup. "If a site died tomorrow, this test still means something." Real
+# sites' specifics are covered by their own fixture-backed test_<site>.py.
+# ---------------------------------------------------------------------------
+
+
+class EngineMangaParser(BaseMangaParser):
+    """Minimal manga parser exercising the shared base + fetch contract."""
+
+    base_url = "https://engine.test"
+
+    def __init__(self, manga_url=None, base_url=None):
+        super().__init__(manga_url, base_url or self.base_url)
+
+    def _manga_page_url(self) -> str:
+        return f"{self.base_url}/{self.manga_url}"
+
+    def volume_url(self, volume: str) -> str:
+        return f"{self.base_url}/{self.manga_url}/{volume}"
+
+    def _fetch(self, url):
+        try:
+            return fetch_soup(url)
+        except requests.exceptions.HTTPError as err:
+            if err.response is not None and err.response.status_code == 404:
+                raise MangaDoesNotExist(self.manga_url)
+            raise
+
+    def all_volume_ids(self):
+        soup = self._fetch(self._manga_page_url())
+        return [attr(a, "href") for a in soup.find_all("a", href=True)]
+
+    def page_urls(self, volume: str):
+        soup = self._fetch(self.volume_url(volume))
+        return list(enumerate([attr(i, "src") for i in soup.find_all("img")], start=1))
+
+
+class EngineSearchParser(BaseSearchParser):
+    """Trivial search parser for the synthetic engine site."""
+
+    def search(self, start: int = 1) -> SearchResults:
+        return {}
+
+
+class EngineSiteParser(BaseSiteParser):
+    """Synthetic site parser (no real site) for engine-tier base-class tests."""
+
+    def __init__(self, manga_url=None):
+        super().__init__(
+            manga_url=manga_url,
+            base_url="https://engine.test",
+            manga_parser=EngineMangaParser,
+            search_parser=EngineSearchParser,
+        )
+
+
+# Engine-tier parametrization: the synthetic parser stands in for "any parser",
+# so test_parsers.py asserts base behaviour without depending on a live site.
+ALL_SCRAPERS = [EngineSiteParser]
+ALL_PARSERS = [EngineMangaParser]
 ALL_SCRAPERS_AND_PARSERS = [
     (scraper, parser) for scraper, parser in zip(ALL_SCRAPERS, ALL_PARSERS)
 ]
