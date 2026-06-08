@@ -1606,6 +1606,19 @@ def _dump_api_bodies(
     _write(out_dir, "api_index.txt", "\n".join(index_lines) + "\n")
 
 
+async def _read_cookies(tab, cdp) -> Dict[str, str]:  # pragma: no cover - browser
+    """Read the current page's cookies via CDP (best effort -> {} on failure).
+
+    These are the session cookies a cleared-Cloudflare browser holds; passing
+    them to the image ladder lets curl_cffi/cloudscraper be judged with the same
+    session the parser would reuse (the MangaFire 'harvest cookies' pattern)."""
+    try:
+        raw = await tab.send(cdp.network.get_cookies())
+        return {c.name: c.value for c in raw}
+    except Exception:
+        return {}
+
+
 async def _refetch_misses(tab, misses, api_bodies) -> int:
     """Re-fetch endpoints we couldn't read from the CDP buffer, from inside the
     page (credentialed, same-origin). Appends recovered (url, body) pairs to
@@ -1773,35 +1786,153 @@ def _check_api_backends(
     return "\n".join(lines) + "\n", verdict_map
 
 
-def _check_image(img_url: str, referer: str) -> str:
-    """
-    Probe an image URL to see whether the CDN is protected: try plain requests
-    (no headers), then plain requests with a Referer. Reports status + content
-    type so you can tell if images need curl_cffi/browser cookies + Referer.
-    """
-    import requests  # type: ignore
+# ---------------------------------------------------------------------------
+# C10 -- uniform "cheapest working fetcher" ladder. The probe should not just
+# find WHERE the content is but the LEAST-INVOLVED way to GET it (a browser per
+# chapter is a drag). The decision (which tier wins) and the candidate-url
+# extraction are pure + fixture-tested; the per-tier network GET is injected so
+# tests never touch the network and the live attempt uses scraper.fetchers.
+# ---------------------------------------------------------------------------
 
-    lines = [f"# Image check: {img_url}\n"]
-    for label, headers in (
-        ("plain", {}),
-        ("with Referer", {"Referer": referer}),
-    ):
-        try:
-            resp = requests.get(img_url, headers=headers, timeout=20)
-            ctype = resp.headers.get("content-type", "?")
-            ok = resp.status_code == 200 and ctype.startswith("image")
-            lines.append(
-                f"{label}: status={resp.status_code} content-type={ctype} "
-                f"{'OK (real image)' if ok else 'NOT an image -> likely protected'}"
-            )
-        except Exception as err:  # pragma: no cover - network failures
-            lines.append(f"{label}: ERROR {err}")
+# cheapest -> most invasive
+FETCHER_LADDER = ("requests", "curl_cffi", "cloudscraper", "browser")
+
+
+def cheapest_working(outcomes: Dict[str, bool]) -> Optional[str]:
+    """The cheapest fetcher tier that worked, per the ladder order, or None."""
+    for name in FETCHER_LADDER:
+        if outcomes.get(name):
+            return name
+    return None
+
+
+def candidate_image_urls(html: str, limit: int = 5) -> List[str]:
+    """Page-image urls from the largest ``<img>`` cluster (the reader
+    container), preferring ``data-src`` (lazy) then ``src``, skipping ``data:``
+    placeholders. The largest cluster is the page container, so nav/logo images
+    (elsewhere in the DOM) are excluded. Handles both src and data-src readers.
+    Pure / unit-tested against captured reader fixtures.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    parent_counts: Counter = Counter()
+    by_parent: Dict[int, list] = {}
+    for img in soup.find_all("img"):
+        parent = img.parent
+        if parent is None:
+            continue
+        parent_counts[id(parent)] += 1
+        by_parent.setdefault(id(parent), []).append(img)
+    if not parent_counts:
+        return []
+    best_id, _ = parent_counts.most_common(1)[0]
+    urls: List[str] = []
+    for img in by_parent[best_id]:
+        url = attr(img, "data-src") or attr(img, "src")
+        if url and not url.startswith("data:"):
+            urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _real_image_attempt(
+    name: str, url: str, headers: Dict[str, str], cookies: Dict[str, str]
+) -> Tuple[bool, str]:  # pragma: no cover - real network
+    """GET ``url`` with one fetcher tier and report whether it returned a real
+    image (status 200 + an ``image/*`` content type). curl_cffi/cloudscraper
+    carry the session ``cookies``; ``requests`` is the bare baseline."""
+    try:
+        status: int
+        ctype: str
+        if name == "requests":
+            import requests  # type: ignore
+
+            r = requests.get(url, headers=headers, timeout=20)
+            status, ctype = r.status_code, str(r.headers.get("content-type", "?"))
+        elif name == "curl_cffi":
+            from curl_cffi import requests as creq  # type: ignore
+
+            session = creq.Session(impersonate="chrome")
+            if cookies:
+                session.cookies.update(cookies)
+            cr = session.get(url, headers=headers, timeout=20)
+            status, ctype = cr.status_code, str(cr.headers.get("content-type", "?"))
+        elif name == "cloudscraper":
+            import cloudscraper  # type: ignore
+
+            scraper = cloudscraper.create_scraper()
+            cs = scraper.get(url, headers=headers, cookies=cookies or None, timeout=20)
+            status, ctype = cs.status_code, str(cs.headers.get("content-type", "?"))
+        else:
+            return False, "not attempted"
+        ok = status == 200 and ctype.startswith("image")
+        return ok, f"status={status} content-type={ctype}"
+    except Exception as err:
+        return False, f"ERROR {err}"
+
+
+# image tier subset: a browser rarely fetches the image bytes itself
+_IMAGE_LADDER = ("requests", "curl_cffi", "cloudscraper")
+
+
+def check_image_ladder(
+    urls: List[str],
+    referer: str,
+    cookies: Optional[Dict[str, str]] = None,
+    attempt: Optional[Callable[..., Tuple[bool, str]]] = None,
+) -> Tuple[Optional[str], str]:
+    """Run the image fetcher ladder over a few candidate image urls and report
+    the CHEAPEST tier that returns a real image.
+
+    Tries requests -> curl_cffi -> cloudscraper (browser rarely fetches the
+    image bytes), carrying the page ``Referer`` and -- for the
+    fingerprint/cookie-aware tiers -- the captured session ``cookies`` (the
+    MangaFire pattern: clear once, reuse cookies, download cheap). A tier counts
+    as working if ANY candidate url returns a real image. Returns
+    ``(cheapest_working_fetcher, report_text)``; ``cheapest_working_fetcher`` is
+    None when no tier got an image. The per-tier GET is injected via ``attempt``
+    (defaults to the real backends; mocked in tests). Decision logic is pure.
+    """
+    attempt = attempt or _real_image_attempt
+    cookies = cookies or {}
+    test_urls = [u for u in urls if u][:3]
+    lines = ["# Image fetchability ladder (cheapest tier that returns an image)\n"]
+    if not test_urls:
+        lines.append("(no candidate image urls found on the page)")
+        return None, "\n".join(lines) + "\n"
+    lines.append(f"Referer: {referer}")
+    lines.append(f"session cookies carried: {'yes' if cookies else 'no'}")
+    lines.append(f"candidate images ({len(test_urls)}):")
+    for u in test_urls:
+        lines.append(f"  {u}")
     lines.append("")
-    lines.append(
-        "If neither returns a real image, the CDN needs browser cookies + "
-        "Referer (curl_cffi with Chrome impersonation, like the MangaFire parser)."
-    )
-    return "\n".join(lines) + "\n"
+
+    headers = {"Referer": referer} if referer else {}
+    outcomes: Dict[str, bool] = {}
+    for name in _IMAGE_LADDER:
+        tier_ok = False
+        details: List[str] = []
+        for u in test_urls:
+            ok, detail = attempt(name, u, headers, cookies)
+            details.append(detail)
+            if ok:
+                tier_ok = True
+                break
+        outcomes[name] = tier_ok
+        lines.append(
+            f"{name:11} -> {'OK (real image)' if tier_ok else 'no'}  ({details[-1]})"
+        )
+
+    cheapest = cheapest_working(outcomes)
+    lines.append("")
+    if cheapest:
+        lines.append(f"-> cheapest working image fetcher: {cheapest}")
+    else:
+        lines.append(
+            "-> NO cheap tier returned an image; the CDN likely needs the live "
+            "browser session's cookies (see C11) or a Referer/token we don't have."
+        )
+    return cheapest, "\n".join(lines) + "\n"
 
 
 def is_api_like_url(url: str) -> bool:
@@ -2066,9 +2197,16 @@ async def _probe(
 
         # Chapter stage: if the page has page-images, check whether the image CDN
         # itself is protected (plain requests vs browser cookies + Referer).
-        if report.data_src_samples:
-            img_url = report.data_src_samples[0]
-            _write(out_dir, "image_check.txt", _check_image(img_url, url))
+        # Image stage (C10): find the CHEAPEST fetcher that can actually pull
+        # the page images -- run the ladder (requests -> curl_cffi ->
+        # cloudscraper) over the candidate image urls, carrying the page Referer
+        # and the live session cookies (so a hotlink/cookie-gated CDN is judged
+        # fairly). Handles src- and data-src-based readers, not just data-src[0].
+        img_candidates = candidate_image_urls(html)
+        if img_candidates:
+            cookies = await _read_cookies(tab, cdp)
+            _cheapest, img_report = check_image_ladder(img_candidates, url, cookies)
+            _write(out_dir, "image_check.txt", img_report)
 
         if search:
             await _drive_search(

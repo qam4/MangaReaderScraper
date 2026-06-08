@@ -19,6 +19,9 @@ from scraper.probe import (
     analyze_html,
     api_dump_filename,
     build_field_map,
+    candidate_image_urls,
+    cheapest_working,
+    check_image_ladder,
     compare_fetches,
     detect_challenge,
     find_text,
@@ -1403,3 +1406,70 @@ def test_run_multi_without_query_treats_entry_as_series(tmp_path):
     assert "search" not in stages
     assert "chapters" in stages and "images" in stages
     assert calls[0][0] == "https://nelomanga.net/manga/naruto"
+
+
+# ===================== C10: cheapest-fetcher-per-stage =====================
+
+
+def test_cheapest_working_returns_cheapest_tier():
+    assert cheapest_working({"requests": True, "curl_cffi": True}) == "requests"
+    assert cheapest_working({"requests": False, "curl_cffi": True}) == "curl_cffi"
+    assert (
+        cheapest_working({"requests": False, "curl_cffi": False, "cloudscraper": True})
+        == "cloudscraper"
+    )
+    assert cheapest_working({"requests": False}) is None
+
+
+def test_candidate_image_urls_from_reader_fixtures():
+    # the page-image cluster, not nav/logo images; src or data-src
+    nelo = Path("tests/test_files/manganelo/naruto_reader.html").read_text(
+        encoding="utf-8"
+    )
+    urls = candidate_image_urls(nelo)
+    assert urls and all("2xstorage.com" in u for u in urls)
+    assert not any("data:" in u for u in urls)
+
+    mangago = Path("tests/test_files/mangago/naruto_reader.html").read_text(
+        encoding="utf-8"
+    )
+    urls = candidate_image_urls(mangago)
+    assert urls and all("mangapicgallery.com" in u for u in urls)
+
+
+def test_check_image_ladder_picks_cheapest_working(monkeypatch):
+    # requests fails (hotlink-protected), curl_cffi succeeds -> curl_cffi wins
+    def fake_attempt(name, url, headers, cookies):
+        if name == "requests":
+            return False, "status=403 content-type=text/html"
+        if name == "curl_cffi":
+            return True, "status=200 content-type=image/webp"
+        return False, "status=403"
+
+    cheapest, report = check_image_ladder(
+        ["https://cdn/x/0.webp"],
+        "https://site/reader",
+        {"cf": "1"},
+        attempt=fake_attempt,
+    )
+    assert cheapest == "curl_cffi"
+    assert "cheapest working image fetcher: curl_cffi" in report
+
+
+def test_check_image_ladder_reports_when_none_work():
+    def fake_attempt(name, url, headers, cookies):
+        return False, "status=403"
+
+    cheapest, report = check_image_ladder(
+        ["https://cdn/x/0.webp"], "https://site/reader", attempt=fake_attempt
+    )
+    assert cheapest is None
+    assert "NO cheap tier returned an image" in report
+
+
+def test_check_image_ladder_no_candidates():
+    cheapest, report = check_image_ladder(
+        [], "https://site", attempt=lambda *a: (True, "")
+    )
+    assert cheapest is None
+    assert "no candidate image urls" in report
