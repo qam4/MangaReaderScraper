@@ -20,16 +20,13 @@ BASE_URL = "https://nelomanga.net"
 
 class ManganeloMangaParser(KakalotMangaParser):
     base_url = BASE_URL
-    volume_path = "{base_url}/chapter/manga-{slug}/chapter-{volume}"
-    manga_path = "{base_url}/manga/manga-{slug}"
-    page_img_attr = "data-src"
-    chapter_href_sep = "-"
+    manga_path = "{base_url}/manga/{slug}"
+    page_img_attr = "src"
 
 
 class ManganeloSearch(KakalotSearchParser):
     base_url = BASE_URL
     source = "manganelo"
-    result_div_class = "story_item"
 
 
 @register_source("manganelo")

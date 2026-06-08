@@ -7,12 +7,8 @@ https://www.natomanga.com/search/story/billy_bat
 """
 
 import logging
-from pathlib import Path
 from typing import Optional
 
-from bs4.element import Tag
-
-from scraper.parsers._html import attr
 from scraper.parsers.base import BaseSiteParser
 from scraper.parsers.kakalot import KakalotMangaParser, KakalotSearchParser
 from scraper.registry import register_source
@@ -24,26 +20,13 @@ BASE_URL = "https://natomanga.com"
 
 class ManganatoMangaParser(KakalotMangaParser):
     base_url = BASE_URL
-    volume_path = "{base_url}/manga-{slug}/chapter-{volume}"
-    manga_path = "{base_url}/manga-{slug}"
+    manga_path = "{base_url}/manga/{slug}"
     page_img_attr = "src"
-    chapter_href_sep = "-"
 
 
 class ManganatoSearch(KakalotSearchParser):
     base_url = BASE_URL
     source = "manganato"
-    result_div_class = "search-story-item"
-
-    def _slug(self, result: Tag) -> str:
-        manga_url = attr(result.find("a"), "href")
-        return Path(manga_url).stem.split("-")[-1]
-
-    def _latest_chapter(self, result: Tag) -> str:
-        last = result.find("a", {"class": "item-chapter a-h text-nowrap"})
-        if not last:
-            return ""
-        return attr(last, "href").split("-")[-1]
 
 
 @register_source("manganato")

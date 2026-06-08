@@ -20,16 +20,13 @@ BASE_URL = "https://mangakakalot.gg"
 
 class MangaKakaMangaParser(KakalotMangaParser):
     base_url = BASE_URL
-    volume_path = "{base_url}/chapter/{slug}/chapter_{volume}"
     manga_path = "{base_url}/manga/{slug}"
     page_img_attr = "src"
-    chapter_href_sep = "_"
 
 
 class MangaKakaSearch(KakalotSearchParser):
     base_url = BASE_URL
     source = "mangakaka"
-    result_div_class = "story_item"
 
 
 @register_source("mangakaka")
