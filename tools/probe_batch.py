@@ -21,6 +21,7 @@ Workflow (run on a machine with a browser -- the probe drives nodriver headful):
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import tomllib
@@ -145,15 +146,6 @@ def _field(text: str, label: str) -> str:
     return "-"
 
 
-def _strategy(text: str) -> str:
-    """Pull ``-> strategy: X`` from fetch_recommendation.txt (the ``->`` result
-    line, not the ``# Fetch strategy:`` header)."""
-    for line in text.splitlines():
-        if "-> strategy:" in line:
-            return line.split("strategy:", 1)[1].strip()
-    return "-"
-
-
 @dataclass
 class StageResult:
     site: str
@@ -161,8 +153,87 @@ class StageResult:
     present: bool
     fetcher: str = "-"
     api_open: str = "-"
-    strategy: str = "-"
     challenge: bool = False
+    title: str = "-"
+    size: int = 0
+    verdict: str = "-"
+
+
+# Hosts that mean the domain has been dropped to a parking / for-sale / spam
+# redirect service -- the captured page is NOT the manga site, even though it
+# "loaded". Add more as you see them in `recommendation.txt`'s "host(s) seen".
+_PARKED_HOSTS = (
+    "parklogic",
+    "sedoparking",
+    "bodis",
+    "dan.com",
+    "afternic",
+    "hugedomains",
+    "above.com",
+    "parkingcrew",
+    "/cashparking",
+    "uniregistry",
+)
+# Off-site hosts that indicate a spam/shop redirect rather than the manga site.
+# Kept deliberately narrow: a mere host *change* is NOT a problem (mangabuddy
+# legitimately serves from mangak.io; sites migrate domains), so we only flag
+# hosts that are unambiguously not a manga site. Extend as you actually see them.
+_SPAM_HOSTS = ("dhgate", "aliexpress")
+
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def _page_title_size(page_html: str) -> tuple[str, int]:
+    """Page <title> + byte size -- the single most diagnostic signal (separates
+    '404' / 'Just a moment' / 'Privacy error' / 'Redirecting' / a real title).
+    Empty title (JS apps) -> '(js/no title)'."""
+    if not page_html:
+        return "(no page.html)", 0
+    m = _TITLE_RE.search(page_html)
+    title = " ".join(m.group(1).split()) if m else ""
+    return (title or "(js/no title)"), len(page_html)
+
+
+def _hosts_seen(rec: str) -> str:
+    for line in rec.splitlines():
+        if line.lower().startswith("host(s) seen:"):
+            return line.split(":", 1)[1].strip().lower()
+    return ""
+
+
+def _classify(title: str, size: int, hosts: str, challenge: bool) -> str:
+    """Turn the capture into a fix/retire verdict. Order matters: a parked/spam
+    landing or a privacy/redirect interstitial means the capture is NOT the
+    manga site, regardless of how cleanly it 'loaded'.
+
+      PARKED   - domain dropped to a parking service (parklogic, sedo, ...)
+      OFFSITE  - redirected to an unambiguous spam/shop host (dhgate, ...)
+      DEAD     - Chrome 'Privacy error' / connection interstitial (cert/DNS)
+      REDIRECT - a 'Redirecting...' shim (inspect where it landed)
+      WALL     - Cloudflare challenge wall not cleared ('Just a moment...')
+      404      - page loaded but is a not-found (often just a stale sample slug)
+      LIVE     - a real page
+
+    NOTE: a host *change* alone is never a verdict -- a legit migration
+    (mangabuddy -> mangak.io) lands on a non-parked, non-spam host with real
+    content and is correctly reported LIVE. Only the kind of landing host
+    (parking/spam) or an interstitial title condemns a capture.
+    """
+    t = title.lower()
+    h = hosts.lower()
+    if any(p in h for p in _PARKED_HOSTS):
+        return "PARKED"
+    if any(s in h for s in _SPAM_HOSTS) or any(s in t for s in ("dhgate", "wholesale")):
+        return "OFFSITE"
+    if "privacy error" in t or "your connection" in t:
+        return "DEAD"
+    if "redirect" in t:
+        return "REDIRECT"
+    if challenge or "just a moment" in t or "attention required" in t:
+        return "WALL"
+    if "404" in t or "not found" in t:
+        return "404?slug"
+    return "LIVE"
 
 
 def collect(targets: List[Target]) -> List[StageResult]:
@@ -172,18 +243,21 @@ def collect(targets: List[Target]) -> List[StageResult]:
             continue
         d = t.out_dir
         rec = _read(d / "recommendation.txt")
-        fetch = _read(d / "fetch_recommendation.txt")
         cand = _read(d / "candidates.txt")
-        present = bool(rec or fetch or cand)
+        title, size = _page_title_size(_read(d / "page.html"))
+        hosts = _hosts_seen(rec)
+        challenge = "CHALLENGE WALL" in cand
         results.append(
             StageResult(
                 site=t.site,
                 stage=t.stage,
-                present=present,
+                present=bool(rec or cand or size),
                 fetcher=_field(rec, "suggested default fetcher") if rec else "-",
                 api_open=_field(rec, "open JSON API found") if rec else "-",
-                strategy=_strategy(fetch) if fetch else "-",
-                challenge="CHALLENGE WALL" in cand,
+                challenge=challenge,
+                title=title,
+                size=size,
+                verdict=_classify(title, size, hosts, challenge),
             )
         )
     return results
@@ -198,15 +272,13 @@ def summary(targets: Optional[List[Target]] = None) -> None:
             "No probe_out captures found yet. Run: uv run python tools/probe_batch.py run"
         )
         return
-    hdr = f"{'site':12} {'stage':8} {'cap':3} {'fetcher':10} {'api':4} {'strategy':18} chal"
+    hdr = f"{'site':12} {'stage':8} {'verdict':9} {'fetcher':9} {'api':4} {'size':>7}  title"
     print(hdr)
-    print("-" * len(hdr))
+    print("-" * (len(hdr) + 18))
     for r in results:
-        cap = "yes" if r.present else " - "
-        chal = "WALL" if r.challenge else ""
         print(
-            f"{r.site:12} {r.stage:8} {cap:3} {r.fetcher[:10]:10} "
-            f"{r.api_open[:4]:4} {r.strategy[:18]:18} {chal}"
+            f"{r.site:12} {r.stage:8} {r.verdict:9} {r.fetcher[:9]:9} "
+            f"{r.api_open[:4]:4} {r.size:>7}  {r.title[:38]}"
         )
 
 
