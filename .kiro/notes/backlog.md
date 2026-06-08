@@ -445,6 +445,28 @@ Two distinct root causes found:
     the right name. Gates green, 338 pass.
   - NOTE: F1 reduces how OFTEN incompletes happen; F2 cleans up when they do.
 
+- [x] **F5 [QUICK-ish] CBZ corruption: bare ZipFile in bundle.py + non-atomic writes**
+  - WHERE: `bundle.py` opened the volume archive bare (`z = zipfile.ZipFile(path,
+    "w")` ... `z.close()` at the end). If ANY step in between raised (bad chapter
+    file, failed extract, interrupt), `z.close()` was never reached → the zip's
+    central directory was never written → a `.cbz` that exists but is UNREADABLE
+    (`BadZipFile`). The `writers.py` CbzWriter/PdfWriter used `with`/`c.save()` so
+    they closed cleanly, but still wrote DIRECTLY to the final path → a failure
+    mid-write left a partial file there too.
+  - DONE: added the shared `utils.atomic_write_path(final)` context manager —
+    write to a `.part` sibling, `os.replace` onto the final path on clean exit
+    (atomic publish), unlink the partial on ANY exception (final untouched).
+    Applied it to all three write sites: bundle.py volume cbz (now `with
+    atomic_write_path(...) as tmp_cbz: with ZipFile(tmp_cbz) ...`; the mid-bundle
+    extract failure now propagates so the partial is dropped instead of a bare
+    `return` that left a half-built archive), CbzWriter, and PdfWriter. Tests:
+    helper publishes-on-success / leaves-nothing-on-failure / preserves-existing-
+    final-on-failure; CbzWriter leaves no file when zipping raises. Gates green,
+    343 pass.
+  - CONSOLIDATION: this is the one shared "non-corrupting file output" primitive
+    the three writers were each missing — fixes the corruption bug AND the
+    partial-file problem (same family as F2) in one place.
+
 - [ ] **F3 [QUICK, LOW-PRI] Configurable worker pool size (be a gentler default)**
   - WHERE: `manga.py` `_get_volumes_data` hardcodes `Pool(4)`; `bundle.py` uses
     `Pool()` (all cores). No way to turn concurrency down to be kinder to a site.

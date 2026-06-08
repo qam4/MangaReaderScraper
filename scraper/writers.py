@@ -25,6 +25,8 @@ from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
+from scraper.utils import atomic_write_path
+
 if TYPE_CHECKING:
     from scraper.manga import Volume
 
@@ -48,16 +50,19 @@ class PdfWriter:
         if not volume.pages:
             return None
         logger.info(f"Volume {volume.number} saved to {volume.file_path}")
-        c = canvas.Canvas(str(volume.file_path))
-        for page in volume.pages:
-            img = BytesIO(page.img)
-            cover = Image.open(img)
-            width, height = cover.size
-            c.setPageSize((width, height))
-            imgreader = ImageReader(img)
-            c.drawImage(imgreader, x=0, y=0)
-            c.showPage()
-        c.save()
+        # Write to a temp sibling and atomically publish, so a failure midway
+        # leaves no partial/corrupt PDF at the final path.
+        with atomic_write_path(volume.file_path) as tmp:
+            c = canvas.Canvas(str(tmp))
+            for page in volume.pages:
+                img = BytesIO(page.img)
+                cover = Image.open(img)
+                width, height = cover.size
+                c.setPageSize((width, height))
+                imgreader = ImageReader(img)
+                c.drawImage(imgreader, x=0, y=0)
+                c.showPage()
+            c.save()
 
 
 class CbzWriter:
@@ -76,13 +81,16 @@ class CbzWriter:
         if not volume.pages:
             return None
         logger.info(f"Volume {volume.number} saved to {volume.file_path}")
-        with zipfile.ZipFile(str(volume.file_path), "w") as cbz:
-            for page in volume.pages:
-                jpgfilename = f"{page.number:03d}_{volume.number}.jpg"
-                tmp_jpg = Path(tempfile.gettempdir()) / jpgfilename
-                tmp_jpg.write_bytes(page.img)
-                cbz.write(tmp_jpg, jpgfilename)
-                tmp_jpg.unlink()
+        # Write to a temp sibling and atomically publish (no partial .cbz on
+        # failure); the `with ZipFile` still finalizes the archive on exit.
+        with atomic_write_path(volume.file_path) as tmp:
+            with zipfile.ZipFile(str(tmp), "w") as cbz:
+                for page in volume.pages:
+                    jpgfilename = f"{page.number:03d}_{volume.number}.jpg"
+                    tmp_jpg = Path(tempfile.gettempdir()) / jpgfilename
+                    tmp_jpg.write_bytes(page.img)
+                    cbz.write(tmp_jpg, jpgfilename)
+                    tmp_jpg.unlink()
 
 
 _WRITERS: Dict[str, Type[VolumeWriter]] = {

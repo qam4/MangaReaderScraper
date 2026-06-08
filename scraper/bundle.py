@@ -14,7 +14,13 @@ from multiprocessing.pool import Pool
 from typing import List
 
 from scraper.manga import Manga
-from scraper.utils import configure_logging, get_adapter, get_console, settings
+from scraper.utils import (
+    atomic_write_path,
+    configure_logging,
+    get_adapter,
+    get_console,
+    settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,49 +154,59 @@ class Bundle:
         ]
         if self.is_obsolete(volume_cbz_path, dependencies):
             logger.info(f"Creating {volume_cbz_path}...")
-            z = zipfile.ZipFile(volume_cbz_path, "w")
+            # Write to a temp sibling and atomically publish: if anything below
+            # raises (bad chapter file, extract failure, interrupt), the partial
+            # is removed and no corrupt .cbz is left at volume_cbz_path. (Was a
+            # bare ZipFile whose z.close() was skipped on error -> unreadable cbz.)
+            try:
+                with atomic_write_path(volume_cbz_path) as tmp_cbz:
+                    with zipfile.ZipFile(tmp_cbz, "w") as z:
+                        # Add metadata info file
+                        comic_info_str = self.comic_info_template.format(
+                            series=title, writer=writer
+                        )
+                        comic_info_path = os.path.join(
+                            output_folder, f"ComicInfo{volume}.xml"
+                        )
+                        with open(comic_info_path, "w") as the_file:
+                            the_file.write(comic_info_str)
+                        cbz_output_path = os.path.basename(
+                            comic_info_path.replace(str(volume), "")
+                        )
+                        z.write(comic_info_path, cbz_output_path)
+                        os.remove(comic_info_path)
 
-            # Add metadata info file
-            comic_info_str = self.comic_info_template.format(
-                series=title, writer=writer
-            )
-            comic_info_path = os.path.join(output_folder, f"ComicInfo{volume}.xml")
-            with open(comic_info_path, "w") as the_file:
-                the_file.write(comic_info_str)
-            cbz_output_path = os.path.basename(comic_info_path.replace(str(volume), ""))
-            z.write(comic_info_path, cbz_output_path)
-            os.remove(comic_info_path)
+                        chapter = 0
+                        while chapter < num_chapters:
+                            cbz_file = cbz_files[chapter_start + chapter]
+                            file_root, _ = os.path.splitext(cbz_file)
+                            logger.debug(f"file_root={file_root}")
 
-            chapter = 0
-            while chapter < num_chapters:
-                cbz_file = cbz_files[chapter_start + chapter]
-                file_root, _ = os.path.splitext(cbz_file)
-                logger.debug(f"file_root={file_root}")
+                            archive_path = os.path.join(manga_folder, cbz_file)
+                            logger.debug(f"archive_path={archive_path}")
+                            folder = os.path.join(manga_folder, file_root)
+                            logger.debug(f"folder={folder}")
+                            # let an extract failure propagate: the atomic
+                            # context drops the partial cbz rather than publish
+                            # a half-built volume.
+                            extract_cbz(archive_path, folder)
 
-                archive_path = os.path.join(manga_folder, cbz_file)
-                logger.debug(f"archive_path={archive_path}")
-                folder = os.path.join(manga_folder, file_root)
-                logger.debug(f"folder={folder}")
-                try:
-                    extract_cbz(archive_path, folder)
-                except Exception:
-                    # do not go further if extracting the cbz failed
-                    return
+                            # Add every file in the current folder to the volume
+                            for root, _dirs, files in os.walk(folder):
+                                for filename in files:
+                                    cbz_input_path = os.path.join(folder, filename)
+                                    cbz_output_path = os.path.join(file_root, filename)
+                                    z.write(cbz_input_path, cbz_output_path)
 
-                # Add every file in the current folder to the volume
-                for root, _dirs, files in os.walk(folder):
-                    for filename in files:
-                        cbz_input_path = os.path.join(folder, filename)
-                        cbz_output_path = os.path.join(file_root, filename)
-                        z.write(cbz_input_path, cbz_output_path)
+                            # remove the unzipped chapter
+                            shutil.rmtree(folder)
 
-                # remove the unzipped chapter
-                shutil.rmtree(folder)
-
-                chapter += 1
-
-            # Close the volume .cbz file
-            z.close()
+                            chapter += 1
+            except Exception:
+                # extracting/zipping a chapter failed; the partial cbz was
+                # cleaned up by atomic_write_path. Abort this volume.
+                logger.error(f"Failed to build {volume_cbz_path}; skipping volume")
+                return
 
         # Convert the .cbz to .mobi
         volume_mobi_path = volume_cbz_path.replace("cbz", "mobi")

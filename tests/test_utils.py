@@ -7,6 +7,7 @@ import pytest
 from scraper.exceptions import CannotExtractChapter
 from scraper.utils import (
     CustomAdapter,
+    atomic_write_path,
     create_base_config,
     extract_chapter_number,
     get_adapter,
@@ -99,6 +100,41 @@ def test_menu_input_quit(inputs, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda x: next(gen))
     with pytest.raises(SystemExit):
         menu_input()
+
+
+# ============================ atomic_write_path ==========================
+
+
+def test_atomic_write_path_publishes_on_success(tmp_path):
+    final = tmp_path / "out.bin"
+    with atomic_write_path(final) as tmp:
+        assert tmp != final
+        tmp.write_bytes(b"payload")
+        assert not final.exists()  # not published until clean exit
+    assert final.read_bytes() == b"payload"
+    assert not tmp.exists()  # temp moved, not left behind
+
+
+def test_atomic_write_path_leaves_nothing_on_failure(tmp_path):
+    final = tmp_path / "out.bin"
+    with pytest.raises(RuntimeError):
+        with atomic_write_path(final) as tmp:
+            tmp.write_bytes(b"partial")
+            raise RuntimeError("boom mid-write")
+    # neither the final nor the partial file is left behind
+    assert not final.exists()
+    assert not tmp.exists()
+
+
+def test_atomic_write_path_preserves_existing_final_on_failure(tmp_path):
+    final = tmp_path / "out.bin"
+    final.write_bytes(b"original")
+    with pytest.raises(RuntimeError):
+        with atomic_write_path(final) as tmp:
+            tmp.write_bytes(b"new partial")
+            raise RuntimeError("boom")
+    # a failed rewrite must not clobber the previously-good file
+    assert final.read_bytes() == b"original"
 
 
 def teardown_module(module):

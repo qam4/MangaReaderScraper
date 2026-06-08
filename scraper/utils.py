@@ -6,9 +6,10 @@ import pdb
 import re
 import sys
 import time
+from contextlib import contextmanager
 from logging import Logger, LoggerAdapter
 from pathlib import Path
-from typing import Any, Callable, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, Iterator, MutableMapping, Optional, Tuple, Union
 
 import requests  # type: ignore
 from requests.adapters import HTTPAdapter  # type: ignore
@@ -37,6 +38,38 @@ def get_console() -> Any:
     from rich.console import Console
 
     return Console(stderr=True)
+
+
+@contextmanager
+def atomic_write_path(final_path: Union[str, Path]) -> Iterator[Path]:
+    """Yield a temp path to write to, then atomically move it onto ``final_path``.
+
+    The single shared primitive for non-corrupting file output (cbz/pdf/bundle).
+    Callers write their file to the yielded temp path; on clean exit it is
+    ``os.replace``d onto ``final_path`` (atomic on the same filesystem, so a
+    reader never sees a half-written file). On ANY exception the temp file is
+    removed and ``final_path`` is left untouched -- so a failed write leaves no
+    corrupt or partial artifact behind (the bug where a bare ``ZipFile`` whose
+    ``close()`` was never reached left an unreadable ``.cbz``).
+
+    The temp path is a sibling of ``final_path`` (same directory/filesystem so
+    the rename is atomic, not a cross-device copy), suffixed ``.part``.
+    """
+    final = Path(final_path)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    tmp = final.with_name(f"{final.name}.part")
+    try:
+        yield tmp
+    except BaseException:
+        # failed (or interrupted) mid-write: drop the partial, keep final intact
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError as err:  # pragma: no cover - unexpected fs error
+                logging.warning(f"Could not remove partial file {tmp}: {err}")
+        raise
+    else:
+        os.replace(tmp, final)  # atomic publish
 
 
 def configure_logging(level: Optional[str] = None) -> None:

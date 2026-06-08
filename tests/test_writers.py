@@ -1,4 +1,7 @@
 from pathlib import Path
+from unittest import mock
+
+import pytest
 
 from scraper.manga import Volume
 from scraper.writers import CbzWriter, PdfWriter, get_writer
@@ -11,6 +14,20 @@ def _volume(file_path: Path) -> Volume:
     volume = Volume("1", file_path, file_path)
     volume.pages = [(1, JPG, "success"), (2, JPG2, "success")]
     return volume
+
+
+def test_cbz_writer_leaves_no_file_when_write_fails(tmp_path):
+    # atomic write: if zipping raises midway, no partial/corrupt .cbz is left at
+    # the final path (the bug class behind unreadable cbz archives).
+    out = tmp_path / "chapter_1.cbz"
+    vol = _volume(out)
+    with mock.patch(
+        "scraper.writers.zipfile.ZipFile", side_effect=RuntimeError("disk full")
+    ):
+        with pytest.raises(RuntimeError):
+            CbzWriter().write(vol)
+    assert not out.exists()
+    assert not out.with_name(out.name + ".part").exists()
 
 
 def test_get_writer_returns_matching_writer():
