@@ -418,23 +418,19 @@ Two distinct root causes found:
   - FOLLOW-UPS: 429/503-aware longer waits + Retry-After → F4; unify with
     base.page_data's loop (one retry policy) — still worth doing, ties to C3.
 
-- [ ] **F2 [QUICK-ish] Incomplete-volume files are never cleaned up**
+- [x] **F2 [QUICK-ish] Incomplete-volume files are never cleaned up**
   - WHERE: `manga.py` `Manga.add_volume(complete=False)` writes the volume with a
-    `-incomplete` suffix (`<idx>_<id>-incomplete.<ext>`). `volume_exists` only
-    checks the COMPLETE name, so a later run re-downloads (good — that's why
-    retrying works) and writes the clean file — but the stale `-incomplete` file
-    is NEVER deleted, and nothing notices an existing incomplete on disk. Result:
-    orphaned `*-incomplete.*` files accumulate, and you can end up with both the
-    complete and incomplete variants side by side.
-  - FIX: parent-side (B2-redesign put writing/assembly in the parent —
-    `_add_download_to_manga`): when a volume completes, delete any stale
-    `-incomplete` sibling; OR don't persist incompletes at all unless a flag asks
-    for partials; OR on startup, treat an existing `-incomplete` as "needs
-    redownload" and clean it. Decide the policy (keep-partial vs always-clean).
-  - DONE-WHEN: a completed volume leaves no `-incomplete` file behind; no
-    duplicate complete+incomplete pair; covered by a test.
+    `-incomplete` suffix; `volume_exists` only checks the COMPLETE name, so a
+    later run re-downloads (good) and writes the clean file — but the stale
+    `-incomplete` file was NEVER deleted → orphans accumulate, complete+incomplete
+    pairs coexist.
+  - DONE: parent-side cleanup in `_add_download_to_manga` — when a volume
+    completes (`download.complete`), `_remove_incomplete_sibling(file_path)`
+    deletes any leftover `<...>-incomplete.<ext>`. Added `_incomplete_path` helper
+    (inserts the suffix before the extension, mirroring add_volume). 2 tests: the
+    stale incomplete is removed once the volume completes; the path helper builds
+    the right name. Gates green, 338 pass.
   - NOTE: F1 reduces how OFTEN incompletes happen; F2 cleans up when they do.
-    Do both — they're complementary.
 
 - [ ] **F3 [QUICK, LOW-PRI] Configurable worker pool size (be a gentler default)**
   - WHERE: `manga.py` `_get_volumes_data` hardcodes `Pool(4)`; `bundle.py` uses

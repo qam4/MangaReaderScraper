@@ -422,3 +422,31 @@ class MangaBuilder:
         if self.writer:
             self.adapter.info(f"Saving volume {volume_id}")
             self.writer.write(volume)
+
+        # If this volume is complete, remove any stale "-incomplete" file left by
+        # an earlier partial run. volume_exists only ever checks the COMPLETE
+        # name, so without this the orphaned "<...>-incomplete.<ext>" lingers
+        # forever (and you can end up with both variants side by side).
+        if download.complete:
+            self._remove_incomplete_sibling(volume.file_path)
+
+    @staticmethod
+    def _incomplete_path(complete_path: Path) -> Path:
+        """The ``-incomplete`` filename variant of a complete volume path.
+
+        ``foo_chapter_1_1.pdf`` -> ``foo_chapter_1_1-incomplete.pdf`` (mirrors how
+        ``Manga.add_volume`` appends ``-incomplete`` before the extension).
+        """
+        return complete_path.with_name(
+            f"{complete_path.stem}-incomplete{complete_path.suffix}"
+        )
+
+    def _remove_incomplete_sibling(self, complete_path: Path) -> None:
+        """Delete a leftover ``-incomplete`` file for a now-complete volume."""
+        incomplete = self._incomplete_path(complete_path)
+        if incomplete.exists():
+            self.adapter.info(f"Removing stale incomplete file {incomplete}")
+            try:
+                incomplete.unlink()
+            except OSError as err:  # pragma: no cover - unexpected fs error
+                self.adapter.warning(f"Could not remove {incomplete}: {err}")

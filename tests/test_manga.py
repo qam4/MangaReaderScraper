@@ -314,6 +314,46 @@ def test_builder_populates_pages_under_real_pool():
         assert all(p.img for p in pages)
 
 
+def test_builder_removes_stale_incomplete_file_when_volume_completes(monkeypatch):
+    # F2: a prior partial run left "<...>-incomplete.pdf" on disk. When the
+    # volume now downloads completely, the parent must delete that stale
+    # incomplete sibling (volume_exists only ever checks the complete name, so
+    # otherwise it lingers forever and you get both variants side by side).
+    img = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb").read()
+    canned = [(1, img, "success")]
+
+    def fake_get_volumes_data(vol_ids):
+        return [
+            VolumeDownload(vol_id, index, pages=canned, complete=True)
+            for index, vol_id in enumerate(vol_ids, start=1)
+        ]
+
+    builder = MangaBuilder(MockedSiteParser())
+    monkeypatch.setattr(builder, "_get_volumes_data", fake_get_volumes_data)
+
+    # pre-create the stale incomplete file the would-be complete path maps to
+    builder.manga = Manga("dragon-ball", "pdf")
+    complete_path = builder.manga._volume_path("1_1")
+    incomplete_path = MangaBuilder._incomplete_path(complete_path)
+    incomplete_path.parent.mkdir(parents=True, exist_ok=True)
+    incomplete_path.write_bytes(b"partial")
+    assert incomplete_path.exists()
+
+    builder.get_manga_volumes(vol_ids=["1"])
+
+    # the completed volume's clean file exists; the stale incomplete is gone
+    assert complete_path.exists()
+    assert not incomplete_path.exists()
+
+
+def test_incomplete_path_inserts_suffix_before_extension():
+    p = Path("/tmp/dragon-ball/dragon-ball_chapter_1_1.pdf")
+    assert (
+        MangaBuilder._incomplete_path(p).name
+        == "dragon-ball_chapter_1_1-incomplete.pdf"
+    )
+
+
 class _GappyDecimalParser(MockedSiteParser):
     """Site whose chapters have a gap (no 11) and a decimal (9.22).
 
