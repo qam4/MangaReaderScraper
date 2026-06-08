@@ -264,39 +264,22 @@ Each item has a done-when so "done" is unambiguous.
     (no more `--site` heads-up; documents the namespacing + `--force`). Added 6
     tests (stage_from_url cases + namespacing + overwrite-guard). Gates green, 334.
 
-- [ ] **C5 [STRUCT][NORTH STAR] Single-entry multi-stage probe** — `probe <manga-url>
-  [--search "term"]` captures ALL stages in one run
-  - VISION (user's original mental model): point the probe at the manga page and
-    have it probe everything — capture the series page (chapters), AUTO-FOLLOW the
-    first detected chapter link to capture the reader page (images), and run the
-    search action — writing each stage to its own subfolder and synthesizing ONE
-    combined recommendation.txt across all three.
-  - FEASIBILITY (the parts already exist, this is mostly orchestration):
-    * chapters→images IS a real link: `analyze_html` already extracts
-      `chapter_links` from the manga page → follow the first href, second capture
-      pass. Doable.
-    * search is NOT derivable from the manga URL — it needs a query. `--search`
-      already opens the site, finds the search box, types, and triggers the
-      search. So the irreducible input is the search TERM; `probe <manga-url>
-      --search "term"` is the realistic "one command" ceiling.
-  - REFINEMENT [SEARCH-FIRST ENTRY] (raised this session, supersedes the
-    manga-url entry point): start from the HOMEPAGE + a search term, not a
-    manga-url. The chain becomes: run search → take the first result (a
-    known-good series URL) → capture chapters from it → follow the first chapter
-    link → capture images. This makes the series URL DERIVED, not supplied, so
-    the only input is the search term — eliminating the stale-slug problem that
-    polluted the tools/probe_batch.py sweep (guessed chapters/images slugs 404'd
-    while search confirmed the site was alive). Same machinery as above, just
-    reordered to enter at search. Still STRUCT (browser nav + fragile
-    result-link/search-box finding, live-only to validate).
-  - CAVEATS (why it's STRUCT, not QUICK): adds browser navigation/wait
-    orchestration; the chapter-link-follow and search-box-find are the fragile
-    site-specific bits; live-only to validate; pushes against the probe's current
-    "capture exactly the page you point me at" ethos. Sequence deliberately, not
-    mid-C1. Directly serves the "adding a parser was a huge burden" complaint.
-  - DONE-WHEN: a single `probe <manga-url> --search "term"` yields per-stage
-    captures + one combined recommendation, with the multi-page navigation
-    covered by tests (mock the browser/nav seam) where possible.
+- [x] **C5 [STRUCT][NORTH STAR] Single-entry multi-stage probe** — `probe <url>
+  --multi [--search "term"]` captures ALL stages in one run. **DONE** (this
+  session): `--multi` runs search (with --search, from the HOME entry) → follows
+  the first result to the series page (chapters) → follows the first chapter to
+  the reader (images), each into its own <host>/<stage> folder; with --search
+  the series url is DERIVED from the query (no slug), without it the entry is
+  the series page. Navigation decisions are pure + fixture-tested
+  (`first_chapter_link` uses a modal-series-slug rule to pick the MAIN chapter
+  list over sidebar/popular links — the fixtures proved naive first-link is
+  wrong — plus a text rule for mangago-style hrefs; `first_search_result_link`
+  is advisory since result-vs-sidebar is ambiguous). `run_multi` takes an
+  injected stage-runner so its sequencing is unit-tested; the real per-stage
+  capture reuses `_probe`/`_drive_search`. LIVE-VERIFY: the browser navigation +
+  search-from-home trigger are live-only (mocked in tests) — confirm on a real
+  run. Possible follow-up: a combined cross-stage recommendation.txt (today each
+  stage writes its own).
 
 - [ ] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
   (uniform fetcher-ladder reachability)** — the symmetric other end of C5, and
