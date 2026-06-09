@@ -23,6 +23,7 @@ page_img_attr). LIVE-VERIFICATION CAVEAT: parsing is confirmed against the
 captured fixtures; the live fetch is exercised by mocked tests, not a live run.
 """
 
+import io
 import logging
 import re
 from pathlib import Path
@@ -30,9 +31,10 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
+from PIL import Image
 
 from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
-from scraper.fetchers import BrowserFetcher
+from scraper.fetchers import BrowserFetcher, download_image
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser
@@ -143,6 +145,10 @@ class KakalotMangaParser(BaseMangaParser):
         return chapter_html
 
     def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
+        # The image CDN (e.g. img-r1.2xstorage.com) hotlink-checks the Referer,
+        # so record the reader-page url for page_data to send with each image
+        # request -- without it the CDN 403s every page.
+        self.headers = {"Referer": self.chapter_url(chapter)}
         chapter_html = self._scrape_chapter(chapter)
         container = chapter_html.find("div", {"class": "container-chapter-reader"})
         if not isinstance(container, Tag):
@@ -153,6 +159,36 @@ class KakalotMangaParser(BaseMangaParser):
         all_page_urls = [attr(img, self.page_img_attr) for img in all_img_tags]
         all_page_urls = [u for u in all_page_urls if u]
         return list(enumerate(all_page_urls, start=1))
+
+    def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
+        """Download one page image via curl_cffi (Chrome TLS impersonation) with
+        the reader-page Referer set in ``page_urls``.
+
+        Overrides the base ``requests`` downloader: the family's image CDN
+        rejects non-browser TLS fingerprints AND hotlink-checks the Referer, so
+        a plain request 403s. Mirrors the mangafire/mangabuddy image path (no
+        descramble here).
+        """
+        page_num, img_url = page_url
+        content = download_image(
+            img_url, headers=self.headers, label=f"page {page_num}"
+        )
+        if content is None:
+            return (
+                int(page_num),
+                self.create_page(f"Page {page_num} missing\n{img_url}"),
+                "missing",
+            )
+        try:
+            Image.open(io.BytesIO(content)).verify()
+        except Exception as err:
+            logger.error(f"page {page_num} at {img_url} corrupted: {err}")
+            return (
+                int(page_num),
+                self.create_page(f"Page {page_num} corrupted.\n{err}\n{img_url}"),
+                "corrupted",
+            )
+        return (int(page_num), content, "success")
 
 
 class KakalotSearchParser(BaseSearchParser):
