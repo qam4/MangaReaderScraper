@@ -171,7 +171,7 @@ class KakalotSearchParser(BaseSearchParser):
                 return number
         return ""
 
-    def _extract_text(self, result: Tag) -> SearchResult:
+    def _parse_search_result(self, result: Tag) -> SearchResult:
         return SearchResult(
             title=self._title(result),
             manga_url=self._slug(result),
@@ -185,5 +185,5 @@ class KakalotSearchParser(BaseSearchParser):
         results = self._scrape_results(url, self.result_selector)
         metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
-            metadata[str(key)] = self._extract_text(result)
+            metadata[str(key)] = self._parse_search_result(result)
         return metadata

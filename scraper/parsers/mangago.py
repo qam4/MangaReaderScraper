@@ -175,7 +175,7 @@ class MangagoSearch(BaseSearchParser):
     def __init__(self, query: str, base_url: str = BASE_URL) -> None:
         super().__init__(query, base_url)
 
-    def _extract_text(self, result: Tag) -> SearchResult:
+    def _parse_search_result(self, result: Tag) -> SearchResult:
         """Extract one search result's metadata from its ``div.box`` card.
 
         The card holds a thumbnail link plus text rows: the title link in
@@ -213,7 +213,7 @@ class MangagoSearch(BaseSearchParser):
         results = self._scrape_results(url, "#search_list div.box")
         metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
-            metadata[str(key)] = self._extract_text(result)
+            metadata[str(key)] = self._parse_search_result(result)
         return metadata
 
 
