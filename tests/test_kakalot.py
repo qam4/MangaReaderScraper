@@ -1,7 +1,7 @@
 """
 Tests for the shared kakalot-family engine (manganelo / manganato / mangakaka),
 rewritten (C2) against fresh captured fixtures. The fetch seam
-(scraper.parsers.kakalot.fetch_soup / scraper.parsers.base.fetch_soup) is mocked
+(scraper.parsers.base.fetch_soup / scraper.parsers.base.fetch_soup) is mocked
 so no live site is ever touched.
 """
 
@@ -74,7 +74,7 @@ def test_site_params():
 
 def test_all_volume_ids_and_volume_url_from_map():
     chapters = _soup(NELO / "naruto_chapters.html")
-    with mock.patch("scraper.parsers.kakalot.fetch_soup", return_value=chapters):
+    with mock.patch("scraper.parsers.base.fetch_soup", return_value=chapters):
         parser = ManganeloMangaParser("naruto")
         ids = list(parser.all_volume_ids())
     assert "700.6" in ids and "700.5" in ids
@@ -90,7 +90,7 @@ def test_all_volume_ids_empty_page_raises():
     empty = bs4.BeautifulSoup("<html><body/></html>", "lxml")
     from scraper.exceptions import MangaDoesNotExist
 
-    with mock.patch("scraper.parsers.kakalot.fetch_soup", return_value=empty):
+    with mock.patch("scraper.parsers.base.fetch_soup", return_value=empty):
         with pytest.raises(MangaDoesNotExist):
             ManganeloMangaParser("nope").all_volume_ids()
 
@@ -101,9 +101,7 @@ def test_all_volume_ids_empty_page_raises():
 def test_page_urls_reads_container_images_nelo():
     chapters = _soup(NELO / "naruto_chapters.html")
     reader = _soup(NELO / "naruto_reader.html")
-    with mock.patch(
-        "scraper.parsers.kakalot.fetch_soup", side_effect=[chapters, reader]
-    ):
+    with mock.patch("scraper.parsers.base.fetch_soup", side_effect=[chapters, reader]):
         parser = ManganeloMangaParser("naruto")
         parser.all_volume_ids()  # populates the chapter map (first fetch_soup)
         pages = parser.page_urls("700.6")  # reader page (second fetch_soup)
@@ -114,7 +112,7 @@ def test_page_urls_reads_container_images_nelo():
 
 def test_page_urls_reads_container_images_kaka_src():
     reader = _soup(KAKA / "dragonball_reader.html")
-    with mock.patch("scraper.parsers.kakalot.fetch_soup", return_value=reader):
+    with mock.patch("scraper.parsers.base.fetch_soup", return_value=reader):
         parser = MangaKakaMangaParser("dragon-ball")
         parser._chapter_urls = {"520.5": "https://x/manga/dragon-ball/chapter-520-5"}
         pages = parser.page_urls("520.5")

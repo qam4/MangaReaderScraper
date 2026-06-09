@@ -28,12 +28,10 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import requests  # type: ignore
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
-from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser
@@ -100,13 +98,7 @@ class KakalotMangaParser(BaseMangaParser):
     def all_volume_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
         logger.debug(f"Manga url={url}")
-        try:
-            manga_html = fetch_soup(url)
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code == 404:
-                logger.warning(f"Manga {self.manga_url} does not exist")
-                raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
-            raise e
+        manga_html = self._fetch_html(url)
         self._chapter_urls = _chapter_map_from_soup(manga_html)
         if not self._chapter_urls:
             raise MangaDoesNotExist(
@@ -123,23 +115,12 @@ class KakalotMangaParser(BaseMangaParser):
         return url
 
     def _scrape_volume(self, volume: str) -> BeautifulSoup:
-        try:
-            url = self.volume_url(volume)
-            logger.debug(f"Volume url={url}")
-            volume_html = fetch_soup(url)
-            string = re.compile("404 NOT FOUND")
-            if volume_html.find_all(string=string, recursive=True):
-                raise VolumeDoesntExist(
-                    f"Manga {self.manga_url} volume {volume} does not exist"
-                )
-            return volume_html
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code == 404:
-                logger.warning(f"Manga {self.manga_url} volume {volume} does not exist")
-                raise MangaDoesNotExist(
-                    f"Manga {self.manga_url} volume {volume} does not exist"
-                )
-            raise e
+        volume_html = self._fetch_html(self.volume_url(volume))
+        if volume_html.find_all(string=re.compile("404 NOT FOUND"), recursive=True):
+            raise VolumeDoesntExist(
+                f"Manga {self.manga_url} volume {volume} does not exist"
+            )
+        return volume_html
 
     def page_urls(self, volume: str) -> List[Tuple[int, str]]:
         volume_html = self._scrape_volume(volume)

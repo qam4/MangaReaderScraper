@@ -1,11 +1,8 @@
 from pathlib import Path
 from unittest import mock
 
-import requests  # type: ignore
 from bs4 import BeautifulSoup
 
-from scraper.exceptions import MangaDoesNotExist
-from scraper.fetchers import fetch_soup
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
@@ -34,12 +31,9 @@ class EngineMangaParser(BaseMangaParser):
         return f"{self.base_url}/{self.manga_url}/{volume}"
 
     def _fetch(self, url):
-        try:
-            return fetch_soup(url)
-        except requests.exceptions.HTTPError as err:
-            if err.response is not None and err.response.status_code == 404:
-                raise MangaDoesNotExist(self.manga_url)
-            raise
+        # delegates to the shared BaseMangaParser._fetch_html (fetch + 404 ->
+        # MangaDoesNotExist) -- the very boilerplate the helper consolidates.
+        return self._fetch_html(url)
 
     def all_volume_ids(self):
         soup = self._fetch(self._manga_page_url())

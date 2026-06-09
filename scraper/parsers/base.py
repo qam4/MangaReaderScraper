@@ -14,6 +14,7 @@ from bs4.element import Tag
 from PIL import Image, ImageDraw, ImageFont
 
 from scraper.exceptions import (  # , PageDoesNotExist
+    MangaDoesNotExist,
     MangaParserNotSet,
     NoSearchResultsFound,
 )
@@ -47,6 +48,27 @@ class BaseMangaParser:
         self.manga_url = manga_url
         self.base_url = base_url
         self.headers: dict[str, str] = {}
+
+    def _fetch_html(self, url: str, fetcher: Optional[Fetcher] = None):
+        """Fetch ``url`` as a BeautifulSoup, mapping HTTP 404 -> MangaDoesNotExist.
+
+        The shared fetch step for the HTML-scrape parsers (kakalot family,
+        mangago, ...): ``fetch_soup(url, fetcher)`` plus the common "404 means
+        this manga/volume doesn't exist" handling, so each parser's
+        ``all_volume_ids`` / ``_scrape_volume`` / ``page_urls`` is just
+        ``soup = self._fetch_html(...)`` followed by its own select/find. Stays
+        deliberately thin -- the select-many vs find-one-container step is
+        parser-specific and stays in the parser. Not used by the API parser
+        (mangabuddy) or the vrf/browser-xhr parser (mangafire), which fetch JSON
+        / drive ``capture_xhr`` instead. ``fetcher`` defaults to fetch_soup's
+        own default (curl_cffi); pass ``BrowserFetcher()`` for JS/CF-gated pages.
+        """
+        try:
+            return fetch_soup(url, fetcher)
+        except requests.exceptions.HTTPError as err:
+            if err.response is not None and err.response.status_code == 404:
+                raise MangaDoesNotExist(self.manga_url)
+            raise
 
     @abc.abstractmethod
     def volume_url(self, volume: str) -> str:

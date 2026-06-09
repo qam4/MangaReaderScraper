@@ -30,7 +30,6 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import requests  # type: ignore
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
@@ -63,15 +62,14 @@ def _chapter_number_from_label(label: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def _chapter_map_from_html(html: str) -> Dict[str, str]:
+def _chapter_map_from_soup(soup: BeautifulSoup) -> Dict[str, str]:
     """Build ``{chapter_number: reader_url}`` from a mangago series page.
 
     Chapter rows live in ``table#chapter_table`` as ``a.chico`` anchors whose
     ``<b>`` label carries the displayed number and whose ``href`` is the reader
     url. First occurrence of a number wins. Pure / unit-tested against the
-    captured fixture.
+    captured fixtures.
     """
-    soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", id="chapter_table")
     mapping: Dict[str, str] = {}
     if not isinstance(table, Tag):
@@ -86,14 +84,13 @@ def _chapter_map_from_html(html: str) -> Dict[str, str]:
     return mapping
 
 
-def _image_urls_from_reader_html(html: str) -> List[str]:
+def _image_urls_from_soup(soup: BeautifulSoup) -> List[str]:
     """Extract the ordered page-image urls from a mangago reader page.
 
     Every page is embedded as ``<img id="pageN" class="pageN" src="<cdn>">``
     (later pages ``display:none``); nav/ui images (arrow, backtotop) lack a
     ``pageN`` id and are excluded. Ordered by N. Pure / unit-tested.
     """
-    soup = BeautifulSoup(html, "lxml")
     page_imgs = soup.find_all("img", id=re.compile(r"^page\d+$"))
 
     def _page_index(tag: Tag) -> int:
@@ -132,13 +129,8 @@ class MangagoMangaParser(BaseMangaParser):
         """
         url = self._manga_page_url()
         logger.info(f"Manga url={url}")
-        try:
-            html = BrowserFetcher().get(url).text
-        except requests.exceptions.HTTPError as err:
-            if getattr(err.response, "status_code", None) == 404:
-                raise MangaDoesNotExist(f"Manga {self.manga_url} does not exist")
-            raise
-        self._chapter_urls = _chapter_map_from_html(html)
+        soup = self._fetch_html(url, BrowserFetcher())
+        self._chapter_urls = _chapter_map_from_soup(soup)
         if not self._chapter_urls:
             raise MangaDoesNotExist(
                 f"No chapters found for {self.manga_url} (bad slug or page blocked)"
@@ -162,8 +154,8 @@ class MangagoMangaParser(BaseMangaParser):
         """
         url = self.volume_url(volume)
         logger.info(f"Volume url={url}")
-        html = BrowserFetcher().get(url).text
-        images = _image_urls_from_reader_html(html)
+        soup = self._fetch_html(url, BrowserFetcher())
+        images = _image_urls_from_soup(soup)
         if not images:
             raise VolumeDoesntExist(
                 f"No page images found for {self.manga_url} chapter {volume}"

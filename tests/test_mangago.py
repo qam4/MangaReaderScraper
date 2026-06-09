@@ -7,21 +7,26 @@ is touched; only the parsing logic is exercised.
 from pathlib import Path
 from unittest import mock
 
+import bs4
 import pytest
 
 from scraper.exceptions import VolumeDoesntExist
 from scraper.parsers.mangago import (
     MangagoMangaParser,
     MangagoSearch,
-    _chapter_map_from_html,
+    _chapter_map_from_soup,
     _chapter_number_from_label,
-    _image_urls_from_reader_html,
+    _image_urls_from_soup,
 )
 
 FIXTURES = Path("tests/test_files/mangago")
 CHAPTERS_HTML = (FIXTURES / "naruto_chapters.html").read_text(encoding="utf-8")
 READER_HTML = (FIXTURES / "naruto_reader.html").read_text(encoding="utf-8")
 SEARCH_HTML = (FIXTURES / "naruto_search.html").read_text(encoding="utf-8")
+
+
+def _soup(html):
+    return bs4.BeautifulSoup(html, "lxml")
 
 
 # ------------------------------ pure helpers ------------------------------
@@ -42,7 +47,7 @@ def test_chapter_number_from_label(label, expected):
 
 
 def test_chapter_map_from_html_uses_b_label_and_href():
-    mapping = _chapter_map_from_html(CHAPTERS_HTML)
+    mapping = _chapter_map_from_soup(_soup(CHAPTERS_HTML))
     # numbers parsed from the <b> label, mapped to the reader href
     assert "700.6" in mapping
     assert "700.5" in mapping
@@ -52,7 +57,7 @@ def test_chapter_map_from_html_uses_b_label_and_href():
 
 
 def test_image_urls_from_reader_html_selects_page_imgs_only():
-    urls = _image_urls_from_reader_html(READER_HTML)
+    urls = _image_urls_from_soup(_soup(READER_HTML))
     assert urls  # found page images
     # real page images come from the mangapicgallery CDN, ordered page1, page2..
     assert all("mangapicgallery.com" in u for u in urls)
