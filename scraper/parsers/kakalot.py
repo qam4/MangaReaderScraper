@@ -163,7 +163,7 @@ class KakalotSearchParser(BaseSearchParser):
 
     base_url: str = ""
     source: str = ""
-    result_div_class: str = "story_item"
+    result_selector: str = "div.story_item"
 
     def __init__(self, query: str, base_url: Optional[str] = None) -> None:
         super().__init__(query, base_url or self.base_url)
@@ -201,7 +201,7 @@ class KakalotSearchParser(BaseSearchParser):
     def search(self, start: int = 1) -> SearchResults:
         url = f"{self.base_url}/search/story/{self.query.replace(' ', '_')}"
         logger.debug(f"search_url={url}")
-        results = self._scrape_results(url, div_class=self.result_div_class)
+        results = self._scrape_results(url, self.result_selector)
         metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
             metadata[str(key)] = self._extract_text(result)

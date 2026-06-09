@@ -17,7 +17,7 @@ from scraper.exceptions import (  # , PageDoesNotExist
     MangaParserNotSet,
     NoSearchResultsFound,
 )
-from scraper.fetchers import BrowserFetcher, fetch_soup
+from scraper.fetchers import BrowserFetcher, Fetcher, fetch_soup
 from scraper.new_types import SearchResults
 from scraper.utils import request_session
 
@@ -162,18 +162,27 @@ class BaseSearchParser:
         self.query: str = query
         self.base_url: str = base_url
 
-    def _scrape_results(self, url: str, div_class: str) -> List[Tag]:
+    def _scrape_results(
+        self,
+        url: str,
+        selector: str,
+        fetcher: Optional[Fetcher] = None,
+    ) -> List[Tag]:
         """
-        Scrape and return HTML list with search results
+        Fetch the search page and return the result-element list.
+
+        ``selector`` is a CSS selector for the result container, so results in
+        ANY tag work (``li.result``, ``tr``, ``article``, ``div.box`` ...) --
+        search results are not always ``<div>``s. ``fetcher`` overrides the
+        default browser fetch for sites whose search is reachable with a cheaper
+        client (pass e.g. ``CurlCffiFetcher()`` when ``api_backends.txt`` says so);
+        defaults to a real browser for the Cloudflare/JS-gated case.
         """
-        # search results are dynamically loaded, so drive a real browser
-        html_response = fetch_soup(url, BrowserFetcher())
-        # logging.debug(f"html_response={html_response}")
-        search_results = html_response.find_all("div", {"class": div_class})
+        html_response = fetch_soup(url, fetcher or BrowserFetcher())
+        search_results = html_response.select(selector)
         if not search_results:
             raise NoSearchResultsFound(f"No search results found for {self.query}")
         self.results = search_results
-        # logging.debug(f"search_results={search_results}")
         return search_results  # type: ignore[return-value]
 
     @abc.abstractmethod

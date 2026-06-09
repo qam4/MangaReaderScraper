@@ -215,9 +215,10 @@ class MangagoSearch(BaseSearchParser):
     def search(self, start: int = 1) -> SearchResults:
         url = f"{self.base_url}/r/l_search/?name={self.query.replace(' ', '+')}"
         logger.info(f"search_url={url}")
-        # each result is a div.box card (title in row-1, latest chapters in a
-        # sibling row as a.chico) -- iterate the card, not just the title row.
-        results = self._scrape_results(url, div_class="box")
+        # each result is a div.box card under ul#search_list (title in row-1,
+        # latest chapters as a.chico in a sibling row) -- scope to the results
+        # list so stray boxes elsewhere on the page aren't picked up.
+        results = self._scrape_results(url, "#search_list div.box")
         metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
             metadata[str(key)] = self._extract_text(result)
