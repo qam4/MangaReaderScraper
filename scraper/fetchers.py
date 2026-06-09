@@ -140,6 +140,11 @@ class CurlCffiFetcher:
         )
 
 
+# HTTP statuses that are a definitive "no" -- retrying can't help and pounding
+# them (esp. 403) in parallel is what gets the client IP throttled/banned.
+_NO_RETRY_STATUSES = frozenset({401, 403, 404})
+
+
 def download_image(
     url: str,
     headers: Optional[Dict[str, str]] = None,
@@ -183,6 +188,13 @@ def download_image(
             resp = session.get(url, headers=headers, timeout=timeout)
             if resp.status_code == 200:
                 return resp.content
+            if resp.status_code in _NO_RETRY_STATUSES:
+                # A definitive refusal (forbidden / unauthorized / missing):
+                # retrying cannot change the answer, and hammering a 403 in
+                # parallel is exactly what gets the client IP rate-limited or
+                # banned. Fail fast instead.
+                logger.warning(f"{label} {resp.status_code} (not retrying): {url}")
+                return None
             logger.warning(
                 f"{label} attempt {attempt + 1}/{max_tries} "
                 f"status {resp.status_code}: {url}"

@@ -221,7 +221,8 @@ def test_download_image_retries_then_succeeds():
 
 
 def test_download_image_returns_none_when_exhausted():
-    responses = [mock.Mock(status_code=403, content=b"") for _ in range(5)]
+    # a retryable status (503) is retried up to max_tries, then gives up
+    responses = [mock.Mock(status_code=503, content=b"") for _ in range(5)]
     module, session = _fake_curl_module(responses)
     with mock.patch.dict("sys.modules", {"curl_cffi": module}):
         with mock.patch("time.sleep") as slept:
@@ -230,6 +231,19 @@ def test_download_image_returns_none_when_exhausted():
     assert session.get.call_count == 5
     # slept between attempts but NOT after the final one: max_tries - 1
     assert slept.call_count == 4
+
+
+def test_download_image_does_not_retry_on_403():
+    # a 403 (hotlink/forbidden) is a hard refusal: fail fast, do NOT retry --
+    # retrying in parallel is what gets the client IP banned.
+    responses = [mock.Mock(status_code=403, content=b"") for _ in range(5)]
+    module, session = _fake_curl_module(responses)
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        with mock.patch("time.sleep") as slept:
+            out = download_image("http://cdn/p.jpg", max_tries=5)
+    assert out is None
+    assert session.get.call_count == 1  # single attempt, no retries
+    assert slept.call_count == 0  # never slept/hammered
 
 
 def test_download_image_backoff_grows_between_attempts():
