@@ -34,7 +34,7 @@ from bs4.element import Tag
 from PIL import Image
 
 from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
-from scraper.fetchers import BrowserFetcher, download_image
+from scraper.fetchers import BrowserFetcher
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser
@@ -90,10 +90,15 @@ class KakalotMangaParser(BaseMangaParser):
     base_url: str = ""
     manga_path: str = "{base_url}/manga/{slug}"
     page_img_attr: str = "src"
+    # CSS selector for the reader container holding the page <img>s.
+    reader_selector: str = "div.container-chapter-reader"
 
     def __init__(self, manga_url: str, base_url: Optional[str] = None) -> None:
         super().__init__(manga_url, base_url or self.base_url)
         self._chapter_urls: Dict[str, str] = {}
+        # page-image bytes captured by the browser in page_urls, keyed by url;
+        # page_data just serves these (the CDN only answers the live browser).
+        self._image_bytes: Dict[str, bytes] = {}
 
     def _manga_page_url(self) -> str:
         return self.manga_path.format(base_url=self.base_url, slug=self.manga_url)
@@ -134,46 +139,38 @@ class KakalotMangaParser(BaseMangaParser):
             )
         return url
 
-    def _scrape_chapter(self, chapter: str) -> BeautifulSoup:
-        chapter_html = self._fetch_manga_page(
-            self.chapter_url(chapter), self._page_fetcher()
-        )
-        if chapter_html.find_all(string=re.compile("404 NOT FOUND"), recursive=True):
-            raise ChapterDoesntExist(
-                f"Manga {self.manga_url} chapter {chapter} does not exist"
-            )
-        return chapter_html
-
     def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
-        # The image CDN (e.g. img-r1.2xstorage.com) hotlink-checks the Referer,
-        # so record the reader-page url for page_data to send with each image
-        # request -- without it the CDN 403s every page.
-        self.headers = {"Referer": self.chapter_url(chapter)}
-        chapter_html = self._scrape_chapter(chapter)
-        container = chapter_html.find("div", {"class": "container-chapter-reader"})
-        if not isinstance(container, Tag):
+        """Capture every page image for a chapter using the live browser.
+
+        The image CDN serves bytes ONLY to the browser session that rendered the
+        reader page (every HTTP client 403s, even with cookies + Referer; the
+        images are cross-origin so an in-page fetch is CORS-blocked). So we read
+        the bytes of the browser's own image responses via CDP and cache them;
+        ``page_data`` then just serves the cache. Slow, but it is the only thing
+        that works for this family.
+        """
+        reader_url = self.chapter_url(chapter)
+        logger.info(f"Rendering {reader_url} to capture page images...")
+        pairs = self._page_fetcher().fetch_rendered_images(
+            reader_url, self.reader_selector, self.page_img_attr
+        )
+        self._image_bytes = {url: data for url, data in pairs}
+        if not self._image_bytes:
             raise ChapterDoesntExist(
-                f"No page-image container for {self.manga_url} chapter {chapter}"
+                f"No page images for {self.manga_url} chapter {chapter}"
             )
-        all_img_tags = container.find_all("img")
-        all_page_urls = [attr(img, self.page_img_attr) for img in all_img_tags]
-        all_page_urls = [u for u in all_page_urls if u]
-        return list(enumerate(all_page_urls, start=1))
+        return [(i, url) for i, (url, _data) in enumerate(pairs, start=1)]
 
     def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
-        """Download one page image via curl_cffi (Chrome TLS impersonation) with
-        the reader-page Referer set in ``page_urls``.
+        """Serve a page image from the bytes the browser captured in page_urls.
 
-        Overrides the base ``requests`` downloader: the family's image CDN
-        rejects non-browser TLS fingerprints AND hotlink-checks the Referer, so
-        a plain request 403s. Mirrors the mangafire/mangabuddy image path (no
-        descramble here).
+        No network here -- the CDN only answers the live browser, so the bytes
+        were already harvested. Validates the image and falls back to a
+        placeholder if it is missing/corrupt (same contract as the base).
         """
         page_num, img_url = page_url
-        content = download_image(
-            img_url, headers=self.headers, label=f"page {page_num}"
-        )
-        if content is None:
+        content = self._image_bytes.get(img_url)
+        if not content:
             return (
                 int(page_num),
                 self.create_page(f"Page {page_num} missing\n{img_url}"),

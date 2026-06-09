@@ -13,12 +13,14 @@ from unittest import mock
 import pytest
 
 from scraper.fetchers import (
+    _FORCE_LAZY_IMAGES_JS,
     BrowserFetcher,
     CloudscraperFetcher,
     CurlCffiFetcher,
     Fetcher,
     FetchResult,
     RequestsFetcher,
+    _collect_img_urls_js,
     _in_page_fetch_js,
     _looks_like_challenge,
     _make_marker_predicate,
@@ -98,6 +100,22 @@ def test_looks_like_challenge_true_for_interstitials(html):
 )
 def test_looks_like_challenge_false_for_real_content(html):
     assert not _looks_like_challenge(html)
+
+
+def test_collect_img_urls_js_embeds_selector_and_attr():
+    js = _collect_img_urls_js("div.container-chapter-reader", "data-src")
+    # selector + attr are json-encoded into the script
+    assert json.dumps("div.container-chapter-reader") in js
+    assert json.dumps("data-src") in js
+    # falls back to data-src/src and skips data: placeholders, returns absolute
+    assert "data-src" in js and "src" in js
+    assert "data:" in js
+    assert "new URL(" in js
+
+
+def test_force_lazy_images_js_copies_datasrc_and_scrolls():
+    assert "data-src" in _FORCE_LAZY_IMAGES_JS
+    assert "scrollTo" in _FORCE_LAZY_IMAGES_JS
 
 
 # ============================ http backends ==============================

@@ -31,7 +31,7 @@ from __future__ import annotations
 import json as _json
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Protocol, runtime_checkable
+from typing import Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +280,39 @@ def _in_page_fetch_js(url: str) -> str:
     )
 
 
+# JS that forces lazy-loaded images to actually fetch: copy each img's
+# ``data-src`` into ``src`` and scroll to the bottom so any scroll-triggered
+# loaders fire. Returns the count touched. Pure (no interpolation).
+_FORCE_LAZY_IMAGES_JS = (
+    "(() => {"
+    "  let n = 0;"
+    "  document.querySelectorAll('img[data-src]').forEach(i => {"
+    "    const ds = i.getAttribute('data-src');"
+    "    if (ds && (!i.src || i.src.startsWith('data:'))) { i.src = ds; n++; }"
+    "  });"
+    "  window.scrollTo(0, document.body.scrollHeight);"
+    "  return n;"
+    "})()"
+)
+
+
+def _collect_img_urls_js(selector: str, attr: str) -> str:
+    """JS returning the ordered, absolute image urls inside ``selector``,
+    preferring ``attr`` then ``data-src`` then ``src`` (skipping ``data:``
+    placeholders). Pure -- unit-testable."""
+    return (
+        "(() => {"
+        f"  const c = document.querySelector({_json.dumps(selector)});"
+        "  if (!c) return [];"
+        "  return Array.from(c.querySelectorAll('img')).map(e =>"
+        f"    e.getAttribute({_json.dumps(attr)}) || e.getAttribute('data-src')"
+        "     || e.getAttribute('src') || '')"
+        "    .filter(u => u && !u.startsWith('data:'))"
+        "    .map(u => new URL(u, location.href).href);"
+        "})()"
+    )
+
+
 def _make_marker_predicate(markers) -> Callable[[str], bool]:
     """A predicate matching any url that contains one of ``markers``. Pure."""
     markers = tuple(markers)
@@ -359,6 +392,22 @@ class BrowserFetcher:
         import asyncio
 
         return asyncio.run(self._capture_xhr(url, predicate, trigger_js, with_cookies))
+
+    def fetch_rendered_images(self, page_url: str, selector: str, attr: str = "src"):
+        """Return ``[(url, bytes)]`` for every image inside ``selector`` on a
+        browser-rendered page, in document order.
+
+        For CDNs that serve images ONLY to the live browser session (the
+        kakalot family: every HTTP client 403s even with cookies + Referer, and
+        the images are cross-origin so an in-page ``fetch`` is CORS-blocked).
+        We let the browser load the page (clearing the challenge), force the
+        lazy ``data-src`` images to fetch, then read the bytes of the browser's
+        OWN image responses via CDP ``Network.getResponseBody`` -- which isn't
+        subject to CORS. A url whose body can't be read comes back as ``b""``.
+        """
+        import asyncio
+
+        return asyncio.run(self._fetch_rendered_images(page_url, selector, attr))
 
     # -- async implementations --------------------------------------------
 
@@ -478,5 +527,68 @@ class BrowserFetcher:
                     logger.warning(f"could not read cookies via CDP: {err}")
 
             return body, cookies
+        finally:
+            browser.stop()
+
+    async def _fetch_rendered_images(
+        self, page_url: str, selector: str, attr: str
+    ):  # pragma: no cover - drives a real browser
+        import asyncio
+        import base64
+
+        from nodriver import cdp
+
+        browser = await self._start()
+        try:
+            tab = await browser.get("about:blank")
+            # url -> CDP requestId, filled as the browser loads each image so we
+            # can pull the bytes of its OWN responses (bypasses CORS).
+            req_ids: Dict[str, object] = {}
+
+            async def on_response(evt: cdp.network.ResponseReceived):
+                try:
+                    req_ids[evt.response.url] = evt.request_id
+                except Exception:
+                    pass
+
+            tab.add_handler(cdp.network.ResponseReceived, on_response)
+            await tab.send(cdp.network.enable())
+
+            await tab.get(page_url)
+            await self._wait_for_content(tab, page_url)
+            # force lazy images to fetch, then let the responses arrive
+            try:
+                await tab.evaluate(_FORCE_LAZY_IMAGES_JS)
+            except Exception as err:
+                logger.debug(f"force-lazy failed (continuing): {err}")
+
+            ordered: List[str] = []
+            # poll until the image urls are present AND each has a response
+            # recorded, or we hit the timeout (some pages stream slowly).
+            waited = 0.0
+            while waited < self.timeout:
+                await tab.wait(self.wait)
+                waited += self.wait
+                ordered = list(
+                    await tab.evaluate(_collect_img_urls_js(selector, attr)) or []
+                )
+                if ordered and all(u in req_ids for u in ordered):
+                    break
+
+            results: List[Tuple[str, bytes]] = []
+            for url in ordered:
+                data = b""
+                rid = req_ids.get(url)
+                if rid is not None:
+                    try:
+                        body, b64 = await asyncio.wait_for(
+                            tab.send(cdp.network.get_response_body(rid)),
+                            timeout=30,
+                        )
+                        data = base64.b64decode(body) if b64 else body.encode("latin-1")
+                    except Exception as err:
+                        logger.warning(f"could not read image body {url}: {err}")
+                results.append((url, data))
+            return results
         finally:
             browser.stop()
