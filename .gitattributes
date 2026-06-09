@@ -2,3 +2,10 @@ tests/test_files/* linguist-documentation
 
 # Keep the uv lockfile LF-normalized across platforms (avoids CRLF churn on Windows)
 uv.lock text eol=lf
+
+# Normalize Python sources to LF in the working tree on all platforms.
+# The index is already LF; this stops Windows autocrlf from checking them out
+# as CRLF (which broke LSP-offset tooling like rename refactors) and ends the
+# CRLF churn. Existing Windows clones renormalize once (git rm --cached -r . &&
+# git reset --hard) or on re-clone.
+*.py text eol=lf
