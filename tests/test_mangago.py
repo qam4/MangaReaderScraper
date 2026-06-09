@@ -108,7 +108,7 @@ def test_page_urls_raises_when_no_images():
 # -------------------------------- search ---------------------------------
 
 
-def test_search_parses_row_1_cards():
+def test_search_parses_box_cards_with_latest_chapter():
     import bs4
 
     soup = bs4.BeautifulSoup(SEARCH_HTML, "lxml")
@@ -116,6 +116,9 @@ def test_search_parses_row_1_cards():
         results = MangagoSearch("naruto").search()
     assert results  # non-empty
     first = results["1"]
-    assert first.title  # a real title
-    assert first.manga_url  # a slug
+    assert first.title == "Naruto"
+    assert first.manga_url == "naruto"
     assert first.source == "mangago"
+    # latest chapter (the previously-blank "Latest Volume" column) is now filled
+    # from the a.chico "Latest Chapters" link ("Vol.72 Ch.700.6" -> "700.6")
+    assert first.latest_chapter == "700.6"

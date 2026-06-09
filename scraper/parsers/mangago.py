@@ -184,15 +184,25 @@ class MangagoSearch(BaseSearchParser):
         super().__init__(query, base_url)
 
     def _extract_text(self, result: Tag) -> SearchResult:
-        """Extract one search result's metadata from its ``div.row-1`` card."""
-        manga_title = text(result.find("a")).strip()
-        manga_url = attr(result.find("a"), "href")
+        """Extract one search result's metadata from its ``div.box`` card.
+
+        The card holds a thumbnail link plus text rows: the title link in
+        ``div.row-1`` and the latest chapters as ``a.chico`` in a later row. The
+        first ``<a>`` in the card is the *thumbnail* (no text), so the title is
+        read from the row-1 link specifically; the latest chapter is the first
+        ``a.chico`` (text like "Vol.72 Ch.700.6").
+        """
+        row1 = result.find("div", {"class": "row-1"})
+        title_link = row1.find("a") if isinstance(row1, Tag) else result.find("a")
+        manga_title = text(title_link).strip()
+        manga_url = attr(title_link, "href")
         manga_url_short = Path(manga_url).stem.split("/")[-1]
-        # latest chapter, when present, is an a.chico > span
-        last_chapter = result.find("a", {"class": "chico"})
-        if isinstance(last_chapter, Tag):
-            span = last_chapter.find("span")
-            latest_chapter = text(span) if isinstance(span, Tag) else ""
+        chico = result.find("a", {"class": "chico"})
+        if isinstance(chico, Tag):
+            match = re.search(
+                r"ch(?:apter)?\.?\s*([0-9]+(?:\.[0-9]+)?)", text(chico), re.I
+            )
+            latest_chapter = match.group(1) if match else text(chico).strip()
         else:
             latest_chapter = ""
         return SearchResult(
@@ -205,7 +215,9 @@ class MangagoSearch(BaseSearchParser):
     def search(self, start: int = 1) -> SearchResults:
         url = f"{self.base_url}/r/l_search/?name={self.query.replace(' ', '+')}"
         logger.info(f"search_url={url}")
-        results = self._scrape_results(url, div_class="row-1")
+        # each result is a div.box card (title in row-1, latest chapters in a
+        # sibling row as a.chico) -- iterate the card, not just the title row.
+        results = self._scrape_results(url, div_class="box")
         metadata: SearchResults = {}
         for key, result in enumerate(results, start=start):
             metadata[str(key)] = self._extract_text(result)
