@@ -593,6 +593,19 @@ Two distinct root causes found:
   - NOTE: `jobs` is read from ini via `.get` (not written to base config) so the
     default stays CPU-aware rather than baking a fixed number into new configs.
 
+- [ ] **N1 [QUICK, LOW-PRI] Naming drift cleanup (functions outgrew their names)**
+  - SMELL (user): some functions grew past their original job but kept the v1
+    name. Clearest: `_extract_text` (Kakalot/Mangago search parsers) returns a
+    `SearchResult`, not text → `_parse_search_result` / `_search_result_from_card`.
+    Sweep for similar (a method named for HOW it started vs WHAT it now returns).
+  - SEPARATE / BIGGER (deliberate, maybe never): "volume" means "chapter"
+    throughout — `all_volume_ids` returns chapter numbers, `volume_url` is a
+    chapter url, `Manga.volumes` is chapters. Pervasive + purely cosmetic (same
+    cost/benefit as D3); D1 already did one slice (SearchResult.chapters →
+    latest_chapter). Don't bundle into N1.
+  - DONE-WHEN: the cheap local renames done (private methods, few call sites,
+    no behavior change); the volume→chapter rename left as its own explicit call.
+
 - [ ] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure**
   - VALUE (user): the multiprocessing is to be fast on the happy path, but when a
     site is FAILING we should slow down, not keep fanning out at full concurrency.
