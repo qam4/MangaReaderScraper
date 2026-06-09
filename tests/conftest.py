@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from scraper.manga import Manga, Page, Volume
+from scraper.manga import Chapter, Manga, Page
 from tests.helpers import MockedMangaReaderParser, get_images
 
 
@@ -118,20 +118,23 @@ def page():
 
 
 @pytest.fixture
-def volume():
+def chapter():
     img1, img2 = get_images()
     page_data = [(1, img1, "success"), (2, img2, "success")]
-    volume = Volume("1", Path("/Some/path"), Path("/some/path"))
-    volume.pages = page_data
-    return volume
+    chapter = Chapter("1", Path("/Some/path"), Path("/some/path"))
+    chapter.pages = page_data
+    return chapter
 
 
 @pytest.fixture
 def manga():
     manga = Manga("dragon-ball", "pdf")
-    manga.volumes = ["1", "2"]
-    manga.volumes_dict["1"].pages = [(1, b"here", "success"), (2, b"bye", "success")]
-    manga.volumes_dict["2"].pages = [(1, b"hello", "success"), (2, b"jimmy", "success")]
+    manga.chapters = ["1", "2"]
+    manga.chapters_dict["1"].pages = [(1, b"here", "success"), (2, b"bye", "success")]
+    manga.chapters_dict["2"].pages = [
+        (1, b"hello", "success"),
+        (2, b"jimmy", "success"),
+    ]
     return manga
 
 

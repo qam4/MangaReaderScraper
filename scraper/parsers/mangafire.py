@@ -28,7 +28,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from bs4 import BeautifulSoup
 from PIL import Image
 
-from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import BrowserFetcher, _make_marker_predicate, download_image
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr
@@ -125,17 +125,17 @@ class MangafireMangaParser(BaseMangaParser):
         # cookies harvested from the browser during page_urls, reused in page_data
         self.cookies: Dict[str, str] = {}
 
-    def volume_url(self, volume: str) -> str:
-        return f"{self.base_url}/read/{self.manga_url}/en/chapter-{volume}"
+    def chapter_url(self, chapter: str) -> str:
+        return f"{self.base_url}/read/{self.manga_url}/en/chapter-{chapter}"
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """
         Return [(page_number, url)] for every page in a chapter.
 
         Scrambled pages carry a ``#scrambled_<offset>`` fragment so page_data
         knows to descramble them.
         """
-        chapter_url = self.volume_url(volume)
+        chapter_url = self.chapter_url(chapter)
         logger.info(f"Fetching page list for {chapter_url}")
         try:
             body, cookies = BrowserFetcher().capture_xhr(
@@ -145,8 +145,8 @@ class MangafireMangaParser(BaseMangaParser):
             )
             images = json.loads(body)["result"]["images"]
         except asyncio.TimeoutError:
-            raise VolumeDoesntExist(
-                f"Timed out getting page list for {self.manga_url} chapter {volume} "
+            raise ChapterDoesntExist(
+                f"Timed out getting page list for {self.manga_url} chapter {chapter} "
                 "(Cloudflare challenge or chapter does not exist)"
             )
         self.cookies = cookies
@@ -200,7 +200,7 @@ class MangafireMangaParser(BaseMangaParser):
 
         return (int(page_num), content, "success")
 
-    def all_volume_ids(self) -> Iterable[str]:
+    def all_chapter_ids(self) -> Iterable[str]:
         """
         Get the list of all chapter numbers for a manga.
 
@@ -232,28 +232,28 @@ class MangafireMangaParser(BaseMangaParser):
             )
 
         fragment = BeautifulSoup(result_html, "lxml")
-        volume_ids: set[str] = set()
+        chapter_ids: set[str] = set()
         for tag in fragment.find_all(attrs={"data-number": True}):
-            volume_ids.add(attr(tag, "data-number"))
+            chapter_ids.add(attr(tag, "data-number"))
         # fallback: pull chapter numbers out of hrefs
-        if not volume_ids:
+        if not chapter_ids:
             for a in fragment.find_all("a", href=re.compile(r"chapter-[\d.]+")):
                 m = re.search(r"chapter-([\d.]+)", attr(a, "href"))
                 if m:
-                    volume_ids.add(m.group(1))
+                    chapter_ids.add(m.group(1))
 
-        if not volume_ids:
+        if not chapter_ids:
             raise MangaDoesNotExist(
                 f"No chapters found for {self.manga_url} (bad slug or page blocked)"
             )
-        return sort_chapter_ids(volume_ids)
+        return sort_chapter_ids(chapter_ids)
 
     def author(self) -> Optional[str]:
         """Author(s) from the ``/manga/<slug>`` series page
         (``a[itemprop="author"]``). Best effort: the page is Cloudflare-walled so
         we drive a browser; any failure returns None (the builder treats author
         as optional). NOTE: this is a second browser navigation on top of
-        all_volume_ids' -- a future optimization could capture the series HTML
+        all_chapter_ids' -- a future optimization could capture the series HTML
         during that existing session.
         """
         series_url = f"{self.base_url}/manga/{self.manga_url}"

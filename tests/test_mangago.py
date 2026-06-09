@@ -10,7 +10,7 @@ from unittest import mock
 import bs4
 import pytest
 
-from scraper.exceptions import VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist
 from scraper.parsers.mangago import (
     MangagoMangaParser,
     MangagoSearch,
@@ -68,32 +68,32 @@ def test_image_urls_from_reader_html_selects_page_imgs_only():
 # ----------------------------- manga parser ------------------------------
 
 
-def test_all_volume_ids_parses_chapters_and_caches_urls():
+def test_all_chapter_ids_parses_chapters_and_caches_urls():
     with mock.patch("scraper.parsers.mangago.BrowserFetcher") as BF:
         BF.return_value.get.return_value = mock.Mock(text=CHAPTERS_HTML)
         parser = MangagoMangaParser("naruto")
-        ids = list(parser.all_volume_ids())
+        ids = list(parser.all_chapter_ids())
     assert "700.6" in ids and "700.5" in ids
-    # volume_url uses the cached map (no second fetch needed)
-    assert parser.volume_url("700.6") == (
+    # chapter_url uses the cached map (no second fetch needed)
+    assert parser.chapter_url("700.6") == (
         "https://www.mangago.me/read-manga/naruto/mr/v72/c700.6/pg-1/"
     )
 
 
-def test_volume_url_unknown_chapter_raises():
+def test_chapter_url_unknown_chapter_raises():
     with mock.patch("scraper.parsers.mangago.BrowserFetcher") as BF:
         BF.return_value.get.return_value = mock.Mock(text=CHAPTERS_HTML)
         parser = MangagoMangaParser("naruto")
-        parser.all_volume_ids()
-        with pytest.raises(VolumeDoesntExist):
-            parser.volume_url("99999")
+        parser.all_chapter_ids()
+        with pytest.raises(ChapterDoesntExist):
+            parser.chapter_url("99999")
 
 
 def test_page_urls_returns_enumerated_cdn_images():
     with mock.patch("scraper.parsers.mangago.BrowserFetcher") as BF:
         BF.return_value.get.return_value = mock.Mock(text=READER_HTML)
         parser = MangagoMangaParser("naruto")
-        # seed the chapter map so volume_url resolves without another fetch
+        # seed the chapter map so chapter_url resolves without another fetch
         parser._chapter_urls = {"700.6": "https://www.mangago.me/x/mr/v72/c700.6/pg-1/"}
         pages = parser.page_urls("700.6")
     assert pages[0][0] == 1
@@ -106,7 +106,7 @@ def test_page_urls_raises_when_no_images():
         BF.return_value.get.return_value = mock.Mock(text="<html><body/></html>")
         parser = MangagoMangaParser("naruto")
         parser._chapter_urls = {"1": "https://www.mangago.me/x/mr/v1/c1/pg-1/"}
-        with pytest.raises(VolumeDoesntExist):
+        with pytest.raises(ChapterDoesntExist):
             parser.page_urls("1")
 
 
@@ -124,6 +124,6 @@ def test_search_parses_box_cards_with_latest_chapter():
     assert first.title == "Naruto"
     assert first.manga_url == "naruto"
     assert first.source == "mangago"
-    # latest chapter (the previously-blank "Latest Volume" column) is now filled
+    # latest chapter (the previously-blank "Latest Chapter" column) is now filled
     # from the a.chico "Latest Chapters" link ("Vol.72 Ch.700.6" -> "700.6")
     assert first.latest_chapter == "700.6"

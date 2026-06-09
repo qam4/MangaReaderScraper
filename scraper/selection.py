@@ -2,7 +2,7 @@
 Chapter identifiers, ordering, and selection.
 
 One place that defines (a) how chapter ids are ordered and (b) how a user's
-``--volumes`` selection -- single ids and ``start-end`` ranges -- maps onto the
+``--chapters`` selection -- single ids and ``start-end`` ranges -- maps onto the
 chapter ids a site actually offers.
 
 This replaces the ad-hoc ``int()`` / ``float()`` / lexicographic-string sorts
@@ -12,9 +12,9 @@ per site -- plain integers, decimals like ``9.22``, gaps -- so every site that
 numbered things differently used to force a patch in whichever spot broke.
 
 Selection is **chapter-number based** when chapter ids carry numbers:
-``--volumes 9-12`` means "every chapter whose number is between 9 and 12
+``--chapters 9-12`` means "every chapter whose number is between 9 and 12
 (inclusive)", which naturally includes decimal chapters like ``9.22`` and
-tolerates gaps, and ``--volumes 40`` means "chapter 40", not "the 40th chapter".
+tolerates gaps, and ``--chapters 40`` means "chapter 40", not "the 40th chapter".
 
 Some sites, though, use **opaque chapter slugs** with no reliable number
 (mangabuddy ids are whatever the uploader chose: ``vol-54-chapter-name``,
@@ -130,7 +130,7 @@ def _select_by_index(tokens: Iterable[str], available: List[str]) -> List[str]:
     ids are opaque slugs (e.g. mangabuddy's ``vol-54-chapter-name`` or
     ``chapter-3000``) where no chapter *number* can be reliably extracted.
 
-    ``--volumes 1`` -> the 1st chapter in the list, ``--volumes 1-3`` -> the
+    ``--chapters 1`` -> the 1st chapter in the list, ``--chapters 1-3`` -> the
     first three. This preserves the behaviour these sites relied on before
     chapter-number selection existed. Out-of-range positions are warned and
     skipped rather than raising.

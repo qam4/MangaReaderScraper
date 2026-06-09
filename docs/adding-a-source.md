@@ -155,7 +155,7 @@ The **sibling-mismatch hint** (the `!!` line) is the gotcha catcher: when your
 value contains a number and a *neighbouring* field looks like it should hold the
 same number but disagrees, it's flagged. Above, the chapter's displayed number
 is `700.5` but the adjacent `chapter_number` is `748` — the mangak.io sequence
-counter, exactly the trap that would make `--volumes` ranges wrong. The hint
+counter, exactly the trap that would make `--chapters` ranges wrong. The hint
 never asserts the sibling is wrong; it points you at the disagreement so you
 derive the number from the right field.
 
@@ -212,7 +212,7 @@ Create `scraper/parsers/<site>.py` with a `<Site>MangaParser`,
     curl_cffi is challenged.
   - **gotcha:** the API's `chapter_number` is a sequence counter, not the
     displayed number — parse the real number from the chapter *name*
-    (`"Chapter 700.5"` → `700.5`), or `--volumes` ranges will be wrong.
+    (`"Chapter 700.5"` → `700.5`), or `--chapters` ranges will be wrong.
 - **JSON/ajax site behind a vrf token** → copy `mangafire.py`. It drives the
   browser via `BrowserFetcher` (`capture_xhr` to intercept a vrf-gated call,
   `fetch_json_in_page` for a known endpoint).

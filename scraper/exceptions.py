@@ -3,7 +3,7 @@ Custom exceptions
 """
 
 
-class VolumeDoesntExist(Exception):
+class ChapterDoesntExist(Exception):
     pass
 
 
@@ -19,11 +19,11 @@ class PageAlreadyPresent(Exception):
     pass
 
 
-class VolumeAlreadyPresent(Exception):
+class ChapterAlreadyPresent(Exception):
     pass
 
 
-class VolumeAlreadyExists(Exception):
+class ChapterAlreadyExists(Exception):
     pass
 
 

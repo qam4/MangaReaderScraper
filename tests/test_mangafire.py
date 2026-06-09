@@ -35,37 +35,37 @@ SERIES_HTML = Path("tests/test_files/mangafire/series_page.html").read_text(
 # ============================== chapter list =============================
 
 
-def test_all_volume_ids_parses_real_response():
-    """all_volume_ids should pull every data-number out of the real ajax JSON."""
+def test_all_chapter_ids_parses_real_response():
+    """all_chapter_ids should pull every data-number out of the real ajax JSON."""
     with mock.patch(
         "scraper.parsers.mangafire.BrowserFetcher.fetch_json_in_page",
         return_value=CHAPTER_JSON,
     ) as fetched:
         parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
-        vols = list(parser.all_volume_ids())
+        chapters = list(parser.all_chapter_ids())
 
     # the endpoint that should have been hit (2nd positional arg = ajax url)
     args = fetched.call_args[0]
     assert args[1] == "https://mangafire.to/ajax/manga/lww3/chapter/en"
 
     # 81 base chapters + 3 decimal point releases (9.22, 21.22, 28.22) = 84
-    assert len(vols) == 84
+    assert len(chapters) == 84
     # sorted ascending by float
-    assert vols[0] == "1"
-    assert vols[-1] == "81"
+    assert chapters[0] == "1"
+    assert chapters[-1] == "81"
     # decimal chapters preserved verbatim and ordered correctly
-    assert "28.22" in vols
-    assert vols.index("28.22") > vols.index("28")
-    assert vols.index("28.22") < vols.index("29")
+    assert "28.22" in chapters
+    assert chapters.index("28.22") > chapters.index("28")
+    assert chapters.index("28.22") < chapters.index("29")
 
 
-def test_volume_url_uses_chapter_number_verbatim():
+def test_chapter_url_uses_chapter_number_verbatim():
     parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
-    assert parser.volume_url("78") == (
+    assert parser.chapter_url("78") == (
         "https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-78"
     )
     # decimal chapters must round-trip
-    assert parser.volume_url("28.22").endswith("chapter-28.22")
+    assert parser.chapter_url("28.22").endswith("chapter-28.22")
 
 
 # ================================ search =================================

@@ -93,10 +93,10 @@ Or skip the menu and download a series directly by its url slug:
 uv run manga-scraper --manga dragon-ball
 
 # Just chapter 2 of Final Fantasy XII
-uv run manga-scraper --manga final-fantasy-xii --volumes 2
+uv run manga-scraper --manga final-fantasy-xii --chapters 2
 
 # Dragon Ball Super chapters 3-7 and 23, from a specific source, as CBZ
-uv run manga-scraper --manga dragon-ball-super --volumes 3-7 23 --source mangafire --filetype cbz
+uv run manga-scraper --manga dragon-ball-super --chapters 3-7 23 --source mangafire --filetype cbz
 ```
 
 If `--manga <slug>` finds nothing, the tool automatically falls back to a
@@ -104,7 +104,7 @@ If `--manga <slug>` finds nothing, the tool automatically falls back to a
 
 ## Selecting chapters
 
-The `--volumes` argument (and the interactive prompt) is **chapter-number
+The `--chapters` argument (and the interactive prompt) is **chapter-number
 based**, not positional. You can mix single chapters and ranges:
 
 ```
@@ -126,7 +126,7 @@ chapter number to match against.
 
 ```
 usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
-                     [--volumes VOLUMES [VOLUMES ...]] [--output OUTPUT]
+                     [--chapters CHAPTERS [CHAPTERS ...]] [--output OUTPUT]
                      [--filetype {pdf,cbz}]
                      [--source {mangabuddy,mangafire,mangago,mangakaka,manganato,manganelo}]
                      [--override_name OVERRIDE_NAME] [--version]
@@ -137,7 +137,7 @@ usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
 |------|-------|-------------|
 | `--manga` | `-m` | Manga series name / url slug to download |
 | `--search` | `-s` | Search the source and pick from a results table |
-| `--volumes` | `-q` | Chapters to download (single, ranges, or a mix); omit for all |
+| `--chapters` | `-q` | Chapters to download (single, ranges, or a mix); omit for all |
 | `--output` | `-o` | Directory to save downloads (defaults to config `manga_directory`) |
 | `--filetype` | `-f` | `pdf` or `cbz` (defaults to config `filetype`) |
 | `--source` | `-z` | Site to scrape from (defaults to config `source`) |

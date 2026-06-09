@@ -43,7 +43,7 @@ def test_failed_extract_chapter_number(inval):
 
 def test_case_adapter(caplog, logger):
     adapter = CustomAdapter(
-        logger, extra={"manga": "dragon-ball-super-gt-z-heroes", "volume": 1}
+        logger, extra={"manga": "dragon-ball-super-gt-z-heroes", "chapter": 1}
     )
     adapter.warning("Test message")
     assert "[dragon-ball-super-gt-z-heroes:1] Test message" in caplog.text
@@ -56,7 +56,7 @@ def test_case_adapter_manga_only(caplog, logger):
 
 
 def test_get_adapter(caplog, logger):
-    adapter = get_adapter(logger, manga="cool-manga", volume=2)
+    adapter = get_adapter(logger, manga="cool-manga", chapter=2)
     adapter.warning("Test message")
     assert "[cool-manga:2] Test message" in caplog.text
 

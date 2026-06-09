@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 configure_logging()
 
 
-def get_volume_values(volume: str) -> List[str]:
+def get_chapter_values(chapter: str) -> List[str]:
     """
-    Split a ``--volumes`` argument into selector tokens.
+    Split a ``--chapters`` argument into selector tokens.
 
     Ranges (``9-12``) are passed through verbatim as single tokens; they are
     resolved against the manga's actual chapter list later by
@@ -33,18 +33,18 @@ def get_volume_values(volume: str) -> List[str]:
     can span decimal chapters and tolerate gaps. Comma-separated values are
     split into individual tokens.
     """
-    return [token for token in volume.split(",") if token]
+    return [token for token in chapter.split(",") if token]
 
 
-def normalize_volumes(volumes: Optional[List[str]]) -> Optional[List[str]]:
+def normalize_chapters(chapters: Optional[List[str]]) -> Optional[List[str]]:
     """
-    Flatten raw ``--volumes`` tokens into selector tokens, or None if empty.
+    Flatten raw ``--chapters`` tokens into selector tokens, or None if empty.
     """
-    if not volumes:
+    if not chapters:
         return None
     flattened: List[str] = []
-    for vol in volumes:
-        flattened += get_volume_values(vol)
+    for chapter in chapters:
+        flattened += get_chapter_values(chapter)
     return flattened
 
 
@@ -52,7 +52,7 @@ def manga_search(
     query: List[str], parser: SiteParserClass
 ) -> Tuple[str, str, List[str]]:
     """
-    Search for a manga and return the manga name and volumes
+    Search for a manga and return the manga name and chapters
     selected by user input
     """
     menu = SearchMenu(query, parser)
@@ -61,11 +61,12 @@ def manga_search(
     title = manga["title"]
     url = manga["manga_url"]
     msg = (
-        "Which volume(s) do you want to download (Enter alone to download all volumes)?"
+        "Which chapter(s) do you want to download "
+        "(Enter alone to download all chapters)?"
     )
-    volumes = menu_input(msg)
-    logger.debug(f"[manga_search] volumes={volumes}")
-    return (title, url, volumes.split())
+    chapters = menu_input(msg)
+    logger.debug(f"[manga_search] chapters={chapters}")
+    return (title, url, chapters.split())
 
 
 def get_manga_parser(source: str) -> SiteParserClass:
@@ -82,7 +83,7 @@ def get_manga_parser(source: str) -> SiteParserClass:
 def download_manga(
     manga_url: str,
     manga_title: Optional[str],
-    volumes: Optional[List[str]],
+    chapters: Optional[List[str]],
     filetype: str,
     parser: SiteParserClass,
     preferred_name: Optional[str] = None,
@@ -90,7 +91,7 @@ def download_manga(
 ) -> Manga:
     """Download a manga"""
     downloader = Download(manga_url, filetype, parser, jobs=jobs)
-    manga = downloader.download_volumes(volumes, manga_title, preferred_name)
+    manga = downloader.download_chapters(chapters, manga_title, preferred_name)
     return manga
 
 
@@ -131,7 +132,7 @@ def cli(arguments: List[str]) -> dict:
         raise IOError("Cannot use --remove without --upload")
 
     if args["search"]:
-        title, args["manga"], args["volumes"] = manga_search(
+        title, args["manga"], args["chapters"] = manga_search(
             args["search"], manga_parser
         )
 
@@ -140,7 +141,7 @@ def cli(arguments: List[str]) -> dict:
     else:
         raise IOError("Missing argument --manga or --search")
 
-    args["volumes"] = normalize_volumes(args["volumes"])
+    args["chapters"] = normalize_chapters(args["chapters"])
 
     if args["bundle"]:
         args["filetype"] = "cbz"
@@ -150,7 +151,7 @@ def cli(arguments: List[str]) -> dict:
         manga = download_manga(
             manga_url=args["manga"],
             manga_title=title,
-            volumes=args["volumes"],
+            chapters=args["chapters"],
             filetype=args["filetype"],
             parser=manga_parser,
             preferred_name=args["override_name"],
@@ -164,14 +165,14 @@ def cli(arguments: List[str]) -> dict:
             f"No manga found for {args['manga']}. Searching for closest match."
         )
         args["search"] = [args["manga"]]
-        title, args["manga"], args["volumes"] = manga_search(
+        title, args["manga"], args["chapters"] = manga_search(
             args["search"], manga_parser
         )
-        args["volumes"] = normalize_volumes(args["volumes"])
+        args["chapters"] = normalize_chapters(args["chapters"])
         manga = download_manga(
             manga_url=args["manga"],
             manga_title=title,
-            volumes=args["volumes"],
+            chapters=args["chapters"],
             filetype=args["filetype"],
             parser=manga_parser,
             preferred_name=args["override_name"],
@@ -182,8 +183,8 @@ def cli(arguments: List[str]) -> dict:
         upload(manga, args["upload"])
 
     if args["remove"]:
-        for volume in manga.volumes:
-            volume.file_path.unlink()
+        for chapter in manga.chapters:
+            chapter.file_path.unlink()
 
     if args["bundle"]:
         bundle(manga, args["bundle"], jobs=args.get("jobs"))
@@ -208,14 +209,18 @@ def cli_entry() -> None:
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="downloads and converts manga volumes to pdf or cbz format"
+        description="downloads and converts manga to pdf or cbz format"
     )
     parser.add_argument("--manga", "-m", type=str, help="manga series name", nargs="*")
     parser.add_argument(
         "--search", "-s", type=str, help="search manga reader", nargs="*"
     )
     parser.add_argument(
-        "--volumes", "-q", nargs="+", type=str, help="manga volume to download"
+        "--chapters",
+        "-q",
+        nargs="+",
+        type=str,
+        help="chapter(s) to download",
     )
     parser.add_argument("--output", "-o", default=CONFIG["manga_directory"])
     parser.add_argument(
@@ -251,7 +256,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--remove",
         "-r",
         action="store_true",
-        help="delete downloaded volumes aftering uploading to a cloud service",
+        help="delete downloaded chapters aftering uploading to a cloud service",
     )
     parser.add_argument(
         "--version",

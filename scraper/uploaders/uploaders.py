@@ -6,7 +6,7 @@ import dropbox
 from dropbox.files import FileMetadata
 from pcloud import PyCloud
 
-from scraper.manga import Volume
+from scraper.manga import Chapter
 from scraper.uploaders.base import BaseUploader
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class DropboxUploader(BaseUploader):
     """
-    Uploads manga volumes to Dropbox
+    Uploads manga chapters to Dropbox
     """
 
     def __init__(self) -> None:
@@ -23,32 +23,32 @@ class DropboxUploader(BaseUploader):
     def _get_api_object(self) -> dropbox.Dropbox:
         return dropbox.Dropbox(self.config["token"])
 
-    def volume_exists(self, volume: Volume) -> bool:
+    def chapter_exists(self, chapter: Chapter) -> bool:
         try:
-            volume_search = self.api.files_search(
-                path=str(volume.upload_path.parent),
-                query=str(volume.upload_path.name),
+            chapter_search = self.api.files_search(
+                path=str(chapter.upload_path.parent),
+                query=str(chapter.upload_path.name),
             )
-            return True if volume_search.matches else False
+            return True if chapter_search.matches else False
         except dropbox.exceptions.ApiError as e:
             actual_error = str(e.error._value)
             if "not_found" in actual_error:
                 return False
             raise e
 
-    def upload_volume(self, volume: Volume) -> Optional[FileMetadata]:
-        if self.volume_exists(volume):
-            self.adapter.warning(f"Volume {volume.number} already exists in Dropbox")
+    def upload_chapter(self, chapter: Chapter) -> Optional[FileMetadata]:
+        if self.chapter_exists(chapter):
+            self.adapter.warning(f"Chapter {chapter.number} already exists in Dropbox")
             return None
-        with open(volume.file_path, "rb") as cbz:
-            response = self.api.files_upload(cbz.read(), str(volume.upload_path))
+        with open(chapter.file_path, "rb") as cbz:
+            response = self.api.files_upload(cbz.read(), str(chapter.upload_path))
             self.adapter.info(f"Uploaded to {response.path_lower}")
             return response
 
 
 class PcloudUploader(BaseUploader):
     """
-    Uploads manga volumes to pCloud
+    Uploads manga chapters to pCloud
     """
 
     def __init__(self) -> None:
@@ -82,15 +82,15 @@ class PcloudUploader(BaseUploader):
             responses.append(res)
         return responses
 
-    def upload_volume(self, volume: Volume) -> Dict[str, Any]:
-        self.create_directories_recursively(volume.upload_path)
-        parent_dir = str(volume.upload_path.parent)
+    def upload_chapter(self, chapter: Chapter) -> Dict[str, Any]:
+        self.create_directories_recursively(chapter.upload_path)
+        parent_dir = str(chapter.upload_path.parent)
         response = self.api.uploadfile(
-            data=volume.file_path.read_bytes(),
-            filename=str(volume.upload_path),
+            data=chapter.file_path.read_bytes(),
+            filename=str(chapter.upload_path),
             path=parent_dir,
         )
         if response.get("error"):
             raise IOError(response.get("error"))
-        self.adapter.info(f"Volume {volume.number} uploaded to {volume.upload_path}")
+        self.adapter.info(f"Chapter {chapter.number} uploaded to {chapter.upload_path}")
         return response

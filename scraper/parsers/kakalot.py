@@ -31,7 +31,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser
@@ -80,7 +80,7 @@ class KakalotMangaParser(BaseMangaParser):
         series (chapter-list) page
       * ``page_img_attr`` -- ``"src"`` or ``"data-src"`` for the reader images
 
-    One instance is reused across all_volume_ids -> volume_url -> page_urls, so
+    One instance is reused across all_chapter_ids -> chapter_url -> page_urls, so
     the ``{number: reader_url}`` map scraped from the series page is cached.
     """
 
@@ -95,7 +95,7 @@ class KakalotMangaParser(BaseMangaParser):
     def _manga_page_url(self) -> str:
         return self.manga_path.format(base_url=self.base_url, slug=self.manga_url)
 
-    def all_volume_ids(self) -> Iterable[str]:
+    def all_chapter_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
         logger.debug(f"Manga url={url}")
         manga_html = self._fetch_manga_page(url)
@@ -106,28 +106,30 @@ class KakalotMangaParser(BaseMangaParser):
             )
         return sort_chapter_ids(self._chapter_urls.keys())
 
-    def volume_url(self, volume: str) -> str:
+    def chapter_url(self, chapter: str) -> str:
         if not self._chapter_urls:
-            self.all_volume_ids()
-        url = self._chapter_urls.get(volume)
+            self.all_chapter_ids()
+        url = self._chapter_urls.get(chapter)
         if not url:
-            raise VolumeDoesntExist(f"Chapter {volume} not found for {self.manga_url}")
+            raise ChapterDoesntExist(
+                f"Chapter {chapter} not found for {self.manga_url}"
+            )
         return url
 
-    def _scrape_volume(self, volume: str) -> BeautifulSoup:
-        volume_html = self._fetch_manga_page(self.volume_url(volume))
-        if volume_html.find_all(string=re.compile("404 NOT FOUND"), recursive=True):
-            raise VolumeDoesntExist(
-                f"Manga {self.manga_url} volume {volume} does not exist"
+    def _scrape_chapter(self, chapter: str) -> BeautifulSoup:
+        chapter_html = self._fetch_manga_page(self.chapter_url(chapter))
+        if chapter_html.find_all(string=re.compile("404 NOT FOUND"), recursive=True):
+            raise ChapterDoesntExist(
+                f"Manga {self.manga_url} chapter {chapter} does not exist"
             )
-        return volume_html
+        return chapter_html
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
-        volume_html = self._scrape_volume(volume)
-        container = volume_html.find("div", {"class": "container-chapter-reader"})
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
+        chapter_html = self._scrape_chapter(chapter)
+        container = chapter_html.find("div", {"class": "container-chapter-reader"})
         if not isinstance(container, Tag):
-            raise VolumeDoesntExist(
-                f"No page-image container for {self.manga_url} chapter {volume}"
+            raise ChapterDoesntExist(
+                f"No page-image container for {self.manga_url} chapter {chapter}"
             )
         all_img_tags = container.find_all("img")
         all_page_urls = [attr(img, self.page_img_attr) for img in all_img_tags]

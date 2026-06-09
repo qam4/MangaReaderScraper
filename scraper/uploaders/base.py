@@ -4,7 +4,7 @@ from configparser import SectionProxy
 from multiprocessing.pool import ThreadPool
 from typing import Any, List, Optional
 
-from scraper.manga import Manga, Volume
+from scraper.manga import Chapter, Manga
 from scraper.utils import CustomAdapter, get_adapter, settings
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class BaseUploader:
     @property
     def adapter(self) -> CustomAdapter:
         """The per-manga logging adapter. Set by ``_setup_adapter`` at the start
-        of ``upload`` before any ``upload_volume`` runs; accessing it earlier is
+        of ``upload`` before any ``upload_chapter`` runs; accessing it earlier is
         a programming error (hence the explicit raise rather than an Optional
         every call site must None-check)."""
         if self._adapter is None:
@@ -45,9 +45,9 @@ class BaseUploader:
         pass
 
     @abc.abstractmethod
-    def upload_volume(self, volume: Volume) -> Any:
+    def upload_chapter(self, chapter: Chapter) -> Any:
         """
-        Uploads a given volume
+        Uploads a given chapter
         """
         pass
 
@@ -56,12 +56,12 @@ class BaseUploader:
 
     def upload(self, manga: Manga) -> List[Any]:
         """
-        Uploads all volumes in a given Manga object
+        Uploads all chapters in a given Manga object
         """
-        if not manga.volumes:
+        if not manga.chapters:
             return []
         self._setup_adapter(manga)
         self.adapter.info(f"Uploading to {self.service.title()}")
         with ThreadPool() as pool:
-            responses = pool.map(self.upload_volume, manga.volumes)
+            responses = pool.map(self.upload_chapter, manga.chapters)
         return responses

@@ -20,7 +20,7 @@ from unittest import mock
 import bs4
 import pytest
 
-from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import FetchResult
 from scraper.registry import _REGISTRY
 from scraper.scaffold import (
@@ -495,30 +495,30 @@ def test_roundtrip_generated_parser_reproduces_mangabuddy(tmp_path):
         assert results["1"].manga_url == "naruto"
         assert get.call_args[0][0] == "https://api.mangak.io/titles/search?q=naruto"
 
-        # CHAPTERS -- mirrors test_all_volume_ids_resolves_title_then_lists_chapters
+        # CHAPTERS -- mirrors test_all_chapter_ids_resolves_title_then_lists_chapters
         parser = mod.MangabuddyGenMangaParser("naruto")
         with mock.patch.object(
             mod.CurlCffiFetcher,
             "get",
             side_effect=[_ok(SEARCH_JSON), _ok(CHAPTERS_JSON)],
         ) as get:
-            vols = list(parser.all_volume_ids())
-        assert vols[0] == "0"
-        assert vols[-1] == "700.5"
-        assert vols.index("700.1") < vols.index("700.5")
+            chapters = list(parser.all_chapter_ids())
+        assert chapters[0] == "0"
+        assert chapters[-1] == "700.5"
+        assert chapters.index("700.1") < chapters.index("700.5")
         assert (
             get.call_args_list[1][0][0]
             == "https://api.mangak.io/titles/VYPXkPYz/chapters?cv=1780511268548"
         )
 
-        # VOLUME_URL -- mirrors test_volume_url_maps_number_to_slug
+        # CHAPTER_URL -- mirrors test_chapter_url_maps_number_to_slug
         parser = mod.MangabuddyGenMangaParser("naruto")
         with mock.patch.object(
             mod.CurlCffiFetcher,
             "get",
             side_effect=[_ok(SEARCH_JSON), _ok(CHAPTERS_JSON)],
         ):
-            url = parser.volume_url("700.5")
+            url = parser.chapter_url("700.5")
         assert url == "https://mangak.io/naruto/chapter-700-5-uzumaki-naruto"
 
         # PAGE_URLS (next_data) -- mirrors
@@ -538,13 +538,13 @@ def test_roundtrip_generated_parser_reproduces_mangabuddy(tmp_path):
         assert pages[0][1].endswith("7358c3b60772.webp")
         browser.get.assert_not_called()  # curl_cffi cleared the page; no browser
 
-        # UNKNOWN SLUG -- mirrors test_all_volume_ids_unknown_slug_raises
+        # UNKNOWN SLUG -- mirrors test_all_chapter_ids_unknown_slug_raises
         parser = mod.MangabuddyGenMangaParser("does-not-exist")
         with mock.patch.object(
             mod.CurlCffiFetcher, "get", return_value=_ok(SEARCH_JSON)
         ):
             with pytest.raises(MangaDoesNotExist):
-                parser.all_volume_ids()
+                parser.all_chapter_ids()
     finally:
         sys.modules.pop(module_name, None)
         _REGISTRY.pop("mangabuddy_gen", None)
@@ -594,18 +594,18 @@ def test_roundtrip_wrong_search_path_yields_empty(tmp_path):
 #     `src`, the lazy ones carry a `data:` placeholder in `src` and the real url
 #     in `data-src` -- so extraction must prefer data-src, fall back to src, and
 #     never emit the `data:` placeholder.
-# A wrong selector must fail LOUDLY (VolumeDoesntExist), not silently mis-parse.
+# A wrong selector must fail LOUDLY (ChapterDoesntExist), not silently mis-parse.
 # Each test imports under a DISTINCT register_as and tears down sys.modules +
 # the registry key, so no global state leaks and nothing lands in the real tree.
 
 # The real shipped HTML fixtures (ground truth for the html-mode round-trip).
-MANGAKAKA_VOLUME_HTML = Path(
-    "tests/test_files/mangakaka/dragonball_super_volume_1.html"
+MANGAKAKA_CHAPTER_HTML = Path(
+    "tests/test_files/mangakaka/dragonball_super_chapter_1.html"
 ).read_text(encoding="utf-8")
 # A retired-source-agnostic HTML sample for the lazy data-src + src-fallback
 # image case (relocated from the retired mangafast fixtures).
-MANGAFAST_VOLUME_HTML = Path(
-    "tests/test_files/html_samples/lazy_src_volume.html"
+MANGAFAST_CHAPTER_HTML = Path(
+    "tests/test_files/html_samples/lazy_src_chapter.html"
 ).read_text(encoding="utf-8")
 
 
@@ -653,7 +653,7 @@ def test_roundtrip_html_mode_mangakaka_container_plain_src(tmp_path):
     try:
         parser = mod.KakalotGenMangaParser("dragon-ball-super")
         parser._chapter_slugs = {"1": "chapter-1"}
-        soup = bs4.BeautifulSoup(MANGAKAKA_VOLUME_HTML, "lxml")
+        soup = bs4.BeautifulSoup(MANGAKAKA_CHAPTER_HTML, "lxml")
         with mock.patch.object(mod, "fetch_soup", return_value=soup):
             pages = parser.page_urls("1")
         assert len(pages) == 16
@@ -686,7 +686,7 @@ def test_roundtrip_html_mode_mangafast_lazy_data_src(tmp_path):
     try:
         parser = mod.MangafastGenMangaParser("dragon-ball-super")
         parser._chapter_slugs = {"1": "chapter-1"}
-        soup = bs4.BeautifulSoup(MANGAFAST_VOLUME_HTML, "lxml")
+        soup = bs4.BeautifulSoup(MANGAFAST_CHAPTER_HTML, "lxml")
         with mock.patch.object(mod, "fetch_soup", return_value=soup):
             pages = parser.page_urls("1")
         assert pages, "no images extracted from div#Read"
@@ -711,7 +711,7 @@ def test_roundtrip_html_mode_mangafast_lazy_data_src(tmp_path):
 
 def test_roundtrip_html_mode_wrong_selector_fails_loudly(tmp_path):
     # Req 6.5: a wrong selector finds no container (select_one -> None), so
-    # page_urls raises VolumeDoesntExist -- a LOUD failure, not a silent empty
+    # page_urls raises ChapterDoesntExist -- a LOUD failure, not a silent empty
     # result or mis-parse.
     cfg = load_parser_config(_html_toml("badsel_gen", "div.does-not-exist"))
     module_name = "gen_badsel_roundtrip"
@@ -721,9 +721,9 @@ def test_roundtrip_html_mode_wrong_selector_fails_loudly(tmp_path):
     try:
         parser = mod.BadselGenMangaParser("dragon-ball-super")
         parser._chapter_slugs = {"1": "chapter-1"}
-        soup = bs4.BeautifulSoup(MANGAKAKA_VOLUME_HTML, "lxml")
+        soup = bs4.BeautifulSoup(MANGAKAKA_CHAPTER_HTML, "lxml")
         with mock.patch.object(mod, "fetch_soup", return_value=soup):
-            with pytest.raises(VolumeDoesntExist):
+            with pytest.raises(ChapterDoesntExist):
                 parser.page_urls("1")
     finally:
         sys.modules.pop(module_name, None)

@@ -174,8 +174,7 @@ class Bundle:
         input_root_path = self._get_manga_download_dir()
         output_root_path = self._get_manga_bundle_dir()
 
-        # the original Manga class calls chapters volumes
-        manga_chapters = self.manga.volumes
+        manga_chapters = self.manga.chapters
         manga_title = self.manga.name
         writer = self.writer
         manga_folder = os.path.join(input_root_path, manga_title)
@@ -275,7 +274,7 @@ class Bundle:
         logger.debug(f"{title} creation duration: {time_str}")
 
     def bundle(self):
-        manga_chapters = self.manga.volumes
+        manga_chapters = self.manga.chapters
         num_volumes = ceiling_division(len(manga_chapters), self.chapters_per_volume)
         volume_digits = len(str(num_volumes))
 

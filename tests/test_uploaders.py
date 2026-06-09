@@ -16,18 +16,18 @@ from tests.helpers import (
 
 @pytest.mark.parametrize("uploader", [DropboxUploader])
 @mock.patch("scraper.uploaders.uploaders.dropbox.Dropbox", MockedDropbox)
-def test_upload_fails(caplog, volume, uploader):
+def test_upload_fails(caplog, chapter, uploader):
     uploader = setup_uploader(uploader)
-    response = uploader.upload_volume(volume)
+    response = uploader.upload_chapter(chapter)
     assert "already exists" in caplog.text
     assert response is None
 
 
 @mock.patch("scraper.uploaders.uploaders.dropbox.Dropbox", MockedDropboxRealFile)
-def test_dropbox_upload(caplog, volume):
-    volume.file_path = "tests/test_files/mangakaka/dragonball_super_page.html"
+def test_dropbox_upload(caplog, chapter):
+    chapter.file_path = "tests/test_files/mangakaka/dragonball_super_page.html"
     dbox = setup_uploader(DropboxUploader)
-    response = dbox.upload_volume(volume)
+    response = dbox.upload_chapter(chapter)
     assert response.text == "success"
 
 
@@ -66,19 +66,19 @@ def test_pycloud_create_directories_fail():
 
 
 @mock.patch("scraper.uploaders.uploaders.PyCloud", MockedPyCloud)
-def test_pycloud_upload_volume(volume):
-    volume.file_path = Path("tests/test_files/jpgs/test-manga_1_1.jpg")
+def test_pycloud_upload_chapter(chapter):
+    chapter.file_path = Path("tests/test_files/jpgs/test-manga_1_1.jpg")
     pycloud = setup_uploader(PcloudUploader)
-    response = pycloud.upload_volume(volume)
+    response = pycloud.upload_chapter(chapter)
     assert response == {"status": "success"}
 
 
 @mock.patch("scraper.uploaders.uploaders.PyCloud", MockedPyCloudFail)
-def test_pycloud_upload_upload_failure(volume):
-    volume.file_path = Path("tests/test_files/jpgs/test-manga_1_1.jpg")
+def test_pycloud_upload_upload_failure(chapter):
+    chapter.file_path = Path("tests/test_files/jpgs/test-manga_1_1.jpg")
     pycloud = setup_uploader(PcloudUploader)
     with pytest.raises(IOError):
-        pycloud.upload_volume(volume)
+        pycloud.upload_chapter(chapter)
 
 
 @pytest.mark.parametrize(
@@ -90,12 +90,12 @@ def test_pycloud_upload_upload_failure(volume):
 def test_upload_calls(to_mock, mock_obj, uploader):
     with mock.patch(f"scraper.uploaders.uploaders.{to_mock}", mock_obj):
         manga = Manga("dragon-ball", "pdf")
-        manga.add_volume("1")
-        manga.add_volume("2")
-        manga.volumes_dict["1"].file_path = Path(
+        manga.add_chapter("1")
+        manga.add_chapter("2")
+        manga.chapters_dict["1"].file_path = Path(
             "tests/test_files/jpgs/test-manga_1_1.jpg"
         )
-        manga.volumes_dict["2"].file_path = Path(
+        manga.chapters_dict["2"].file_path = Path(
             "tests/test_files/jpgs/test-manga_1_2.jpg"
         )
         uploader = setup_uploader(uploader)

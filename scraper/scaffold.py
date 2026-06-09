@@ -421,7 +421,7 @@ def _render_header(cfg: ParserConfig) -> str:
             _stdlib_import_block(cfg),
             "from typing import Dict, Iterable, List, Optional, Tuple",
             "",
-            "from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist",
+            "from scraper.exceptions import MangaDoesNotExist, ChapterDoesntExist",
             _fetcher_import_line(cfg),
             "from scraper.new_types import SearchResult, SearchResults",
             *parser_imports,
@@ -530,7 +530,7 @@ _PARSE_SEARCH_HELPER = r'''def _parse_search_items(payload: object, start: int =
 
     Reads the items array at ``SEARCH_ITEMS`` and each item's title/slug at
     ``SEARCH_TITLE`` / ``SEARCH_SLUG`` via ``get_by_path`` (Req 6.2). The
-    ``latest_chapter`` (display-only "Latest Volume" column) is not part of the
+    ``latest_chapter`` (display-only "Latest Chapter" column) is not part of the
     confirmed field map, so it is left blank -- fill it in if the site exposes
     it. Pure mapping logic.
     """
@@ -595,7 +595,7 @@ def _render_helpers(cfg: ParserConfig) -> str:
 _MANGA_CLASS_HEAD = r'''class @@P@@MangaParser(BaseMangaParser):
     """Parse a specific manga via the site's API (generated scaffold).
 
-    One instance is reused across ``all_volume_ids`` -> ``volume_url`` ->
+    One instance is reused across ``all_chapter_ids`` -> ``chapter_url`` ->
     ``page_urls`` for a manga, so the resolved title id/cv and the
     ``{number: slug}`` chapter map are cached on the instance.
     """
@@ -644,11 +644,11 @@ _MANGA_CLASS_HEAD = r'''class @@P@@MangaParser(BaseMangaParser):
             f"Manga {self.manga_url} not found in {SOURCE} search results"
         )
 
-    def all_volume_ids(self) -> Iterable[str]:
+    def all_chapter_ids(self) -> Iterable[str]:
         """All chapter numbers for the manga, in canonical order.
 
         Resolves the title id, fetches the chapters endpoint, and caches the
-        ``{number: slug}`` map so ``volume_url`` can turn a chapter number back
+        ``{number: slug}`` map so ``chapter_url`` can turn a chapter number back
         into the slug a chapter url needs.
         """
         import requests  # type: ignore
@@ -669,14 +669,14 @@ _MANGA_CLASS_HEAD = r'''class @@P@@MangaParser(BaseMangaParser):
             raise MangaDoesNotExist(f"No numbered chapters found for {self.manga_url}")
         return sort_chapter_ids(self._chapter_slugs.keys())
 
-    def _chapter_slug_for(self, volume: str) -> str:
+    def _chapter_slug_for(self, chapter: str) -> str:
         """The site chapter slug for a chapter number, populating the cache if
         needed."""
         if not self._chapter_slugs:
-            self.all_volume_ids()
-        slug = self._chapter_slugs.get(volume)
+            self.all_chapter_ids()
+        slug = self._chapter_slugs.get(chapter)
         if not slug:
-            raise VolumeDoesntExist(f"Chapter {volume} not found for {self.manga_url}")
+            raise ChapterDoesntExist(f"Chapter {chapter} not found for {self.manga_url}")
         return slug'''
 
 
@@ -730,9 +730,9 @@ _PAGE_DATA_METHOD = r'''    def page_data(self, page_url: Tuple[int, str]) -> Tu
 
 # ``api`` mode: a standalone API endpoint returns the image array (Req 6.2). The
 # endpoint template is formatted with every placeholder it might reference.
-_IMAGES_API = r'''    def volume_url(self, volume: str) -> str:
+_IMAGES_API = r'''    def chapter_url(self, chapter: str) -> str:
         """API url of the image list for a chapter number."""
-        chapter_slug = self._chapter_slug_for(volume)
+        chapter_slug = self._chapter_slug_for(chapter)
         title_id, cv = self._resolve_title()
         return API_URL + IMAGES_ENDPOINT.format(
             chapter_slug=chapter_slug,
@@ -741,9 +741,9 @@ _IMAGES_API = r'''    def volume_url(self, volume: str) -> str:
             cv=cv,
         )
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] from the image-list API."""
-        url = self.volume_url(volume)
+        url = self.chapter_url(chapter)
         logger.info(f"Image list url={url}")
         payload = self._api_get(url)
         raw_images = _get(payload, IMAGES_PATH)
@@ -753,8 +753,8 @@ _IMAGES_API = r'''    def volume_url(self, volume: str) -> str:
             else []
         )
         if not images:
-            raise VolumeDoesntExist(
-                f"No page images found for {self.manga_url} chapter {volume}"
+            raise ChapterDoesntExist(
+                f"No page images found for {self.manga_url} chapter {chapter}"
             )
         return list(enumerate(images, start=1))'''
 
@@ -763,9 +763,9 @@ _IMAGES_API = r'''    def volume_url(self, volume: str) -> str:
 # (Req 6.3). Fetch the page curl_cffi-first with a BrowserFetcher fallback --
 # mirroring the shipped mangabuddy ``page_urls`` -- then read ``IMAGES_PATH``
 # out of the parsed ``__NEXT_DATA__``.
-_IMAGES_NEXT_DATA = r'''    def volume_url(self, volume: str) -> str:
+_IMAGES_NEXT_DATA = r'''    def chapter_url(self, chapter: str) -> str:
         """URL of the chapter page for a given chapter number."""
-        chapter_slug = self._chapter_slug_for(volume)
+        chapter_slug = self._chapter_slug_for(chapter)
         return PAGE_URL.format(
             base_url=BASE_URL,
             slug=self.manga_url,
@@ -793,7 +793,7 @@ _IMAGES_NEXT_DATA = r'''    def volume_url(self, volume: str) -> str:
             else []
         )
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] for every page in a chapter.
 
         The image list lives in the chapter page's server-rendered
@@ -805,7 +805,7 @@ _IMAGES_NEXT_DATA = r'''    def volume_url(self, volume: str) -> str:
           2. only if that comes back without the embedded payload fall back to a
              real browser, which clears Cloudflare.
         """
-        chapter_url = self.volume_url(volume)
+        chapter_url = self.chapter_url(chapter)
 
         images: List[str] = []
         try:
@@ -826,8 +826,8 @@ _IMAGES_NEXT_DATA = r'''    def volume_url(self, volume: str) -> str:
             images = self._images_from_page_html(page.text)
 
         if not images:
-            raise VolumeDoesntExist(
-                f"No page images found for {self.manga_url} chapter {volume}"
+            raise ChapterDoesntExist(
+                f"No page images found for {self.manga_url} chapter {chapter}"
             )
         return list(enumerate(images, start=1))'''
 
@@ -838,18 +838,18 @@ _IMAGES_NEXT_DATA = r'''    def volume_url(self, volume: str) -> str:
 # ``IMAGES_SELECTOR``, and read each ``<img>``'s url -- preferring ``IMAGE_ATTR``
 # (if configured) then ``data-src`` (lazy-load) then ``src``, skipping the
 # ``data:`` placeholder lazy imgs ship in ``src``. A wrong selector -> no
-# container -> ``VolumeDoesntExist`` (Req 6.5: wrong path fails loudly).
+# container -> ``ChapterDoesntExist`` (Req 6.5: wrong path fails loudly).
 # ``@@SOUPFETCH@@`` is replaced with the configured ``fetch_soup(...)`` call.
-_IMAGES_HTML = r'''    def volume_url(self, volume: str) -> str:
+_IMAGES_HTML = r'''    def chapter_url(self, chapter: str) -> str:
         """URL of the chapter page for a given chapter number."""
-        chapter_slug = self._chapter_slug_for(volume)
+        chapter_slug = self._chapter_slug_for(chapter)
         return PAGE_URL.format(
             base_url=BASE_URL,
             slug=self.manga_url,
             chapter_slug=chapter_slug,
         )
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] by scraping the chapter page HTML.
 
         Fetches the page through the shared ``fetch_soup`` building block (Req
@@ -858,17 +858,17 @@ _IMAGES_HTML = r'''    def volume_url(self, volume: str) -> str:
         excluded), and reads each image's url with an attribute rule that copes
         with lazy-loading: ``IMAGE_ATTR`` first when configured, else ``data-src``
         then ``src``. The ``data:`` placeholder lazy imgs ship in ``src`` is
-        skipped. A wrong selector yields no container -> ``VolumeDoesntExist``
+        skipped. A wrong selector yields no container -> ``ChapterDoesntExist``
         (Req 6.5: a wrong path fails loudly rather than mis-parsing).
         """
-        url = self.volume_url(volume)
+        url = self.chapter_url(chapter)
         logger.info(f"Chapter page url={url}")
         soup = @@SOUPFETCH@@
         container = soup.select_one(IMAGES_SELECTOR)
         if container is None:
-            raise VolumeDoesntExist(
+            raise ChapterDoesntExist(
                 f"Image container {IMAGES_SELECTOR!r} not found on page for "
-                f"{self.manga_url} chapter {volume}"
+                f"{self.manga_url} chapter {chapter}"
             )
         kept: List[str] = []
         for img in container.find_all("img"):
@@ -881,8 +881,8 @@ _IMAGES_HTML = r'''    def volume_url(self, volume: str) -> str:
             if img_url and not img_url.startswith("data:"):
                 kept.append(img_url)
         if not kept:
-            raise VolumeDoesntExist(
-                f"No page images found for {self.manga_url} chapter {volume}"
+            raise ChapterDoesntExist(
+                f"No page images found for {self.manga_url} chapter {chapter}"
             )
         return list(enumerate(kept, start=1))'''
 
@@ -901,7 +901,7 @@ def _soup_fetch_call(cfg: ParserConfig) -> str:
 
 
 def _render_images_method(cfg: ParserConfig) -> str:
-    """The mode-specific ``volume_url`` + image methods for the manga parser."""
+    """The mode-specific ``chapter_url`` + image methods for the manga parser."""
     if cfg.images.source == "html":
         return _IMAGES_HTML.replace("@@SOUPFETCH@@", _soup_fetch_call(cfg))
     return {
@@ -1222,7 +1222,7 @@ _SEARCH_TEST = r'''def test_search_hits_api_and_parses():
     assert results["1"].manga_url, "blank slug -- check SEARCH_SLUG path"'''
 
 
-_CHAPTERS_TEST = r"""def test_all_volume_ids_resolves_then_lists_chapters():
+_CHAPTERS_TEST = r"""def test_all_chapter_ids_resolves_then_lists_chapters():
     # 1st fetch resolves slug->id via the search step, 2nd lists that title's
     # chapters. The slug must be present in the search fixture so resolution
     # succeeds.
@@ -1231,7 +1231,7 @@ _CHAPTERS_TEST = r"""def test_all_volume_ids_resolves_then_lists_chapters():
         "@@DATATARGET@@",
         side_effect=[_ok(SEARCH_JSON), _ok(CHAPTERS_JSON)],
     ) as get:
-        vols = list(parser.all_volume_ids())
+        vols = list(parser.all_chapter_ids())
     expected_search = API_URL + SEARCH_ENDPOINT.format(query=@@RESOLVEQUERY@@)
     assert get.call_args_list[0][0][0] == expected_search
     # the chapters endpoint (its static prefix, before the {id}/{cv} fills) is hit
@@ -1244,7 +1244,7 @@ _CHAPTERS_TEST = r"""def test_all_volume_ids_resolves_then_lists_chapters():
     assert vols == sort_chapter_ids(vols)
 
 
-def test_all_volume_ids_unknown_slug_raises():
+def test_all_chapter_ids_unknown_slug_raises():
     # a slug absent from the search fixture cannot resolve -> a VISIBLE failure
     # (MangaDoesNotExist) rather than a silent empty result.
     parser = @@P@@MangaParser("scaffold-unknown-slug-zzz")
@@ -1253,13 +1253,13 @@ def test_all_volume_ids_unknown_slug_raises():
         return_value=_ok(SEARCH_JSON),
     ):
         with pytest.raises(MangaDoesNotExist):
-            parser.all_volume_ids()"""
+            parser.all_chapter_ids()"""
 
 
 _PAGES_NEXT_DATA_TEST = r"""def test_page_urls_reads_embedded_images():
     # next_data mode: images live in the chapter page's __NEXT_DATA__; the page
     # is fetched curl_cffi-first with a BrowserFetcher fallback. Pre-seed the
-    # chapter map so volume_url resolves without an extra fetch.
+    # chapter map so chapter_url resolves without an extra fetch.
     parser = @@P@@MangaParser(@@SLUG@@)
     parser._chapter_slugs = {"1": "scaffold-chapter-1"}
     browser = mock.Mock()
@@ -1274,7 +1274,7 @@ _PAGES_NEXT_DATA_TEST = r"""def test_page_urls_reads_embedded_images():
         ),
     ):
         pages = parser.page_urls("1")
-    # Req 6.5: a wrong IMAGES_PATH yields no images -> VolumeDoesntExist; a
+    # Req 6.5: a wrong IMAGES_PATH yields no images -> ChapterDoesntExist; a
     # non-empty list of (int, url) pairs proves the configured path resolves.
     assert pages, "no images -- check IMAGES_PATH"
     assert all(isinstance(num, int) and isinstance(url, str) for num, url in pages)
@@ -1284,7 +1284,7 @@ _PAGES_NEXT_DATA_TEST = r"""def test_page_urls_reads_embedded_images():
 
 _PAGES_API_TEST = r"""def test_page_urls_reads_image_api():
     # api mode: a standalone endpoint returns the image array. Pre-seed the
-    # caches so volume_url resolves without extra search/chapters fetches.
+    # caches so chapter_url resolves without extra search/chapters fetches.
     parser = @@P@@MangaParser(@@SLUG@@)
     parser._chapter_slugs = {"1": "scaffold-chapter-1"}
     parser._title_id = "scaffold-id"
@@ -1294,7 +1294,7 @@ _PAGES_API_TEST = r"""def test_page_urls_reads_image_api():
         return_value=_ok(IMAGES_JSON),
     ):
         pages = parser.page_urls("1")
-    # Req 6.5: a wrong IMAGES_PATH yields no images -> VolumeDoesntExist; a
+    # Req 6.5: a wrong IMAGES_PATH yields no images -> ChapterDoesntExist; a
     # non-empty list of (int, url) pairs proves the configured path resolves.
     assert pages, "no images -- check IMAGES_PATH"
     assert all(isinstance(num, int) and isinstance(url, str) for num, url in pages)
@@ -1306,14 +1306,14 @@ _PAGES_HTML_TEST = r"""def test_page_urls_scrapes_images_from_html():
     # IMAGES_SELECTOR container. fetch_soup is mocked to return a BeautifulSoup
     # of the captured page; the parser scopes find_all("img") to the container
     # and reads each url preferring data-src then src (skipping data: lazy
-    # placeholders). Pre-seed the chapter map so volume_url resolves without an
+    # placeholders). Pre-seed the chapter map so chapter_url resolves without an
     # extra fetch.
     parser = @@P@@MangaParser(@@SLUG@@)
     parser._chapter_slugs = {"1": "scaffold-chapter-1"}
     soup = bs4.BeautifulSoup(CHAPTER_PAGE_HTML, "lxml")
     with mock.patch("@@SOUPTARGET@@", return_value=soup):
         pages = parser.page_urls("1")
-    # Req 6.5: a wrong IMAGES_SELECTOR yields no container -> VolumeDoesntExist;
+    # Req 6.5: a wrong IMAGES_SELECTOR yields no container -> ChapterDoesntExist;
     # a non-empty list of (int, url) pairs proves the selector resolves.
     assert pages, "no images -- check IMAGES_SELECTOR"
     assert all(isinstance(num, int) and isinstance(url, str) for num, url in pages)

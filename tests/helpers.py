@@ -27,20 +27,20 @@ class EngineMangaParser(BaseMangaParser):
     def _manga_page_url(self) -> str:
         return f"{self.base_url}/{self.manga_url}"
 
-    def volume_url(self, volume: str) -> str:
-        return f"{self.base_url}/{self.manga_url}/{volume}"
+    def chapter_url(self, chapter: str) -> str:
+        return f"{self.base_url}/{self.manga_url}/{chapter}"
 
     def _fetch(self, url):
         # delegates to the shared BaseMangaParser._fetch_manga_page (fetch + 404 ->
         # MangaDoesNotExist) -- the very boilerplate the helper consolidates.
         return self._fetch_manga_page(url)
 
-    def all_volume_ids(self):
+    def all_chapter_ids(self):
         soup = self._fetch(self._manga_page_url())
         return [attr(a, "href") for a in soup.find_all("a", href=True)]
 
-    def page_urls(self, volume: str):
-        soup = self._fetch(self.volume_url(volume))
+    def page_urls(self, chapter: str):
+        soup = self._fetch(self.chapter_url(chapter))
         return list(enumerate([attr(i, "src") for i in soup.find_all("img")], start=1))
 
 
@@ -113,16 +113,16 @@ METADATA = {
 
 
 TABLE = (
-    "+----+---------------------------------+-----------------+-------------+\n"
-    "|    | Title                           |   Latest Volume | Source      |\n"
-    "|----+---------------------------------+-----------------+-------------|\n"
-    "|  1 | Dragon Ball: Episode of Bardock |               3 | mangareader |\n"
-    "|  2 | Dragon Ball SD                  |              35 | mangareader |\n"
-    "|  3 | DragonBall Next Gen             |               4 | mangareader |\n"
-    "|  4 | Dragon Ball                     |             520 | mangareader |\n"
-    "|  5 | Dragon Ball Z - Rebirth of F    |               3 | mangareader |\n"
-    "|  6 | Dragon Ball Super               |              62 | mangareader |\n"
-    "+----+---------------------------------+-----------------+-------------+"
+    "+----+---------------------------------+------------------+-------------+\n"
+    "|    | Title                           |   Latest Chapter | Source      |\n"
+    "|----+---------------------------------+------------------+-------------|\n"
+    "|  1 | Dragon Ball: Episode of Bardock |                3 | mangareader |\n"
+    "|  2 | Dragon Ball SD                  |               35 | mangareader |\n"
+    "|  3 | DragonBall Next Gen             |                4 | mangareader |\n"
+    "|  4 | Dragon Ball                     |              520 | mangareader |\n"
+    "|  5 | Dragon Ball Z - Rebirth of F    |                3 | mangareader |\n"
+    "|  6 | Dragon Ball Super               |               62 | mangareader |\n"
+    "+----+---------------------------------+------------------+-------------+"
 )
 
 
@@ -165,21 +165,21 @@ class MockedMangaReaderParser:
         self.manga_url = manga_url
         self.base_url = base_url
 
-    def all_volume_ids(self):
+    def all_chapter_ids(self):
         return ["1", "2", "3"]
 
-    def volume_url(self, volume):
-        return f"http://mangareader.net/dragon-ball-episode-of-bardock/{volume}"
+    def chapter_url(self, chapter):
+        return f"http://mangareader.net/dragon-ball-episode-of-bardock/{chapter}"
 
-    def page_urls(self, volume):
+    def page_urls(self, chapter):
         return [
-            f"http://mangareader.net/dragon-ball-episode-of-bardock/{volume}",
-            f"http://mangareader.net/dragon-ball-episode-of-bardock/{volume}/2",
+            f"http://mangareader.net/dragon-ball-episode-of-bardock/{chapter}",
+            f"http://mangareader.net/dragon-ball-episode-of-bardock/{chapter}/2",
         ]
 
     def page_data(self, page_url):
-        volume_num, page_num = page_url.split("/")[-2:]
-        if not volume_num.isdigit():
+        chapter_num, page_num = page_url.split("/")[-2:]
+        if not chapter_num.isdigit():
             page_num = "1"
         img = open(f"tests/test_files/jpgs/test-manga_1_{page_num}.jpg", "rb").read()
         return (int(page_num), img, "success")

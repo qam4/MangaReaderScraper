@@ -9,7 +9,7 @@ tests/test_files/mangago/ and docs/adding-a-source.md). Findings:
     ``table#chapter_table`` of ``<a class="chico" href=".../read-manga/<slug>/
     mr/v<VOL>/c<CHAP>/pg-1/"><b>Vol.NN Ch.NNN</b> : title</a>`` rows. The
     displayed chapter number lives in the anchor's ``<b>`` label (the href
-    carries volume/chapter path segments, not a clean number), so -- like the
+    carries chapter/chapter path segments, not a clean number), so -- like the
     mangabuddy parser -- we map number -> the anchor's href and reuse that href
     as the reader url rather than reconstructing it.
   * Reader page: every page is embedded as ``<img id="pageN" class="pageN"
@@ -33,7 +33,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import BrowserFetcher
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr, text
@@ -54,7 +54,7 @@ def _chapter_number_from_label(label: str) -> Optional[str]:
 
     Labels read like ``"Vol.72 Ch.700.6"`` / ``"Ch.700.5"`` / ``"Chapter 12"``;
     the number follows ``Ch``/``Chapter``. Returns ``None`` when there is no
-    chapter number (a volume-only or special entry), so it can be skipped. Pure
+    chapter number (a chapter-only or special entry), so it can be skipped. Pure
     and unit-tested. Operates on the anchor's ``<b>`` label only (not the title
     text after it), so an incidental "ch" in a chapter title can't false-match.
     """
@@ -108,7 +108,7 @@ class MangagoMangaParser(BaseMangaParser):
     """
     Parses a specific manga on mangago.me.
 
-    One instance is reused across ``all_volume_ids`` -> ``volume_url`` ->
+    One instance is reused across ``all_chapter_ids`` -> ``chapter_url`` ->
     ``page_urls`` (see MangaBuilder), so the ``{number: reader_url}`` chapter map
     scraped from the series page is cached on the instance.
     """
@@ -120,11 +120,11 @@ class MangagoMangaParser(BaseMangaParser):
     def _manga_page_url(self) -> str:
         return f"{self.base_url}/read-manga/{self.manga_url.replace(' ', '_')}"
 
-    def all_volume_ids(self) -> Iterable[str]:
+    def all_chapter_ids(self) -> Iterable[str]:
         """All chapter numbers for the manga, in canonical order.
 
         Scrapes the series page's ``table#chapter_table`` and caches the
-        ``{number: reader_url}`` map so ``volume_url`` can turn a chapter number
+        ``{number: reader_url}`` map so ``chapter_url`` can turn a chapter number
         back into the url the reader page needs.
         """
         url = self._manga_page_url()
@@ -137,28 +137,30 @@ class MangagoMangaParser(BaseMangaParser):
             )
         return sort_chapter_ids(self._chapter_urls.keys())
 
-    def volume_url(self, volume: str) -> str:
+    def chapter_url(self, chapter: str) -> str:
         """Reader-page url for a chapter number (from the cached map)."""
         if not self._chapter_urls:
-            self.all_volume_ids()
-        url = self._chapter_urls.get(volume)
+            self.all_chapter_ids()
+        url = self._chapter_urls.get(chapter)
         if not url:
-            raise VolumeDoesntExist(f"Chapter {volume} not found for {self.manga_url}")
+            raise ChapterDoesntExist(
+                f"Chapter {chapter} not found for {self.manga_url}"
+            )
         return url
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """Return ``[(page_number, image_url)]`` for every page in a chapter.
 
         The reader page embeds every page image as ``<img id="pageN">``, so a
         single browser fetch of the chapter url yields the whole list.
         """
-        url = self.volume_url(volume)
-        logger.info(f"Volume url={url}")
+        url = self.chapter_url(chapter)
+        logger.info(f"Chapter url={url}")
         soup = self._fetch_manga_page(url, BrowserFetcher())
         images = _image_urls_from_soup(soup)
         if not images:
-            raise VolumeDoesntExist(
-                f"No page images found for {self.manga_url} chapter {volume}"
+            raise ChapterDoesntExist(
+                f"No page images found for {self.manga_url} chapter {chapter}"
             )
         return list(enumerate(images, start=1))
 

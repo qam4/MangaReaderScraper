@@ -11,7 +11,7 @@ from unittest import mock
 import bs4
 import pytest
 
-from scraper.exceptions import NoSearchResultsFound, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, NoSearchResultsFound
 from scraper.parsers.kakalot import (
     _chapter_map_from_soup,
     _chapter_number_from_text,
@@ -69,30 +69,30 @@ def test_site_params():
     )
 
 
-# ----------------------- all_volume_ids / volume_url ----------------------
+# ----------------------- all_chapter_ids / chapter_url ----------------------
 
 
-def test_all_volume_ids_and_volume_url_from_map():
+def test_all_chapter_ids_and_chapter_url_from_map():
     chapters = _soup(NELO / "naruto_chapters.html")
     with mock.patch("scraper.parsers.base.fetch_soup", return_value=chapters):
         parser = ManganeloMangaParser("naruto")
-        ids = list(parser.all_volume_ids())
+        ids = list(parser.all_chapter_ids())
     assert "700.6" in ids and "700.5" in ids
-    # volume_url resolves from the cached {number: href} map (no second fetch)
-    assert parser.volume_url("700.6") == (
+    # chapter_url resolves from the cached {number: href} map (no second fetch)
+    assert parser.chapter_url("700.6") == (
         "https://www.nelomanga.net/manga/naruto/chapter-700-6"
     )
-    with pytest.raises(VolumeDoesntExist):
-        parser.volume_url("99999")
+    with pytest.raises(ChapterDoesntExist):
+        parser.chapter_url("99999")
 
 
-def test_all_volume_ids_empty_page_raises():
+def test_all_chapter_ids_empty_page_raises():
     empty = bs4.BeautifulSoup("<html><body/></html>", "lxml")
     from scraper.exceptions import MangaDoesNotExist
 
     with mock.patch("scraper.parsers.base.fetch_soup", return_value=empty):
         with pytest.raises(MangaDoesNotExist):
-            ManganeloMangaParser("nope").all_volume_ids()
+            ManganeloMangaParser("nope").all_chapter_ids()
 
 
 # -------------------------------- page_urls -------------------------------
@@ -103,7 +103,7 @@ def test_page_urls_reads_container_images_nelo():
     reader = _soup(NELO / "naruto_reader.html")
     with mock.patch("scraper.parsers.base.fetch_soup", side_effect=[chapters, reader]):
         parser = ManganeloMangaParser("naruto")
-        parser.all_volume_ids()  # populates the chapter map (first fetch_soup)
+        parser.all_chapter_ids()  # populates the chapter map (first fetch_soup)
         pages = parser.page_urls("700.6")  # reader page (second fetch_soup)
     assert pages[0][0] == 1
     assert pages[0][1] == "https://img-r1.2xstorage.com/naruto/700.6/0.webp"

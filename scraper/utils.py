@@ -104,7 +104,7 @@ def configure_logging(level: Optional[str] = None) -> None:
 
 class CustomAdapter(LoggerAdapter):
     """
-    Prepends manga name & volume to the logger message
+    Prepends manga name & chapter to the logger message
     """
 
     def process(
@@ -112,19 +112,19 @@ class CustomAdapter(LoggerAdapter):
     ) -> Tuple[str, MutableMapping[str, Union[str, int]]]:
         extra = self.extra or {}
         manga = extra.get("manga")
-        volume = extra.get("volume")
-        if volume:
-            return f"[{manga}:{volume}] {msg}", kwargs
+        chapter = extra.get("chapter")
+        if chapter:
+            return f"[{manga}:{chapter}] {msg}", kwargs
         return f"[{manga}] {msg}", kwargs
 
 
 def get_adapter(
     logger: Logger,
     manga: str,
-    volume: Optional[Union[str, int]] = None,  # noqa: E251
+    chapter: Optional[Union[str, int]] = None,  # noqa: E251
 ) -> CustomAdapter:
-    if volume:
-        extra = {"manga": manga, "volume": volume}
+    if chapter:
+        extra = {"manga": manga, "chapter": chapter}
     else:
         extra = {"manga": manga}
     return CustomAdapter(logger, extra)
@@ -132,18 +132,18 @@ def get_adapter(
 
 def download_timer(func: Callable) -> Callable:
     """
-    Manga volume(s) download timer
+    Manga chapter(s) download timer
     """
 
     @functools.wraps(func)
     def wrapper_timer(*args) -> Any:
         """
-        Assumes last arg is the volume digit
+        Assumes last arg is the chapter digit
         """
         start = time.time()
         returned = func(*args)
         run_time = round(time.time() - start, 1)
-        logging.info(f"Volumes downloaded in {run_time} seconds")
+        logging.info(f"Chapters downloaded in {run_time} seconds")
         return returned
 
     return wrapper_timer
@@ -192,7 +192,7 @@ def settings() -> configparser.ConfigParser:
     """
     Retrieve settings file contents.
 
-    The ini is parsed once per path and cached (it's read on every volume/upload
+    The ini is parsed once per path and cached (it's read on every chapter/upload
     path build), so repeated calls don't re-hit disk. ``create_base_config``
     clears the cache when it rewrites the file.
     """

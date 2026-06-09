@@ -15,7 +15,7 @@ from unittest import mock
 
 import pytest
 
-from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import FetchResult
 from scraper.new_types import SearchResult
 from scraper.parsers.mangabuddy import (
@@ -130,13 +130,13 @@ def test_search_hits_api_and_parses():
 # ============================== chapter list =============================
 
 
-def test_all_volume_ids_resolves_title_then_lists_chapters():
+def test_all_chapter_ids_resolves_title_then_lists_chapters():
     parser = MangabuddyMangaParser("naruto")
     with mock.patch(
         "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
         side_effect=[_ok(SEARCH_JSON), _ok(CHAPTERS_JSON)],
     ) as get:
-        vols = list(parser.all_volume_ids())
+        chapters = list(parser.all_chapter_ids())
 
     # 1st call = search (resolve slug->id), 2nd = chapters for that id+cv
     assert get.call_args_list[0][0][0] == "https://api.mangak.io/titles/search?q=naruto"
@@ -145,21 +145,21 @@ def test_all_volume_ids_resolves_title_then_lists_chapters():
         == "https://api.mangak.io/titles/VYPXkPYz/chapters?cv=1780511268548"
     )
     # numbers come from names, sorted ascending (0 first, 700.5 last)
-    assert vols[0] == "0"
-    assert vols[-1] == "700.5"
-    assert vols.index("700.1") < vols.index("700.5")
+    assert chapters[0] == "0"
+    assert chapters[-1] == "700.5"
+    assert chapters.index("700.1") < chapters.index("700.5")
 
 
-def test_all_volume_ids_unknown_slug_raises():
+def test_all_chapter_ids_unknown_slug_raises():
     parser = MangabuddyMangaParser("does-not-exist")
     with mock.patch(
         "scraper.parsers.mangabuddy.CurlCffiFetcher.get", return_value=_ok(SEARCH_JSON)
     ):
         with pytest.raises(MangaDoesNotExist):
-            parser.all_volume_ids()
+            parser.all_chapter_ids()
 
 
-def test_all_volume_ids_404_raises_manga_does_not_exist():
+def test_all_chapter_ids_404_raises_manga_does_not_exist():
     parser = MangabuddyMangaParser("naruto")
 
     def _side_effect(url, headers=None, timeout=30):
@@ -171,27 +171,27 @@ def test_all_volume_ids_404_raises_manga_does_not_exist():
         "scraper.parsers.mangabuddy.CurlCffiFetcher.get", side_effect=_side_effect
     ):
         with pytest.raises(MangaDoesNotExist):
-            parser.all_volume_ids()
+            parser.all_chapter_ids()
 
 
-# ============================== volume url ===============================
+# ============================== chapter url ===============================
 
 
-def test_volume_url_maps_number_to_slug():
+def test_chapter_url_maps_number_to_slug():
     parser = MangabuddyMangaParser("naruto")
     with mock.patch(
         "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
         side_effect=[_ok(SEARCH_JSON), _ok(CHAPTERS_JSON)],
     ):
-        url = parser.volume_url("700.5")
+        url = parser.chapter_url("700.5")
     assert url == "https://mangak.io/naruto/chapter-700-5-uzumaki-naruto"
 
 
-def test_volume_url_unknown_chapter_raises():
+def test_chapter_url_unknown_chapter_raises():
     parser = MangabuddyMangaParser("naruto")
     parser._chapter_slugs = {"1": "vol-1-chapter-1-uzumaki-naruto"}
-    with pytest.raises(VolumeDoesntExist):
-        parser.volume_url("999")
+    with pytest.raises(ChapterDoesntExist):
+        parser.chapter_url("999")
 
 
 # ============================== page urls ================================
@@ -253,7 +253,7 @@ def test_page_urls_no_images_anywhere_raises():
         ),
         mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
     ):
-        with pytest.raises(VolumeDoesntExist):
+        with pytest.raises(ChapterDoesntExist):
             parser.page_urls("1")
 
 

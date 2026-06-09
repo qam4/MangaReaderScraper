@@ -593,31 +593,31 @@ Two distinct root causes found:
   - NOTE: `jobs` is read from ini via `.get` (not written to base config) so the
     default stays CPU-aware rather than baking a fixed number into new configs.
 
-- [ ] **N1 [QUICK, LOW-PRI] Naming drift cleanup (functions outgrew their names)**
+- [x] **N1 [QUICK, LOW-PRI] Naming drift cleanup (functions outgrew their names)** — DONE
   - SMELL (user): some functions grew past their original job but kept the v1
     name. Clearest: `_extract_text` (Kakalot/Mangago search parsers) returns a
-    `SearchResult`, not text → `_parse_search_result` / `_search_result_from_card`.
-    Sweep for similar (a method named for HOW it started vs WHAT it now returns).
-  - SEPARATE / BIGGER (deliberate, maybe never): "volume" means "chapter"
-    throughout — `all_volume_ids` returns chapter numbers, `volume_url` is a
-    chapter url, `Manga.volumes` is chapters (the file is even saved as
-    `..._chapter_{id}`). Pervasive + purely cosmetic (same cost/benefit as D3);
-    D1 already did one slice (SearchResult.chapters → latest_chapter).
-    Don't bundle into N1.
-    - WHY IT STALLED (resolved): NOT because bundle is misnamed — because bundle
-      is the one place "volume" is used CORRECTLY (a volume = a group of
-      chapters). So "volume" has two meanings: chapter-unit (model/parsers/
-      download) vs chapter-group (bundle). A blind find-replace would wrongly
-      rename bundle's correct usage, so it must be a MEANING-AWARE rename.
-    - SCOPE IF DONE: rename only the model/parser/download layer
-      (`Manga.volumes`→`chapters`, `Volume`→`Chapter`, `volume_url`→`chapter_url`,
-      `all_volume_ids`→`all_chapter_ids`, `VolumeDownload`→`ChapterDownload`, the
-      `Volume*` exceptions + tests); LEAVE `bundle.py`'s "volume" (it groups
-      chapters into volumes — the seam `manga_chapters = self.manga.volumes`
-      becomes `self.manga.chapters`, dropping the workaround alias). Keep the
-      public `--volumes` CLI flag working (deprecated alias) or accept the break.
-  - DONE-WHEN: the cheap local renames done (private methods, few call sites,
-    no behavior change); the volume→chapter rename left as its own explicit call.
+    `SearchResult`, not text → renamed `_parse_search_result`.
+    (`_fetch_html`→`_fetch_manga_page` also done in an earlier slice.)
+  - BIGGER (DONE): "volume" meant "chapter" throughout the model/parser/
+    download/writer/exception/uploader layers — a MEANING-AWARE rename (bundle
+    is the one place "volume" is used CORRECTLY = a group of chapters).
+    - DONE: renamed only the model/parser/download/writer/exception/uploader
+      layers + their tests — `Volume`→`Chapter`, `Manga.volumes`→`chapters`,
+      `volume_url`→`chapter_url`, `all_volume_ids`→`all_chapter_ids`,
+      `VolumeDownload`→`ChapterDownload`, `get_manga_volumes`→`get_manga_chapters`,
+      `download_volumes`→`download_chapters`, `Volume*` exceptions →`Chapter*`,
+      the logging adapter `volume` key, and the `vol_*`/`vol_ids`/`vols` local
+      abbreviations. Fixture files `*_volume_*.html`→`*_chapter_*.html`.
+    - LEFT INTENTIONALLY: `bundle.py`'s group vocabulary (`chapters_per_volume`,
+      `create_volume`, `num_volumes`, `volume_cbz_path`, ...); the seam now reads
+      `manga_chapters = self.manga.chapters` (alias comment dropped).
+    - CLI: renamed `--volumes`→`--chapters` (`-q` unchanged), NO deprecated
+      alias kept (personal fork, no external contract). `__main__` helpers
+      renamed (`get_chapter_values`, `normalize_chapters`, `chapters` dest);
+      search-menu display column "Latest Volume"→"Latest Chapter". The
+      `mangafire` real URL path `ajax/read/volume` left as-is (external API).
+  - DONE-WHEN: ✅ ruff + mypy + 366 tests green; no `vol_*`/`Volume`/model-layer
+    `volume` symbols remain.
 
 - [ ] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure**
   - VALUE (user): the multiprocessing is to be fast on the happy path, but when a

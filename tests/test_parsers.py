@@ -64,7 +64,7 @@ def test_404_errors(mangaparser):
     with mock.patch.dict("sys.modules", {"curl_cffi": _fake_curlcffi(404)}):
         parser = mangaparser("blahblahblah")
         with pytest.raises(MangaDoesNotExist):
-            parser.all_volume_ids()
+            parser.all_chapter_ids()
         with pytest.raises(MangaDoesNotExist):
             parser.page_urls("1")
 
@@ -74,4 +74,4 @@ def test_non_404_errors(mangaparser):
     with mock.patch.dict("sys.modules", {"curl_cffi": _fake_curlcffi(403)}):
         parser = mangaparser("blahblahblah")
         with pytest.raises(requests.exceptions.HTTPError):
-            parser.all_volume_ids()
+            parser.all_chapter_ids()

@@ -24,7 +24,7 @@ class SearchResult:
     place that owns that normalization.
 
     ``latest_chapter`` is a DISPLAY-ONLY field: a per-site hint shown in the
-    search menu's "Latest Volume" column (often the latest chapter number, but
+    search menu's "Latest Chapter" column (often the latest chapter number, but
     its exact meaning varies by site). It is NOT a reliable chapter count and is
     never used for selection -- that comes from the manga page's real chapter
     list (see ``scraper.selection``).

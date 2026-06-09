@@ -33,7 +33,7 @@ class SearchMenu:
         return self.parser.search(" ".join(query))
 
     def table(self) -> str:
-        columns = ["", "Title", "Latest Volume", "Source"]
+        columns = ["", "Title", "Latest Chapter", "Source"]
         data: List[List[str]] = []
         for number, metadata in self.search_results.items():
             # Render the title as-is (unicode): many manga have Japanese or

@@ -54,8 +54,8 @@ class BaseMangaParser:
 
         The shared fetch step for the HTML-scrape parsers (kakalot family,
         mangago, ...): ``fetch_soup(url, fetcher)`` plus the common "404 means
-        this manga/volume doesn't exist" handling, so each parser's
-        ``all_volume_ids`` / ``_scrape_volume`` / ``page_urls`` is just
+        this manga/chapter doesn't exist" handling, so each parser's
+        ``all_chapter_ids`` / ``_scrape_chapter`` / ``page_urls`` is just
         ``soup = self._fetch_manga_page(...)`` followed by its own select/find. Stays
         deliberately thin -- the select-many vs find-one-container step is
         parser-specific and stays in the parser. Not used by the API parser
@@ -71,16 +71,16 @@ class BaseMangaParser:
             raise
 
     @abc.abstractmethod
-    def volume_url(self, volume: str) -> str:
+    def chapter_url(self, chapter: str) -> str:
         """
-        Return the url of a volume
+        Return the url of a chapter
         """
         pass
 
     @abc.abstractmethod
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """
-        Return a list of tuples [page_number, urls] for every page in a given volume
+        Return a list of tuples [page_number, urls] for every page in a given chapter
         """
         pass
 
@@ -159,9 +159,9 @@ class BaseMangaParser:
         return stream.getvalue()
 
     @abc.abstractmethod
-    def all_volume_ids(self) -> Iterable[str]:
+    def all_chapter_ids(self) -> Iterable[str]:
         """
-        All volume identifiers for a manga (used to create the volume url)
+        All chapter identifiers for a manga (used to create the chapter url)
         """
         pass
 

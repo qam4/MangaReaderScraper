@@ -49,7 +49,7 @@ import logging
 import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from scraper.exceptions import MangaDoesNotExist, VolumeDoesntExist
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import (
     BrowserFetcher,
     CurlCffiFetcher,
@@ -181,8 +181,8 @@ class MangabuddyMangaParser(BaseMangaParser):
     """
     Parses a specific manga on mangak.io via its open JSON API.
 
-    Lifecycle note: one instance is reused across ``all_volume_ids`` ->
-    ``volume_url`` -> ``page_urls`` for a given manga (see MangaBuilder), so we
+    Lifecycle note: one instance is reused across ``all_chapter_ids`` ->
+    ``chapter_url`` -> ``page_urls`` for a given manga (see MangaBuilder), so we
     cache the resolved title id/cv and the ``{number: slug}`` chapter map on the
     instance after the first lookup.
     """
@@ -229,11 +229,11 @@ class MangabuddyMangaParser(BaseMangaParser):
 
     # -- BaseMangaParser API ----------------------------------------------
 
-    def all_volume_ids(self) -> Iterable[str]:
+    def all_chapter_ids(self) -> Iterable[str]:
         """All chapter numbers for the manga, in canonical order.
 
         Resolves the title id, fetches the chapters API, and caches the
-        ``{number: slug}`` map so ``volume_url`` can turn a chapter number back
+        ``{number: slug}`` map so ``chapter_url`` can turn a chapter number back
         into the slug the chapter-page url needs.
         """
         import requests  # type: ignore
@@ -254,17 +254,19 @@ class MangabuddyMangaParser(BaseMangaParser):
             raise MangaDoesNotExist(f"No numbered chapters found for {self.manga_url}")
         return sort_chapter_ids(self._chapter_slugs.keys())
 
-    def volume_url(self, volume: str) -> str:
+    def chapter_url(self, chapter: str) -> str:
         """URL of the chapter page for a given chapter number.
 
-        Uses the cached ``{number: slug}`` map from ``all_volume_ids``. If the
-        map isn't populated yet (e.g. volume_url called first), it is built.
+        Uses the cached ``{number: slug}`` map from ``all_chapter_ids``. If the
+        map isn't populated yet (e.g. chapter_url called first), it is built.
         """
         if not self._chapter_slugs:
-            self.all_volume_ids()
-        slug = self._chapter_slugs.get(volume)
+            self.all_chapter_ids()
+        slug = self._chapter_slugs.get(chapter)
         if not slug:
-            raise VolumeDoesntExist(f"Chapter {volume} not found for {self.manga_url}")
+            raise ChapterDoesntExist(
+                f"Chapter {chapter} not found for {self.manga_url}"
+            )
         return f"{self.base_url}/{self.manga_url}/{slug}"
 
     def _images_from_page_html(self, html: str) -> List[str]:
@@ -275,7 +277,7 @@ class MangabuddyMangaParser(BaseMangaParser):
             return []
         return _images_from_chapter_payload(next_data)
 
-    def page_urls(self, volume: str) -> List[Tuple[int, str]]:
+    def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """Return [(page_number, image_url)] for every page in a chapter.
 
         The image list lives only in the chapter page's server-rendered
@@ -290,7 +292,7 @@ class MangabuddyMangaParser(BaseMangaParser):
 
         Both outcomes are logged so it's never a mystery which path ran.
         """
-        chapter_url = self.volume_url(volume)
+        chapter_url = self.chapter_url(chapter)
 
         # 1. cheap path: curl_cffi with Chrome impersonation
         images: List[str] = []
@@ -313,8 +315,8 @@ class MangabuddyMangaParser(BaseMangaParser):
             images = self._images_from_page_html(page.text)
 
         if not images:
-            raise VolumeDoesntExist(
-                f"No page images found for {self.manga_url} chapter {volume}"
+            raise ChapterDoesntExist(
+                f"No page images found for {self.manga_url} chapter {chapter}"
             )
         return list(enumerate(images, start=1))
 
