@@ -356,6 +356,19 @@ Each item has a done-when so "done" is unambiguous.
     challenge-detection + cookie-harvest seams reuse `probe.detect_challenge`
     and `capture_xhr(with_cookies=True)`. Motivating case: manganato images
     ("Just a moment…") if curl_cffi/cloudscraper can't clear it.
+  - RELATED FINDING (mangago live run): the per-call browser model causes TWO
+    visible symptoms beyond captchas, both fixed by the same persistent-session
+    work: (1) one download opens ~3 browsers (search + chapter list + reader),
+    since every `BrowserFetcher().get()` launches a fresh Chrome; (2) a harmless
+    but alarming `Exception ignored in __del__ ... ValueError: I/O operation on
+    closed pipe` prints at shutdown — `BrowserFetcher` uses `asyncio.run()` per
+    call (fresh event loop each time), so the nodriver subprocess transports are
+    GC'd after their loop closed and their `__del__` touches dead pipes. It
+    fires AFTER a successful download (no functional impact). A persistent
+    browser + single long-lived event loop reused across calls would remove the
+    repeated launches AND the shutdown noise. (Quick partial band-aid: a short
+    `await` after `browser.stop()` so transports close inside the loop — but the
+    real fix is session reuse.)
 
 - [ ] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
