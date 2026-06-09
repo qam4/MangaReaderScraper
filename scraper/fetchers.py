@@ -313,6 +313,29 @@ def _collect_img_urls_js(selector: str, attr: str) -> str:
     )
 
 
+def _count_elements_js(selector: str) -> str:
+    """JS returning the number of elements matching ``selector``. Pure."""
+    return f"document.querySelectorAll({_json.dumps(selector)}).length"
+
+
+def _scroll_to_bottom_js(scroll_selector: Optional[str]) -> str:
+    """JS that scrolls the window -- and optionally an inner container -- to the
+    bottom, to trigger infinite-scroll / lazy loading. Pure."""
+    inner = ""
+    if scroll_selector:
+        inner = (
+            f"  const e = document.querySelector({_json.dumps(scroll_selector)});"
+            "  if (e) e.scrollTop = e.scrollHeight;"
+        )
+    return (
+        "(() => {"
+        "  window.scrollTo(0, document.body.scrollHeight);"
+        f"{inner}"
+        "  return true;"
+        "})()"
+    )
+
+
 def _make_marker_predicate(markers) -> Callable[[str], bool]:
     """A predicate matching any url that contains one of ``markers``. Pure."""
     markers = tuple(markers)
@@ -408,6 +431,27 @@ class BrowserFetcher:
         import asyncio
 
         return asyncio.run(self._fetch_rendered_images(page_url, selector, attr))
+
+    def get_after_scroll(
+        self,
+        url: str,
+        count_selector: str,
+        scroll_selector: Optional[str] = None,
+        max_rounds: int = 40,
+    ) -> FetchResult:
+        """Return the page HTML after scrolling to load an infinite-scroll list.
+
+        Some series pages lazy-load their chapter list as you scroll (no "show
+        all" control). We navigate, clear the challenge, then repeatedly scroll
+        the window (and the ``scroll_selector`` container) to the bottom until
+        the count of ``count_selector`` elements stops growing -- so the
+        returned HTML holds the FULL list, not just the first screen.
+        """
+        import asyncio
+
+        return asyncio.run(
+            self._get_after_scroll(url, count_selector, scroll_selector, max_rounds)
+        )
 
     # -- async implementations --------------------------------------------
 
@@ -590,5 +634,41 @@ class BrowserFetcher:
                         logger.warning(f"could not read image body {url}: {err}")
                 results.append((url, data))
             return results
+        finally:
+            browser.stop()
+
+    async def _get_after_scroll(
+        self,
+        url: str,
+        count_selector: str,
+        scroll_selector: Optional[str],
+        max_rounds: int,
+    ) -> FetchResult:  # pragma: no cover - drives a real browser
+        scroll_wait = 2.0  # per-round pause for the next lazy batch to load
+        browser = await self._start()
+        try:
+            page = await browser.get(url)
+            await self._wait_for_content(page, url)
+            prev = -1
+            unchanged = 0
+            for _ in range(max_rounds):
+                try:
+                    await page.evaluate(_scroll_to_bottom_js(scroll_selector))
+                except Exception as err:
+                    logger.debug(f"scroll failed (continuing): {err}")
+                await page.wait(scroll_wait)
+                try:
+                    count = int(await page.evaluate(_count_elements_js(count_selector)))
+                except Exception:
+                    count = prev
+                if count <= prev:
+                    unchanged += 1
+                    if unchanged >= 3:  # no growth for 3 rounds -> list is fully loaded
+                        break
+                else:
+                    unchanged = 0
+                    prev = count
+            logger.debug(f"scroll-to-load settled at {prev} items: {url}")
+            return FetchResult(url=url, status=200, text=await page.get_content())
         finally:
             browser.stop()

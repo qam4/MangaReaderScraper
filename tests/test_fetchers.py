@@ -21,9 +21,11 @@ from scraper.fetchers import (
     FetchResult,
     RequestsFetcher,
     _collect_img_urls_js,
+    _count_elements_js,
     _in_page_fetch_js,
     _looks_like_challenge,
     _make_marker_predicate,
+    _scroll_to_bottom_js,
     download_image,
     fetch_soup,
 )
@@ -116,6 +118,21 @@ def test_collect_img_urls_js_embeds_selector_and_attr():
 def test_force_lazy_images_js_copies_datasrc_and_scrolls():
     assert "data-src" in _FORCE_LAZY_IMAGES_JS
     assert "scrollTo" in _FORCE_LAZY_IMAGES_JS
+
+
+def test_count_elements_js_embeds_selector():
+    js = _count_elements_js("div.chapter-list a")
+    assert json.dumps("div.chapter-list a") in js
+    assert "querySelectorAll" in js and ".length" in js
+
+
+def test_scroll_to_bottom_js_scrolls_window_and_container():
+    # window-only when no container selector
+    assert "scrollTo" in _scroll_to_bottom_js(None)
+    # with a container, also scrolls that element to its bottom
+    js = _scroll_to_bottom_js("div.chapter-list")
+    assert json.dumps("div.chapter-list") in js
+    assert "scrollTop" in js and "scrollHeight" in js
 
 
 # ============================ http backends ==============================

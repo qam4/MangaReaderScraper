@@ -92,6 +92,8 @@ class KakalotMangaParser(BaseMangaParser):
     page_img_attr: str = "src"
     # CSS selector for the reader container holding the page <img>s.
     reader_selector: str = "div.container-chapter-reader"
+    # CSS selector for the (infinite-scroll) chapter-list container.
+    chapter_list_selector: str = "div.chapter-list"
 
     def __init__(self, manga_url: str, base_url: Optional[str] = None) -> None:
         super().__init__(manga_url, base_url or self.base_url)
@@ -116,7 +118,15 @@ class KakalotMangaParser(BaseMangaParser):
     def all_chapter_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
         logger.debug(f"Manga url={url}")
-        manga_html = self._fetch_manga_page(url, self._page_fetcher())
+        # The chapter list is lazy-loaded on scroll (no "show all" control), so
+        # drive the browser to scroll the list to the bottom until it stops
+        # growing -- otherwise only the latest ~50 chapters are present.
+        result = self._page_fetcher().get_after_scroll(
+            url,
+            count_selector=f"{self.chapter_list_selector} a",
+            scroll_selector=self.chapter_list_selector,
+        )
+        manga_html = BeautifulSoup(result.text, "lxml")
         self._chapter_urls = _chapter_map_from_soup(manga_html)
         if not self._chapter_urls:
             raise MangaDoesNotExist(

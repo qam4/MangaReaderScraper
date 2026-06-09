@@ -73,9 +73,11 @@ def test_site_params():
 
 
 def test_all_chapter_ids_and_chapter_url_from_map():
-    chapters = _soup(NELO / "naruto_chapters.html")
-    with mock.patch("scraper.parsers.base.fetch_soup", return_value=chapters):
-        parser = ManganeloMangaParser("naruto")
+    html = (NELO / "naruto_chapters.html").read_text(encoding="utf-8")
+    parser = ManganeloMangaParser("naruto")
+    fake = mock.Mock()
+    fake.get_after_scroll.return_value = mock.Mock(text=html)
+    with mock.patch.object(parser, "_page_fetcher", return_value=fake):
         ids = list(parser.all_chapter_ids())
     assert "700.6" in ids and "700.5" in ids
     # chapter_url resolves from the cached {number: href} map (no second fetch)
@@ -84,15 +86,21 @@ def test_all_chapter_ids_and_chapter_url_from_map():
     )
     with pytest.raises(ChapterDoesntExist):
         parser.chapter_url("99999")
+    # the series page was scroll-loaded against the chapter-list container
+    call = fake.get_after_scroll.call_args
+    assert call.args[0] == "https://nelomanga.net/manga/naruto"
+    assert call.kwargs["scroll_selector"] == "div.chapter-list"
 
 
 def test_all_chapter_ids_empty_page_raises():
-    empty = bs4.BeautifulSoup("<html><body/></html>", "lxml")
     from scraper.exceptions import MangaDoesNotExist
 
-    with mock.patch("scraper.parsers.base.fetch_soup", return_value=empty):
+    parser = ManganeloMangaParser("nope")
+    fake = mock.Mock()
+    fake.get_after_scroll.return_value = mock.Mock(text="<html><body/></html>")
+    with mock.patch.object(parser, "_page_fetcher", return_value=fake):
         with pytest.raises(MangaDoesNotExist):
-            ManganeloMangaParser("nope").all_chapter_ids()
+            parser.all_chapter_ids()
 
 
 # -------------------------------- page_urls -------------------------------
