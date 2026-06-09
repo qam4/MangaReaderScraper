@@ -98,7 +98,7 @@ class KakalotMangaParser(BaseMangaParser):
     def all_volume_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
         logger.debug(f"Manga url={url}")
-        manga_html = self._fetch_html(url)
+        manga_html = self._fetch_manga_page(url)
         self._chapter_urls = _chapter_map_from_soup(manga_html)
         if not self._chapter_urls:
             raise MangaDoesNotExist(
@@ -115,7 +115,7 @@ class KakalotMangaParser(BaseMangaParser):
         return url
 
     def _scrape_volume(self, volume: str) -> BeautifulSoup:
-        volume_html = self._fetch_html(self.volume_url(volume))
+        volume_html = self._fetch_manga_page(self.volume_url(volume))
         if volume_html.find_all(string=re.compile("404 NOT FOUND"), recursive=True):
             raise VolumeDoesntExist(
                 f"Manga {self.manga_url} volume {volume} does not exist"

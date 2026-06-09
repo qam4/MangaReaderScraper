@@ -129,7 +129,7 @@ class MangagoMangaParser(BaseMangaParser):
         """
         url = self._manga_page_url()
         logger.info(f"Manga url={url}")
-        soup = self._fetch_html(url, BrowserFetcher())
+        soup = self._fetch_manga_page(url, BrowserFetcher())
         self._chapter_urls = _chapter_map_from_soup(soup)
         if not self._chapter_urls:
             raise MangaDoesNotExist(
@@ -154,7 +154,7 @@ class MangagoMangaParser(BaseMangaParser):
         """
         url = self.volume_url(volume)
         logger.info(f"Volume url={url}")
-        soup = self._fetch_html(url, BrowserFetcher())
+        soup = self._fetch_manga_page(url, BrowserFetcher())
         images = _image_urls_from_soup(soup)
         if not images:
             raise VolumeDoesntExist(

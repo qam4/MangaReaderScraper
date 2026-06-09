@@ -49,14 +49,14 @@ class BaseMangaParser:
         self.base_url = base_url
         self.headers: dict[str, str] = {}
 
-    def _fetch_html(self, url: str, fetcher: Optional[Fetcher] = None):
+    def _fetch_manga_page(self, url: str, fetcher: Optional[Fetcher] = None):
         """Fetch ``url`` as a BeautifulSoup, mapping HTTP 404 -> MangaDoesNotExist.
 
         The shared fetch step for the HTML-scrape parsers (kakalot family,
         mangago, ...): ``fetch_soup(url, fetcher)`` plus the common "404 means
         this manga/volume doesn't exist" handling, so each parser's
         ``all_volume_ids`` / ``_scrape_volume`` / ``page_urls`` is just
-        ``soup = self._fetch_html(...)`` followed by its own select/find. Stays
+        ``soup = self._fetch_manga_page(...)`` followed by its own select/find. Stays
         deliberately thin -- the select-many vs find-one-container step is
         parser-specific and stays in the parser. Not used by the API parser
         (mangabuddy) or the vrf/browser-xhr parser (mangafire), which fetch JSON

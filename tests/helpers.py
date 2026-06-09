@@ -31,9 +31,9 @@ class EngineMangaParser(BaseMangaParser):
         return f"{self.base_url}/{self.manga_url}/{volume}"
 
     def _fetch(self, url):
-        # delegates to the shared BaseMangaParser._fetch_html (fetch + 404 ->
+        # delegates to the shared BaseMangaParser._fetch_manga_page (fetch + 404 ->
         # MangaDoesNotExist) -- the very boilerplate the helper consolidates.
-        return self._fetch_html(url)
+        return self._fetch_manga_page(url)
 
     def all_volume_ids(self):
         soup = self._fetch(self._manga_page_url())
