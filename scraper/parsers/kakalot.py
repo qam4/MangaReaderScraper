@@ -115,7 +115,12 @@ class KakalotMangaParser(BaseMangaParser):
             raise MangaDoesNotExist(
                 f"No chapters found for {self.manga_url} (bad slug or page blocked)"
             )
-        return sort_chapter_ids(self._chapter_urls.keys())
+        chapter_ids = sort_chapter_ids(self._chapter_urls.keys())
+        logger.debug(
+            f"Parsed {len(chapter_ids)} chapters for {self.manga_url} "
+            f"(first={chapter_ids[:3]}, last={chapter_ids[-3:]})"
+        )
+        return chapter_ids
 
     def chapter_url(self, chapter: str) -> str:
         if not self._chapter_urls:

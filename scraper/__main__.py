@@ -127,6 +127,10 @@ def cli(arguments: List[str]) -> dict:
     configure_logging(log_level)
     manga_parser = get_manga_parser(args["source"])
     title = None
+    # Did the user originally search? If so, the slug came from a result they
+    # picked -- a later MangaDoesNotExist is a fetch/parse failure, not a wrong
+    # slug, so we must NOT fall back to another (identical) search.
+    user_searched = bool(args["search"])
 
     if args["remove"] and not args["upload"]:
         raise IOError("Cannot use --remove without --upload")
@@ -161,6 +165,10 @@ def cli(arguments: List[str]) -> dict:
         # The direct slug lookup failed. Fall back to a search for the same
         # term -- as a plain branch, not by re-serializing argv and re-entering
         # cli(). The user picks a result, then we download that.
+        if user_searched:
+            # Already came from a search the user picked from: re-searching
+            # would just repeat the same failed fetch. Let cli_entry report it.
+            raise
         logging.warning(
             f"No manga found for {args['manga']}. Searching for closest match."
         )
@@ -204,6 +212,15 @@ def cli_entry() -> None:
         # The parser layer no longer calls sys.exit(); the CLI owns process
         # termination. Report the empty result and exit cleanly.
         logging.error(str(err))
+        sys.exit(1)
+    except MangaDoesNotExist as err:
+        # The chosen manga's page/chapter-list couldn't be loaded or parsed
+        # (unreachable, or the site blocked automated access). Report cleanly
+        # rather than dumping a traceback.
+        logging.error(
+            f"Could not load '{err}': the page was unreachable or its chapter "
+            "list couldn't be parsed (the site may be blocking automated access)."
+        )
         sys.exit(1)
 
 
