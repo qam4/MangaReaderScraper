@@ -32,6 +32,7 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
+from scraper.fetchers import BrowserFetcher
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr, text
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser
@@ -95,10 +96,20 @@ class KakalotMangaParser(BaseMangaParser):
     def _manga_page_url(self) -> str:
         return self.manga_path.format(base_url=self.base_url, slug=self.manga_url)
 
+    def _page_fetcher(self) -> BrowserFetcher:
+        """Fetcher for the series + reader pages.
+
+        The family now gates these pages behind the same browser-verification
+        wall (Cloudflare) as search, so the curl_cffi default 403s -- they must
+        be fetched with a real browser, exactly like ``_scrape_results`` does
+        for search.
+        """
+        return BrowserFetcher()
+
     def all_chapter_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
         logger.debug(f"Manga url={url}")
-        manga_html = self._fetch_manga_page(url)
+        manga_html = self._fetch_manga_page(url, self._page_fetcher())
         self._chapter_urls = _chapter_map_from_soup(manga_html)
         if not self._chapter_urls:
             raise MangaDoesNotExist(
@@ -117,7 +128,9 @@ class KakalotMangaParser(BaseMangaParser):
         return url
 
     def _scrape_chapter(self, chapter: str) -> BeautifulSoup:
-        chapter_html = self._fetch_manga_page(self.chapter_url(chapter))
+        chapter_html = self._fetch_manga_page(
+            self.chapter_url(chapter), self._page_fetcher()
+        )
         if chapter_html.find_all(string=re.compile("404 NOT FOUND"), recursive=True):
             raise ChapterDoesntExist(
                 f"Manga {self.manga_url} chapter {chapter} does not exist"

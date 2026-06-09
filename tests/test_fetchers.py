@@ -20,6 +20,7 @@ from scraper.fetchers import (
     FetchResult,
     RequestsFetcher,
     _in_page_fetch_js,
+    _looks_like_challenge,
     _make_marker_predicate,
     download_image,
     fetch_soup,
@@ -68,6 +69,35 @@ def test_make_marker_predicate_matches_any_marker():
     assert pred("https://site/ajax/read/chapter/123?vrf=x")
     assert pred("https://site/ajax/read/volume/9")
     assert not pred("https://site/ajax/manga/search")
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<title>Just a moment...</title>",
+        "<html><body>Checking your browser before accessing</body></html>",
+        "<div id='cf-browser-verification'></div>",
+        "<script src='/cdn-cgi/challenge-platform/h/b/orchestrate'></script>",
+        "<h1>Verifying you are human</h1>",
+        "Please enable JavaScript and cookies to continue",
+        "",
+        "   \n  ",
+    ],
+)
+def test_looks_like_challenge_true_for_interstitials(html):
+    assert _looks_like_challenge(html)
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<div class='chapter-list'><a href='/manga/x/chapter-1'>Chapter 1</a></div>",
+        "<div class='story_item'><h3 class='story_name'>Naruto</h3></div>",
+        "<html><body><img src='page1.jpg'></body></html>",
+    ],
+)
+def test_looks_like_challenge_false_for_real_content(html):
+    assert not _looks_like_challenge(html)
 
 
 # ============================ http backends ==============================

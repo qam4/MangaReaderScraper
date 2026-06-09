@@ -278,6 +278,33 @@ def _make_marker_predicate(markers) -> Callable[[str], bool]:
     return predicate
 
 
+# Substrings (matched case-insensitively) that mark a Cloudflare / JS
+# verification interstitial rather than real page content. Kept deliberately
+# CF-specific so a real page that merely contains a common phrase isn't mistaken
+# for a challenge.
+_CHALLENGE_MARKERS = (
+    "just a moment",  # CF interstitial <title>
+    "checking your browser before",  # legacy CF "I'm Under Attack" mode
+    "cf-browser-verification",  # CF challenge container id
+    "challenge-platform",  # CF challenge script path
+    "verifying you are human",  # Turnstile / managed challenge
+    "enable javascript and cookies to continue",
+)
+
+
+def _looks_like_challenge(html: str) -> bool:
+    """True if ``html`` looks like a Cloudflare/JS verification interstitial
+    rather than rendered page content (empty html counts as not-yet-loaded).
+
+    Pure / unit-testable -- the polling in ``BrowserFetcher._get`` uses this to
+    decide whether to keep waiting for the challenge to clear.
+    """
+    if not html or not html.strip():
+        return True
+    lowered = html.lower()
+    return any(marker in lowered for marker in _CHALLENGE_MARKERS)
+
+
 class BrowserFetcher:
     """
     nodriver-backed fetcher for Cloudflare-protected, JS-heavy sites.
@@ -336,10 +363,36 @@ class BrowserFetcher:
         browser = await self._start()
         try:
             page = await browser.get(url)
-            await page.wait(self.wait)
-            return await page.get_content()
+            return await self._wait_for_content(page, url)
         finally:
             browser.stop()
+
+    async def _wait_for_content(self, page, url: str) -> str:
+        """Poll the rendered HTML until it stops looking like a Cloudflare/JS
+        challenge, up to ``self.timeout``.
+
+        nodriver returns as soon as navigation settles, which on a CF-gated site
+        is usually the "Just a moment..." interstitial -- so a flat single wait
+        hands the challenge page back to the parser (-> no results / no chapter
+        container). Instead we re-read the content every ``self.wait`` seconds
+        and return as soon as it is real content. On timeout we return the last
+        content (best effort) with a warning rather than hanging forever.
+        """
+        elapsed = 0.0
+        content = ""
+        while True:
+            await page.wait(self.wait)
+            elapsed += self.wait
+            content = await page.get_content()
+            if not _looks_like_challenge(content):
+                return content
+            if elapsed >= self.timeout:
+                logger.warning(
+                    f"browser still on a challenge page after {elapsed:.0f}s, "
+                    f"returning it anyway: {url}"
+                )
+                return content
+            logger.debug(f"challenge not cleared after {elapsed:.0f}s, waiting: {url}")
 
     async def _fetch_json_in_page(self, establish_url: str, fetch_url: str) -> str:
         import asyncio
