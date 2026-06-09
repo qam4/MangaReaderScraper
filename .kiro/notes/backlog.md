@@ -600,9 +600,22 @@ Two distinct root causes found:
     Sweep for similar (a method named for HOW it started vs WHAT it now returns).
   - SEPARATE / BIGGER (deliberate, maybe never): "volume" means "chapter"
     throughout — `all_volume_ids` returns chapter numbers, `volume_url` is a
-    chapter url, `Manga.volumes` is chapters. Pervasive + purely cosmetic (same
-    cost/benefit as D3); D1 already did one slice (SearchResult.chapters →
-    latest_chapter). Don't bundle into N1.
+    chapter url, `Manga.volumes` is chapters (the file is even saved as
+    `..._chapter_{id}`). Pervasive + purely cosmetic (same cost/benefit as D3);
+    D1 already did one slice (SearchResult.chapters → latest_chapter).
+    Don't bundle into N1.
+    - WHY IT STALLED (resolved): NOT because bundle is misnamed — because bundle
+      is the one place "volume" is used CORRECTLY (a volume = a group of
+      chapters). So "volume" has two meanings: chapter-unit (model/parsers/
+      download) vs chapter-group (bundle). A blind find-replace would wrongly
+      rename bundle's correct usage, so it must be a MEANING-AWARE rename.
+    - SCOPE IF DONE: rename only the model/parser/download layer
+      (`Manga.volumes`→`chapters`, `Volume`→`Chapter`, `volume_url`→`chapter_url`,
+      `all_volume_ids`→`all_chapter_ids`, `VolumeDownload`→`ChapterDownload`, the
+      `Volume*` exceptions + tests); LEAVE `bundle.py`'s "volume" (it groups
+      chapters into volumes — the seam `manga_chapters = self.manga.volumes`
+      becomes `self.manga.chapters`, dropping the workaround alias). Keep the
+      public `--volumes` CLI flag working (deprecated alias) or accept the break.
   - DONE-WHEN: the cheap local renames done (private methods, few call sites,
     no behavior change); the volume→chapter rename left as its own explicit call.
 
