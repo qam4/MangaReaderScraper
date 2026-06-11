@@ -513,6 +513,13 @@ class BrowserFetcher:
         On timeout we return the last content (best effort) with a warning
         rather than hanging forever.
         """
+        # Cloudflare's challenge only clears for a VISIBLE/focused page, so a
+        # backgrounded browser window never passes it. Bring the tab to the
+        # foreground (best effort) so the verification can complete.
+        try:
+            await page.bring_to_front()
+        except Exception as err:
+            logger.debug(f"bring_to_front failed (continuing): {err}")
         elapsed = 0.0
         content = ""
         while True:
@@ -586,6 +593,10 @@ class BrowserFetcher:
             await tab.send(cdp.network.enable())
 
             await tab.get(url)
+            try:
+                await tab.bring_to_front()
+            except Exception as err:
+                logger.debug(f"bring_to_front failed (continuing): {err}")
             if trigger_js:
                 await tab.wait(3)
                 await tab.evaluate(trigger_js)
