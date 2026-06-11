@@ -325,6 +325,23 @@ def _count_elements_js(selector: str) -> str:
     return f"document.querySelectorAll({_json.dumps(selector)}).length"
 
 
+# JS that reads the single <img> of an image-url navigation as base64 PNG via a
+# canvas. Works only because we navigate the tab TO the image, so the document
+# origin equals the image origin and the canvas is not cross-origin-tainted.
+# Returns "" if the image isn't decoded yet (caller retries). Pure.
+_CANVAS_TO_B64_JS = (
+    "(() => {"
+    "  const img = document.querySelector('img');"
+    "  if (!img || !img.naturalWidth) return '';"
+    "  const c = document.createElement('canvas');"
+    "  c.width = img.naturalWidth; c.height = img.naturalHeight;"
+    "  c.getContext('2d').drawImage(img, 0, 0);"
+    "  try { return c.toDataURL('image/png').split(',')[1] || ''; }"
+    "  catch (e) { return ''; }"
+    "})()"
+)
+
+
 def _scroll_to_bottom_js(scroll_selector: Optional[str]) -> str:
     """JS that scrolls the window -- and optionally an inner container -- to the
     bottom, to trigger infinite-scroll / lazy loading. Pure."""
@@ -608,56 +625,57 @@ class BrowserFetcher:
 
         browser = await self._start()
         try:
-            tab = await browser.get("about:blank")
-            # url -> CDP requestId, filled as the browser loads each image so we
-            # can pull the bytes of its OWN responses (bypasses CORS).
-            req_ids: Dict[str, object] = {}
-
-            async def on_response(evt: cdp.network.ResponseReceived):
-                try:
-                    req_ids[evt.response.url] = evt.request_id
-                except Exception:
-                    pass
-
-            tab.add_handler(cdp.network.ResponseReceived, on_response)
-            await tab.send(cdp.network.enable())
-
-            await tab.get(page_url)
-            await self._wait_for_content(tab, page_url, ready_selector=selector)
-            # force lazy images to fetch, then let the responses arrive
+            page = await browser.get(page_url)
+            # render the reader page: clears the challenge AND gives the browser
+            # the CDN's session cookies (the images load fine as <img> here).
+            await self._wait_for_content(page, page_url, ready_selector=selector)
             try:
-                await tab.evaluate(_FORCE_LAZY_IMAGES_JS)
+                await page.evaluate(_FORCE_LAZY_IMAGES_JS)
             except Exception as err:
                 logger.debug(f"force-lazy failed (continuing): {err}")
+            await page.wait(self.wait)
 
-            ordered: List[str] = []
-            # poll until the image urls are present AND each has a response
-            # recorded, or we hit the timeout (some pages stream slowly).
-            waited = 0.0
-            while waited < self.timeout:
-                await tab.wait(self.wait)
-                waited += self.wait
-                raw = await tab.evaluate(_collect_img_urls_js(selector, attr))
-                try:
-                    ordered = _json.loads(raw) if raw else []
-                except (TypeError, ValueError):
-                    ordered = []
-                if ordered and all(u in req_ids for u in ordered):
-                    break
+            raw = await page.evaluate(_collect_img_urls_js(selector, attr))
+            try:
+                ordered: List[str] = _json.loads(raw) if raw else []
+            except (TypeError, ValueError):
+                ordered = []
 
+            # The CDN hotlink-checks the Referer, so set the reader page as the
+            # Referer for our direct image navigations below.
+            try:
+                await page.send(cdp.network.enable())
+                await page.send(
+                    cdp.network.set_extra_http_headers(
+                        headers=cdp.network.Headers({"Referer": page_url})
+                    )
+                )
+            except Exception as err:
+                logger.debug(f"could not set Referer header (continuing): {err}")
+
+            # Navigate directly to each image url IN THIS TAB. The document
+            # origin then equals the image origin, so reading the rendered
+            # <img> through a canvas is NOT cross-origin-tainted -- which is the
+            # only way to get the bytes (the CDN 403s every HTTP client and an
+            # in-page fetch from the reader page is CORS-blocked). The session
+            # cookies + Referer carry over, so the navigation itself succeeds.
             results: List[Tuple[str, bytes]] = []
             for url in ordered:
                 data = b""
-                rid = req_ids.get(url)
-                if rid is not None:
-                    try:
-                        body, b64 = await asyncio.wait_for(
-                            tab.send(cdp.network.get_response_body(request_id=rid)),
-                            timeout=30,
+                try:
+                    await page.get(url)
+                    for _attempt in range(4):
+                        await page.wait(1.0)
+                        b64 = await asyncio.wait_for(
+                            page.evaluate(_CANVAS_TO_B64_JS), timeout=30
                         )
-                        data = base64.b64decode(body) if b64 else body.encode("latin-1")
-                    except Exception as err:
-                        logger.warning(f"could not read image body {url}: {err}")
+                        if b64:
+                            data = base64.b64decode(b64)
+                            break
+                except Exception as err:
+                    logger.warning(f"could not capture image {url}: {err}")
+                if not data:
+                    logger.warning(f"no image bytes captured for {url}")
                 results.append((url, data))
             return results
         finally:
