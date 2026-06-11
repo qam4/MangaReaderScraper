@@ -297,18 +297,25 @@ _FORCE_LAZY_IMAGES_JS = (
 
 
 def _collect_img_urls_js(selector: str, attr: str) -> str:
-    """JS returning the ordered, absolute image urls inside ``selector``,
-    preferring ``attr`` then ``data-src`` then ``src`` (skipping ``data:``
-    placeholders). Pure -- unit-testable."""
+    """JS returning a JSON string of the ordered, absolute image urls inside
+    ``selector``, preferring ``attr`` then ``data-src`` then ``src`` (skipping
+    ``data:`` placeholders).
+
+    Returns ``JSON.stringify(...)`` rather than the raw array: nodriver's
+    ``evaluate`` hands back clean values for primitives (incl. strings) but
+    RemoteObject dicts for arrays/objects, so we round-trip through JSON and
+    ``json.loads`` on the Python side. Pure -- unit-testable.
+    """
     return (
         "(() => {"
         f"  const c = document.querySelector({_json.dumps(selector)});"
-        "  if (!c) return [];"
-        "  return Array.from(c.querySelectorAll('img')).map(e =>"
+        "  if (!c) return '[]';"
+        "  const urls = Array.from(c.querySelectorAll('img')).map(e =>"
         f"    e.getAttribute({_json.dumps(attr)}) || e.getAttribute('data-src')"
         "     || e.getAttribute('src') || '')"
         "    .filter(u => u && !u.startsWith('data:'))"
         "    .map(u => new URL(u, location.href).href);"
+        "  return JSON.stringify(urls);"
         "})()"
     )
 
@@ -613,9 +620,11 @@ class BrowserFetcher:
             while waited < self.timeout:
                 await tab.wait(self.wait)
                 waited += self.wait
-                ordered = list(
-                    await tab.evaluate(_collect_img_urls_js(selector, attr)) or []
-                )
+                raw = await tab.evaluate(_collect_img_urls_js(selector, attr))
+                try:
+                    ordered = _json.loads(raw) if raw else []
+                except (TypeError, ValueError):
+                    ordered = []
                 if ordered and all(u in req_ids for u in ordered):
                     break
 
@@ -626,7 +635,7 @@ class BrowserFetcher:
                 if rid is not None:
                     try:
                         body, b64 = await asyncio.wait_for(
-                            tab.send(cdp.network.get_response_body(rid)),
+                            tab.send(cdp.network.get_response_body(request_id=rid)),
                             timeout=30,
                         )
                         data = base64.b64decode(body) if b64 else body.encode("latin-1")
