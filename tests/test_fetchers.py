@@ -13,7 +13,6 @@ from unittest import mock
 import pytest
 
 from scraper.fetchers import (
-    _CANVAS_TO_B64_JS,
     _FORCE_LAZY_IMAGES_JS,
     BrowserFetcher,
     CloudscraperFetcher,
@@ -134,13 +133,6 @@ def test_scroll_to_bottom_js_scrolls_window_and_container():
     js = _scroll_to_bottom_js("div.chapter-list")
     assert json.dumps("div.chapter-list") in js
     assert "scrollTop" in js and "scrollHeight" in js
-
-
-def test_canvas_to_b64_js_reads_img_via_canvas():
-    # reads the navigated image through a canvas (same-origin, so untainted)
-    assert "querySelector('img')" in _CANVAS_TO_B64_JS
-    assert "toDataURL" in _CANVAS_TO_B64_JS
-    assert "naturalWidth" in _CANVAS_TO_B64_JS
 
 
 # ============================ http backends ==============================

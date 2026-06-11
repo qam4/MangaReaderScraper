@@ -264,7 +264,9 @@ class CloudscraperFetcher:
 
 # nodriver launch options used throughout the MangaFire work; kept here so all
 # browser sessions are configured identically.
-_BROWSER_KWARGS = dict(headless=False, sandbox=False, no_sandbox=True)
+_BROWSER_KWARGS = dict(
+    headless=False, sandbox=False, no_sandbox=True, browser_args=["--start-maximized"]
+)
 
 
 def _in_page_fetch_js(url: str) -> str:
@@ -323,23 +325,6 @@ def _collect_img_urls_js(selector: str, attr: str) -> str:
 def _count_elements_js(selector: str) -> str:
     """JS returning the number of elements matching ``selector``. Pure."""
     return f"document.querySelectorAll({_json.dumps(selector)}).length"
-
-
-# JS that reads the single <img> of an image-url navigation as base64 PNG via a
-# canvas. Works only because we navigate the tab TO the image, so the document
-# origin equals the image origin and the canvas is not cross-origin-tainted.
-# Returns "" if the image isn't decoded yet (caller retries). Pure.
-_CANVAS_TO_B64_JS = (
-    "(() => {"
-    "  const img = document.querySelector('img');"
-    "  if (!img || !img.naturalWidth) return '';"
-    "  const c = document.createElement('canvas');"
-    "  c.width = img.naturalWidth; c.height = img.naturalHeight;"
-    "  c.getContext('2d').drawImage(img, 0, 0);"
-    "  try { return c.toDataURL('image/png').split(',')[1] || ''; }"
-    "  catch (e) { return ''; }"
-    "})()"
-)
 
 
 def _scroll_to_bottom_js(scroll_selector: Optional[str]) -> str:
@@ -488,6 +473,33 @@ class BrowserFetcher:
         profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
         return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
 
+    async def _focus_window(self, page) -> None:  # pragma: no cover - real browser
+        """Make the page report as focused/active so Cloudflare's
+        visibility-gated challenge completes even when the OS window is in the
+        background.
+
+        The robust lever is CDP ``Emulation.setFocusEmulationEnabled`` -- it
+        simulates a focused + active page, so ``document.hasFocus()`` is true and
+        the challenge proceeds without us fighting Windows for real window
+        foreground (a background process can't reliably steal focus anyway). We
+        also pin the page lifecycle to 'active' and bring the tab to front as
+        belt-and-suspenders. All best-effort.
+        """
+        from nodriver import cdp
+
+        try:
+            await page.send(cdp.emulation.set_focus_emulation_enabled(enabled=True))
+        except Exception as err:
+            logger.debug(f"setFocusEmulationEnabled failed (continuing): {err}")
+        try:
+            await page.send(cdp.page.set_web_lifecycle_state(state="active"))
+        except Exception as err:
+            logger.debug(f"setWebLifecycleState failed (continuing): {err}")
+        try:
+            await page.bring_to_front()
+        except Exception as err:
+            logger.debug(f"bring_to_front failed (continuing): {err}")
+
     async def _get(self, url: str) -> str:
         browser = await self._start()
         try:
@@ -514,12 +526,9 @@ class BrowserFetcher:
         rather than hanging forever.
         """
         # Cloudflare's challenge only clears for a VISIBLE/focused page, so a
-        # backgrounded browser window never passes it. Bring the tab to the
+        # backgrounded browser window never passes it. Raise it to the
         # foreground (best effort) so the verification can complete.
-        try:
-            await page.bring_to_front()
-        except Exception as err:
-            logger.debug(f"bring_to_front failed (continuing): {err}")
+        await self._focus_window(page)
         elapsed = 0.0
         content = ""
         while True:
@@ -593,10 +602,7 @@ class BrowserFetcher:
             await tab.send(cdp.network.enable())
 
             await tab.get(url)
-            try:
-                await tab.bring_to_front()
-            except Exception as err:
-                logger.debug(f"bring_to_front failed (continuing): {err}")
+            await self._focus_window(tab)
             if trigger_js:
                 await tab.wait(3)
                 await tab.evaluate(trigger_js)
@@ -629,67 +635,87 @@ class BrowserFetcher:
     async def _fetch_rendered_images(
         self, page_url: str, selector: str, attr: str
     ):  # pragma: no cover - drives a real browser
-        import asyncio
         import base64
 
         from nodriver import cdp
 
         browser = await self._start()
         try:
-            page = await browser.get(page_url)
-            # render the reader page: clears the challenge AND gives the browser
-            # the CDN's session cookies (the images load fine as <img> here).
-            await self._wait_for_content(page, page_url, ready_selector=selector)
-            try:
-                await page.evaluate(_FORCE_LAZY_IMAGES_JS)
-            except Exception as err:
-                logger.debug(f"force-lazy failed (continuing): {err}")
-            await page.wait(self.wait)
+            tab = await browser.get("about:blank")
+            # url -> captured image bytes. We intercept at the Fetch RESPONSE
+            # stage and read each image's body off the PAUSED response (which,
+            # unlike Network.getResponseBody, is reliable and not CORS-bound).
+            captured: Dict[str, bytes] = {}
 
-            raw = await page.evaluate(_collect_img_urls_js(selector, attr))
-            try:
-                ordered: List[str] = _json.loads(raw) if raw else []
-            except (TypeError, ValueError):
-                ordered = []
+            async def on_paused(evt: cdp.fetch.RequestPaused):
+                rid = evt.request_id
+                url = evt.request.url
+                try:
+                    is_img = evt.resource_type == cdp.network.ResourceType.IMAGE
+                    if is_img and evt.response_status_code:
+                        body, b64 = await tab.send(
+                            cdp.fetch.get_response_body(request_id=rid)
+                        )
+                        captured[url] = (
+                            base64.b64decode(body) if b64 else body.encode("latin-1")
+                        )
+                except Exception as err:
+                    logger.debug(f"fetch body capture failed for {url}: {err}")
+                finally:
+                    # MUST continue every paused request (incl. the document and
+                    # non-images) or the page hangs.
+                    try:
+                        await tab.send(cdp.fetch.continue_request(request_id=rid))
+                    except Exception:
+                        pass
 
-            # The CDN hotlink-checks the Referer, so set the reader page as the
-            # Referer for our direct image navigations below.
-            try:
-                await page.send(cdp.network.enable())
-                await page.send(
-                    cdp.network.set_extra_http_headers(
-                        headers=cdp.network.Headers({"Referer": page_url})
-                    )
+            tab.add_handler(cdp.fetch.RequestPaused, on_paused)
+            await tab.send(
+                cdp.fetch.enable(
+                    patterns=[
+                        cdp.fetch.RequestPattern(
+                            url_pattern="*",
+                            request_stage=cdp.fetch.RequestStage.RESPONSE,
+                        )
+                    ]
                 )
-            except Exception as err:
-                logger.debug(f"could not set Referer header (continuing): {err}")
+            )
 
-            # Navigate directly to each image url IN THIS TAB. The document
-            # origin then equals the image origin, so reading the rendered
-            # <img> through a canvas is NOT cross-origin-tainted -- which is the
-            # only way to get the bytes (the CDN 403s every HTTP client and an
-            # in-page fetch from the reader page is CORS-blocked). The session
-            # cookies + Referer carry over, so the navigation itself succeeds.
+            await tab.get(page_url)
+            await self._wait_for_content(tab, page_url, ready_selector=selector)
+
+            ordered: List[str] = []
+            # scroll to pull in every lazy image, and wait until each image url
+            # we can see has had its body captured (or we hit the timeout).
+            waited = 0.0
+            while waited < self.timeout:
+                try:
+                    await tab.evaluate(_FORCE_LAZY_IMAGES_JS)
+                    await tab.evaluate(_scroll_to_bottom_js(None))
+                except Exception as err:
+                    logger.debug(f"scroll/lazy failed (continuing): {err}")
+                await tab.wait(self.wait)
+                waited += self.wait
+                raw = await tab.evaluate(_collect_img_urls_js(selector, attr))
+                try:
+                    ordered = _json.loads(raw) if raw else []
+                except (TypeError, ValueError):
+                    ordered = []
+                if ordered and all(u in captured for u in ordered):
+                    break
+
             results: List[Tuple[str, bytes]] = []
             for url in ordered:
-                data = b""
-                try:
-                    await page.get(url)
-                    for _attempt in range(4):
-                        await page.wait(1.0)
-                        b64 = await asyncio.wait_for(
-                            page.evaluate(_CANVAS_TO_B64_JS), timeout=30
-                        )
-                        if b64:
-                            data = base64.b64decode(b64)
-                            break
-                except Exception as err:
-                    logger.warning(f"could not capture image {url}: {err}")
+                data = captured.get(url, b"")
                 if not data:
                     logger.warning(f"no image bytes captured for {url}")
                 results.append((url, data))
             return results
         finally:
+            try:
+                await tab.send(cdp.fetch.disable())
+            except Exception:
+                pass
             browser.stop()
 
     async def _get_after_scroll(
