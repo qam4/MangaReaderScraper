@@ -479,16 +479,22 @@ class BrowserFetcher:
         finally:
             browser.stop()
 
-    async def _wait_for_content(self, page, url: str) -> str:
-        """Poll the rendered HTML until it stops looking like a Cloudflare/JS
-        challenge, up to ``self.timeout``.
+    async def _wait_for_content(self, page, url: str, ready_selector=None) -> str:
+        """Poll the rendered HTML until the page is ready, up to ``self.timeout``.
 
         nodriver returns as soon as navigation settles, which on a CF-gated site
         is usually the "Just a moment..." interstitial -- so a flat single wait
         hands the challenge page back to the parser (-> no results / no chapter
-        container). Instead we re-read the content every ``self.wait`` seconds
-        and return as soon as it is real content. On timeout we return the last
-        content (best effort) with a warning rather than hanging forever.
+        container). Instead we re-read every ``self.wait`` seconds and return as
+        soon as the page is ready:
+
+        * with ``ready_selector`` -- as soon as that element EXISTS (a positive
+          signal the real content rendered; more reliable than guessing the
+          challenge is gone, and it waits out a slow challenge);
+        * otherwise -- as soon as the HTML no longer looks like a challenge.
+
+        On timeout we return the last content (best effort) with a warning
+        rather than hanging forever.
         """
         elapsed = 0.0
         content = ""
@@ -496,12 +502,23 @@ class BrowserFetcher:
             await page.wait(self.wait)
             elapsed += self.wait
             content = await page.get_content()
-            if not _looks_like_challenge(content):
+            if ready_selector:
+                try:
+                    present = bool(
+                        await page.evaluate(
+                            f"!!document.querySelector({_json.dumps(ready_selector)})"
+                        )
+                    )
+                except Exception:
+                    present = False
+                if present:
+                    return content
+            elif not _looks_like_challenge(content):
                 return content
             if elapsed >= self.timeout:
                 logger.warning(
-                    f"browser still on a challenge page after {elapsed:.0f}s, "
-                    f"returning it anyway: {url}"
+                    f"page not ready (selector={ready_selector!r}) after "
+                    f"{elapsed:.0f}s, returning anyway: {url}"
                 )
                 return content
             logger.debug(f"challenge not cleared after {elapsed:.0f}s, waiting: {url}")
@@ -606,7 +623,7 @@ class BrowserFetcher:
             await tab.send(cdp.network.enable())
 
             await tab.get(page_url)
-            await self._wait_for_content(tab, page_url)
+            await self._wait_for_content(tab, page_url, ready_selector=selector)
             # force lazy images to fetch, then let the responses arrive
             try:
                 await tab.evaluate(_FORCE_LAZY_IMAGES_JS)
@@ -657,7 +674,7 @@ class BrowserFetcher:
         browser = await self._start()
         try:
             page = await browser.get(url)
-            await self._wait_for_content(page, url)
+            await self._wait_for_content(page, url, ready_selector=count_selector)
             prev = -1
             unchanged = 0
             for _ in range(max_rounds):

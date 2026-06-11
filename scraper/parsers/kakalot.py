@@ -108,12 +108,13 @@ class KakalotMangaParser(BaseMangaParser):
     def _page_fetcher(self) -> BrowserFetcher:
         """Fetcher for the series + reader pages.
 
-        The family now gates these pages behind the same browser-verification
-        wall (Cloudflare) as search, so the curl_cffi default 403s -- they must
-        be fetched with a real browser, exactly like ``_scrape_results`` does
-        for search.
+        The family gates these pages behind a Cloudflare browser-verification
+        wall (like search), so they must be fetched with a real browser. The
+        challenge can be slow/intermittent, so allow a generous timeout; the
+        positive ``ready_selector`` wait returns as soon as the real content
+        actually renders, so a fast clear isn't penalised.
         """
-        return BrowserFetcher()
+        return BrowserFetcher(timeout=120)
 
     def all_chapter_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
