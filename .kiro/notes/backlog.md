@@ -691,6 +691,17 @@ D (fold D3 into B if rebuilding). Start nibbling at Wave A.
   mode), committed + pushed + CI green.
 - A2 (stale default → mangabuddy) + A5 (total_pages count) — commit 864c363.
 
+## Live-verified sources (user, on their laptop)
+- **mangabuddy** (default source) — search + chapter listing + page-image
+  download all work end-to-end. CONFIRMED.
+- **mangafire** — works end-to-end with no manual captcha (see C1 REALITY
+  CHECK). CONFIRMED. (Only the search path C7 + descramble C8 remain as
+  low-pri unexercised edge cases, not breakage.)
+- **kakalot family** (manganelo/manganato/mangakaka) — search + chapter listing
+  work; page-image download is documented-unsupported (interactive Turnstile +
+  browser-only CDN, see C2-kakalot-images).
+- **mangago** — fixed + fixture-backed this session (C2).
+
 ---
 
 ## Provenance / reconciliation with docs/code-review.md
