@@ -670,11 +670,16 @@ class BrowserFetcher:
                         pass
 
             tab.add_handler(cdp.fetch.RequestPaused, on_paused)
+            # Intercept ONLY image responses. Pausing everything (url "*")
+            # stalls Cloudflare's own challenge handshake -> it escalates to an
+            # interactive Turnstile and loops forever. Scoping to images leaves
+            # the challenge traffic untouched so it clears normally.
             await tab.send(
                 cdp.fetch.enable(
                     patterns=[
                         cdp.fetch.RequestPattern(
                             url_pattern="*",
+                            resource_type=cdp.network.ResourceType.IMAGE,
                             request_stage=cdp.fetch.RequestStage.RESPONSE,
                         )
                     ]
