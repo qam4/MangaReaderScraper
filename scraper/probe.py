@@ -1935,6 +1935,98 @@ def check_image_ladder(
     return cheapest, "\n".join(lines) + "\n"
 
 
+# page-stage HTTP ladder: the cheap clients to try before falling back to the
+# (already-rendered) browser. The browser tier is judged from the HTML the probe
+# already captured, so the ladder never spins a SECOND browser just to rank it.
+_PAGE_HTTP_LADDER = ("requests", "curl_cffi", "cloudscraper")
+
+
+def _real_page_attempt(
+    name: str, url: str
+) -> Tuple[bool, str]:  # pragma: no cover - real network
+    """GET ``url`` with one cheap fetcher tier (via ``scraper.fetchers``) and
+    report whether it returned real, non-challenge content (status 200 + the
+    body isn't a Cloudflare/JS interstitial). Uses the SAME backends the parser
+    would (RequestsFetcher / CurlCffiFetcher / CloudscraperFetcher), so the
+    verdict reflects real headers/impersonation, not an ad-hoc ``requests.get``.
+    """
+    from scraper.fetchers import (
+        CloudscraperFetcher,
+        CurlCffiFetcher,
+        RequestsFetcher,
+    )
+
+    backends = {
+        "requests": RequestsFetcher,
+        "curl_cffi": CurlCffiFetcher,
+        "cloudscraper": CloudscraperFetcher,
+    }
+    ctor = backends.get(name)
+    if ctor is None:
+        return False, "not attempted"
+    try:
+        res = ctor().get(url)
+        challenged = bool(detect_challenge(res.text))
+        ok = res.status == 200 and not challenged
+        marker = "challenge" if challenged else ("ok" if ok else "?")
+        return ok, f"status={res.status} len={len(res.text)} {marker}"
+    except Exception as err:
+        return False, f"ERROR {err}"
+
+
+def check_page_ladder(
+    url: str,
+    browser_html: str,
+    attempt: Optional[Callable[[str, str], Tuple[bool, str]]] = None,
+) -> Tuple[Optional[str], str]:
+    """Run the page-fetch ladder and report the CHEAPEST fetcher that returns
+    real (non-challenge) page content.
+
+    Tries requests -> curl_cffi -> cloudscraper through ``scraper.fetchers``,
+    then ranks the ``browser`` tier from the HTML the probe ALREADY rendered
+    (so no second browser is launched). This replaces the page stage's old
+    requests-vs-browser-only signal, which skipped curl_cffi + cloudscraper and
+    therefore over-recommended a browser; now a site that a cheap client can
+    actually read is reported as such, and the parser can skip the browser (a
+    browser-per-chapter is the slow path we want to avoid). Returns
+    ``(cheapest_working_fetcher, report_text)``; the fetcher is None only when
+    no tier -- not even the browser -- got real content (an interactive
+    challenge; see C11). The per-tier GET is injected via ``attempt`` (defaults
+    to the real backends; mocked in tests). Decision logic is pure.
+    """
+    attempt = attempt or _real_page_attempt
+    lines = [
+        "# Page fetchability ladder (cheapest tier that returns real content)\n",
+        f"url: {url}",
+        "",
+    ]
+    outcomes: Dict[str, bool] = {}
+    for name in _PAGE_HTTP_LADDER:
+        ok, detail = attempt(name, url)
+        outcomes[name] = ok
+        lines.append(f"{name:11} -> {'OK (real content)' if ok else 'no'}  ({detail})")
+    # The browser already ran upstream; judge that tier from the rendered HTML
+    # instead of launching a second one.
+    browser_ok = bool(browser_html.strip()) and not detect_challenge(browser_html)
+    lines.append(
+        f"{'browser':11} -> "
+        f"{'OK (real content)' if browser_ok else 'challenge/empty'}  "
+        f"(len={len(browser_html)})"
+    )
+    outcomes["browser"] = browser_ok
+
+    cheapest = cheapest_working(outcomes)
+    lines.append("")
+    if cheapest:
+        lines.append(f"-> cheapest working page fetcher: {cheapest}")
+    else:
+        lines.append(
+            "-> NO tier returned real content; even the browser saw a wall -- an "
+            "interactive captcha that needs a manual solve (see C11)."
+        )
+    return cheapest, "\n".join(lines) + "\n"
+
+
 def is_api_like_url(url: str) -> bool:
     """True if ``url`` looks like a JSON/AJAX API endpoint (by path shape).
 
@@ -2194,6 +2286,16 @@ async def _probe(
         cmp = compare_fetches(req_html, req_status, html, requests_error=req_err)
         _write(out_dir, "fetch_recommendation.txt", cmp.render(url))
         print(f"[probe] fetcher recommendation: {cmp.recommend()}")
+
+        # Page stage (C10): rank the FULL cheap ladder (requests -> curl_cffi ->
+        # cloudscraper) against the already-rendered browser, so we recommend the
+        # cheapest fetcher that actually reads this page instead of defaulting to
+        # a browser. compare_fetches above keeps the dynamic/JS-rendered signal;
+        # this adds the curl_cffi + cloudscraper tiers it skips.
+        page_cheapest, page_ladder_report = check_page_ladder(url, html)
+        _write(out_dir, "page_fetch_ladder.txt", page_ladder_report)
+        if page_cheapest:
+            print(f"[probe] cheapest working page fetcher: {page_cheapest}")
 
         # Chapter stage: if the page has page-images, check whether the image CDN
         # itself is protected (plain requests vs browser cookies + Referer).

@@ -22,6 +22,7 @@ from scraper.probe import (
     candidate_image_urls,
     cheapest_working,
     check_image_ladder,
+    check_page_ladder,
     compare_fetches,
     detect_challenge,
     find_text,
@@ -1473,3 +1474,44 @@ def test_check_image_ladder_no_candidates():
     )
     assert cheapest is None
     assert "no candidate image urls" in report
+
+
+def test_check_page_ladder_prefers_cheap_tier_over_browser():
+    # requests is blocked, curl_cffi clears it -> curl_cffi wins, NOT a browser
+    # (the whole point: don't recommend a browser when a cheap client works).
+    def fake_attempt(name, url):
+        if name == "curl_cffi":
+            return True, "status=200 len=50000 ok"
+        return False, "status=403 len=1000 challenge"
+
+    cheapest, report = check_page_ladder(
+        "https://site/manga/x",
+        "<html><body><div class='chapter-list'>real</div></body></html>",
+        attempt=fake_attempt,
+    )
+    assert cheapest == "curl_cffi"
+    assert "cheapest working page fetcher: curl_cffi" in report
+
+
+def test_check_page_ladder_falls_back_to_browser_when_cheap_tiers_fail():
+    # every cheap tier is challenged, but the rendered browser HTML is real
+    # content -> browser is the cheapest that works.
+    cheapest, report = check_page_ladder(
+        "https://site/manga/x",
+        "<html><body><div class='story_item'>real</div></body></html>",
+        attempt=lambda name, url: (False, "status=403 challenge"),
+    )
+    assert cheapest == "browser"
+    assert "cheapest working page fetcher: browser" in report
+
+
+def test_check_page_ladder_none_when_even_browser_walled():
+    # cheap tiers fail AND the browser HTML is still an interactive challenge ->
+    # no tier works; the user must solve it manually (C11).
+    cheapest, report = check_page_ladder(
+        "https://site/manga/x",
+        "<title>Just a moment...</title>",
+        attempt=lambda name, url: (False, "status=403 challenge"),
+    )
+    assert cheapest is None
+    assert "interactive captcha" in report

@@ -282,15 +282,30 @@ Each item has a done-when so "done" is unambiguous.
   stage writes its own).
 
 - [~] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
-  (uniform fetcher-ladder reachability)** — IMAGE STAGE **DONE** (this session);
-  page/API stages partially covered already; full uniformity is the remaining
-  extension. Delivered: `candidate_image_urls` (page-image cluster, src OR
-  data-src, skips data: placeholders + nav imgs) + `check_image_ladder`
-  (requests → curl_cffi → cloudscraper, carrying page Referer + the live session
-  cookies read via CDP) reporting the cheapest tier that returns a real image —
-  replacing the old bare-requests-on-one-data-src check. `cheapest_working` +
-  url extraction are pure/fixture-tested; the per-tier GET is injected (mocked
-  in tests, real backends live). REMAINING (optional extension): rewire the
+  (uniform fetcher-ladder reachability)** — IMAGE + PAGE STAGES **DONE**;
+  API stage is the remaining slice. Delivered: `candidate_image_urls` (page-image
+  cluster, src OR data-src, skips data: placeholders + nav imgs) +
+  `check_image_ladder` (requests → curl_cffi → cloudscraper, carrying page
+  Referer + the live session cookies read via CDP) reporting the cheapest tier
+  that returns a real image — replacing the old bare-requests-on-one-data-src
+  check. PAGE STAGE (this session): `check_page_ladder(url, browser_html)` runs
+  requests → curl_cffi → cloudscraper via `scraper.fetchers` (real
+  headers/impersonation, not ad-hoc requests.get) and ranks the `browser` tier
+  from the ALREADY-rendered HTML (no second browser launched), reporting the
+  cheapest tier that returns real non-challenge content — so the probe stops
+  over-recommending a browser when a cheap client works, and `CloudscraperFetcher`
+  is now exercised by the probe (closing the headline "cloudscraper never tried"
+  gap for the page stage). Wired into `_probe` (writes `page_fetch_ladder.txt`)
+  alongside the kept `compare_fetches` (which still supplies the dynamic/JS-
+  rendered signal). `_real_page_attempt` is `# pragma: no cover` (real network);
+  decision logic via `cheapest_working` is pure + unit-tested (3 new tests:
+  cheap-tier-wins, browser-fallback, all-walled→None). `cheapest_working` + url
+  extraction stay pure/fixture-tested; per-tier GET injected (mocked in tests).
+  REMAINING (optional, smaller now): rewire the API check
+  (`_check_api_backends`, today requests+curl_cffi) to also try cloudscraper so
+  all three stages report via one uniform mechanism. The original verbose
+  analysis below is retained for context.
+  - REMAINING (optional extension): rewire the
   page check (`compare_fetches`, today requests-vs-browser) and API check
   (`_check_api_backends`, today requests+curl_cffi) onto the same `FETCHER_LADDER`
   primitives so cloudscraper is tried everywhere and all three stages report via
