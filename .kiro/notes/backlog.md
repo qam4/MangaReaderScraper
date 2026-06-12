@@ -757,16 +757,15 @@ lock-serialized session. Plan + status:
     session blocked the main thread on `future.result()` with no timeout, which
     SIGINT can't interrupt on Windows. `submit` now polls `result(timeout=0.5)`
     in a loop and cancels the future on KeyboardInterrupt, so Ctrl-C breaks out.
-  - [x] (b-followup) browser-vs-CLI focus: minimize the headful window
-    immediately after launch (CDP `Browser.setWindowBounds` minimized, via
-    `_set_window_minimized`), so it doesn't sit over the CLI menu/prompts. Passive
-    CF challenges still clear (focus emulation); an INTERACTIVE challenge restores
-    the window (`_set_window_minimized(page, False)` + `_bring_to_front`) so the
-    user can see/solve it. Best-effort (CDP failures ignored). LIVE-VALIDATE: a
-    minimized window may throttle rendering -> could affect scroll-driven
-    lazy-load (`get_after_scroll`, kakalot); if so, restore around that op. Common
-    paths (mangafire capture_xhr, mangabuddy curl_cffi, the menu) don't depend on
-    visibility, so they benefit cleanly.
+  - [x] (b-followup) browser-vs-CLI focus: launch the headful window OFF-SCREEN
+    (`--window-position=-32000,-32000` in _BROWSER_KWARGS) so it never covers the
+    CLI menu/prompts. More reliable than CDP "minimized" (which was a no-op on
+    Windows -- it only resized). Off-screen keeps the page VISIBLE to the renderer
+    so scroll-driven lazy-load still works (unlike a minimized window). An
+    INTERACTIVE challenge brings it on-screen + maximizes (`_show_browser_window`)
+    + `_bring_to_front` so the user can solve it. Best-effort. LIVE-VALIDATE: that
+    Chrome honors the off-screen position (some builds clamp window pos) and that
+    the menu keeps focus.
   - [ ] (b-headless) **headless vs headful from the PROBE verdict** (user idea):
     the probe already classifies requests / nodriver-headless / nodriver-headful
     / nodriver-manual, but parsers all use a headful `BrowserFetcher()`. Thread

@@ -274,37 +274,28 @@ class CloudscraperFetcher:
 
 # ============================ browser backend ============================
 
-# nodriver launch options used throughout the MangaFire work; kept here so all
-# browser sessions are configured identically.
+# nodriver launch options. The window is started OFF-SCREEN (huge negative
+# position) so the headful browser never covers the CLI menu/prompts -- more
+# reliable than CDP "minimized", which is a no-op on Windows. Off-screen keeps
+# the page VISIBLE to the renderer (so scroll-driven lazy-load still works,
+# unlike a minimized window). It's brought on-screen only for a manual challenge
+# solve (see _show_browser_window).
 _BROWSER_KWARGS = dict(
-    headless=False, sandbox=False, no_sandbox=True, browser_args=["--start-maximized"]
+    headless=False,
+    sandbox=False,
+    no_sandbox=True,
+    browser_args=["--window-position=-32000,-32000", "--window-size=1200,900"],
 )
 
 
-async def _set_window_minimized(
-    tab, minimized: bool
-) -> None:  # pragma: no cover - real browser
-    """Best-effort minimize/restore of the browser window owning ``tab``.
-
-    Keeps the headful window OFF the user's terminal during a normal run, so it
-    doesn't cover the CLI menu/prompts. A minimized + focus-emulated page still
-    clears PASSIVE Cloudflare challenges (focus emulation makes the page report
-    focused/active regardless of window state); an INTERACTIVE challenge restores
-    the window so the user can see and solve it (see ``_wait_for_content``).
-
-    Uses nodriver's high-level ``Tab.minimize`` / ``Tab.maximize`` (they bind the
-    tab's own target id; a raw ``Browser.getWindowForTarget`` with no target id
-    silently fails). Best-effort: any failure is logged and ignored. LIVE-VALIDATE:
-    a minimized window may throttle rendering, which could affect scroll-driven
-    lazy-load (``get_after_scroll``); if so, restore around that op.
-    """
+async def _show_browser_window(tab) -> None:  # pragma: no cover - real browser
+    """Bring the off-screen browser window on-screen + maximize it, so the user
+    can see and solve an interactive challenge. Best-effort (nodriver's
+    high-level maximize binds the tab's target id and snaps to the monitor)."""
     try:
-        if minimized:
-            await tab.minimize()
-        else:
-            await tab.maximize()
+        await tab.maximize()
     except Exception as err:
-        logger.debug(f"window state change failed (continuing): {err}")
+        logger.debug(f"show window failed (continuing): {err}")
 
 
 def _in_page_fetch_js(url: str) -> str:
@@ -491,15 +482,10 @@ class _BrowserRuntime:
         import nodriver as nd
 
         profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-        browser = await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
-        # Minimize immediately so the headful window doesn't sit over the CLI.
-        # Passive challenges still clear (focus emulation); an interactive one
-        # restores the window. Best-effort.
-        try:
-            await _set_window_minimized(browser.main_tab, True)
-        except Exception as err:
-            logger.debug(f"initial minimize failed (continuing): {err}")
-        return browser
+        # Opens off-screen via _BROWSER_KWARGS (--window-position), so no
+        # post-launch minimize is needed; restored on-screen only for a manual
+        # challenge solve.
+        return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
 
     def shutdown(self) -> None:
         """Stop the shared browser and the loop thread (registered at exit).
@@ -684,8 +670,8 @@ class BrowserFetcher:
             # raise the window to the front (once) so they can see/solve it.
             if _looks_like_challenge(content):
                 if not prompted:
-                    # restore the (minimized) window so the user can see + solve
-                    await _set_window_minimized(page, False)
+                    # bring the off-screen window on-screen so the user can solve it
+                    await _show_browser_window(page)
                     await self._bring_to_front(page)
                     logger.info(
                         "Cloudflare verification needed: click the 'Verify you "
