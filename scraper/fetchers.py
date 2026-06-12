@@ -28,10 +28,22 @@ legacy ``utils.get_html_from_url`` stays until they all are.
 
 from __future__ import annotations
 
+import atexit
 import json as _json
 import logging
+import threading
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
+
+if TYPE_CHECKING:
+    import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +355,135 @@ def _looks_like_challenge(html: str) -> bool:
     return any(marker in lowered for marker in _CHALLENGE_MARKERS)
 
 
+class _BrowserRuntime:
+    """Owns ONE event loop (on a dedicated daemon thread) and ONE shared browser,
+    so every ``BrowserFetcher`` call reuses a single session instead of launching
+    a throwaway browser + event loop per call.
+
+    Why a dedicated loop thread: nodriver drives Chrome over asyncio
+    subprocesses, and an event loop (with its subprocess transports) is bound to
+    the thread that runs it. By running ONE long-lived loop on a daemon thread
+    and marshalling every browser coroutine onto it
+    (``run_coroutine_threadsafe``), the browser is created and driven from a
+    single, stable loop. That:
+
+      * collapses the per-chapter browser explosion to ONE reusable session
+        (download workers are THREADS now, so they can share it -- a browser
+        can't cross a process boundary);
+      * removes the per-call ``asyncio.run`` that closed a fresh loop each time
+        and left nodriver's subprocess transports to be GC'd against a dead loop
+        (the Windows ``I/O operation on closed pipe`` shutdown noise);
+      * makes an opt-in persistent profile safe (single instance, no Chrome
+        ``SingletonLock`` collision -- step (c)).
+
+    Access is serialized with a lock because a single CDP session is not safe to
+    drive concurrently. On Windows, ``new_event_loop()`` yields a
+    ``ProactorEventLoop`` (the default policy since 3.8), which supports
+    subprocesses on a non-main thread. Lazily started; stopped at interpreter
+    exit. The loop-thread + serialization + lifecycle are unit-tested with plain
+    coroutines; the browser-launching methods are real-browser-only.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()  # serializes whole browser ops
+        self._start_lock = threading.Lock()  # guards loop-thread creation
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._browser = None
+
+    def _ensure_loop(self) -> None:
+        """Start the dedicated loop thread once (idempotent, thread-safe)."""
+        import asyncio
+
+        if self._loop is not None:
+            return
+        with self._start_lock:
+            if self._loop is not None:
+                return
+            loop = asyncio.new_event_loop()
+
+            def _run() -> None:
+                asyncio.set_event_loop(loop)
+                loop.run_forever()
+
+            thread = threading.Thread(target=_run, name="browser-loop", daemon=True)
+            thread.start()
+            self._loop = loop
+            self._thread = thread
+            atexit.register(self.shutdown)
+
+    def submit(self, coro):
+        """Run an async browser op on the shared loop thread and block for its
+        result, serialized against other ops.
+
+        ``coro`` is created by the caller (a coroutine isn't bound to a loop
+        until awaited). No timeout is imposed here: a browser op may legitimately
+        block indefinitely (e.g. waiting for a human to solve a Cloudflare
+        challenge), matching the old ``asyncio.run`` semantics; ops set their own
+        internal timeouts where appropriate.
+        """
+        import asyncio
+
+        self._ensure_loop()
+        assert self._loop is not None  # _ensure_loop guarantees it
+        with self._lock:
+            future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+            return future.result()
+
+    async def ensure_browser(self):  # pragma: no cover - launches a real browser
+        """Start the shared browser once (on the loop thread) and reuse it."""
+        if self._browser is None:
+            self._browser = await self._launch()
+        return self._browser
+
+    async def _launch(self):  # pragma: no cover - launches a real browser
+        import tempfile
+        from pathlib import Path
+
+        import nodriver as nd
+
+        profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
+        return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
+
+    def shutdown(self) -> None:
+        """Stop the shared browser and the loop thread (registered at exit).
+
+        Idempotent. The browser is stopped ON the loop thread, followed by a
+        short ``sleep`` so its subprocess transports close while the loop is
+        still alive -- otherwise their ``__del__`` runs against a dead loop and
+        prints the ``I/O operation on closed pipe`` warning.
+        """
+        import asyncio
+
+        loop = self._loop
+        if loop is None:
+            return
+
+        async def _close() -> None:
+            if self._browser is not None:  # pragma: no cover - real browser
+                try:
+                    self._browser.stop()
+                except Exception as err:
+                    logger.debug(f"browser.stop() failed at shutdown: {err}")
+                await asyncio.sleep(0.25)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_close(), loop).result(timeout=10)
+        except Exception as err:
+            logger.debug(f"browser shutdown close failed: {err}")
+        loop.call_soon_threadsafe(loop.stop)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self._loop = None
+        self._thread = None
+        self._browser = None
+
+
+# Process-wide shared browser session (see _BrowserRuntime). All BrowserFetcher
+# instances route through it, so there is at most ONE browser per process.
+_RUNTIME = _BrowserRuntime()
+
+
 class BrowserFetcher:
     """
     nodriver-backed fetcher for Cloudflare-protected, JS-heavy sites.
@@ -365,15 +506,11 @@ class BrowserFetcher:
     # -- sync wrappers -----------------------------------------------------
 
     def get(self, url: str) -> FetchResult:
-        import asyncio
-
-        text = asyncio.run(self._get(url))
+        text = _RUNTIME.submit(self._get(url))
         return FetchResult(url=url, status=200, text=text)
 
     def fetch_json_in_page(self, establish_url: str, fetch_url: str) -> str:
-        import asyncio
-
-        return asyncio.run(self._fetch_json_in_page(establish_url, fetch_url))
+        return _RUNTIME.submit(self._fetch_json_in_page(establish_url, fetch_url))
 
     def capture_xhr(
         self,
@@ -382,9 +519,9 @@ class BrowserFetcher:
         trigger_js: Optional[str] = None,
         with_cookies: bool = False,
     ):
-        import asyncio
-
-        return asyncio.run(self._capture_xhr(url, predicate, trigger_js, with_cookies))
+        return _RUNTIME.submit(
+            self._capture_xhr(url, predicate, trigger_js, with_cookies)
+        )
 
     def get_after_scroll(
         self,
@@ -401,22 +538,11 @@ class BrowserFetcher:
         the count of ``count_selector`` elements stops growing -- so the
         returned HTML holds the FULL list, not just the first screen.
         """
-        import asyncio
-
-        return asyncio.run(
+        return _RUNTIME.submit(
             self._get_after_scroll(url, count_selector, scroll_selector, max_rounds)
         )
 
     # -- async implementations --------------------------------------------
-
-    async def _start(self):
-        import tempfile
-        from pathlib import Path
-
-        import nodriver as nd
-
-        profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-        return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
 
     async def _focus_window(self, page) -> None:  # pragma: no cover - real browser
         """Make the page report as focused/active so Cloudflare's
@@ -445,13 +571,10 @@ class BrowserFetcher:
         except Exception as err:
             logger.debug(f"bring_to_front failed (continuing): {err}")
 
-    async def _get(self, url: str) -> str:
-        browser = await self._start()
-        try:
-            page = await browser.get(url)
-            return await self._wait_for_content(page, url)
-        finally:
-            browser.stop()
+    async def _get(self, url: str) -> str:  # pragma: no cover - real browser
+        browser = await _RUNTIME.ensure_browser()
+        page = await browser.get(url)
+        return await self._wait_for_content(page, url)
 
     async def _wait_for_content(self, page, url: str, ready_selector=None) -> str:
         """Poll the rendered HTML until the page is ready, up to ``self.timeout``.
@@ -518,21 +641,20 @@ class BrowserFetcher:
                 return content
             logger.debug(f"content not ready after {elapsed:.0f}s, waiting: {url}")
 
-    async def _fetch_json_in_page(self, establish_url: str, fetch_url: str) -> str:
+    async def _fetch_json_in_page(  # pragma: no cover - real browser
+        self, establish_url: str, fetch_url: str
+    ) -> str:
         import asyncio
 
-        browser = await self._start()
-        try:
-            page = await browser.get(establish_url)
-            await page.wait(self.wait)
-            return await asyncio.wait_for(
-                page.evaluate(_in_page_fetch_js(fetch_url), await_promise=True),
-                timeout=self.timeout,
-            )
-        finally:
-            browser.stop()
+        browser = await _RUNTIME.ensure_browser()
+        page = await browser.get(establish_url)
+        await page.wait(self.wait)
+        return await asyncio.wait_for(
+            page.evaluate(_in_page_fetch_js(fetch_url), await_promise=True),
+            timeout=self.timeout,
+        )
 
-    async def _capture_xhr(
+    async def _capture_xhr(  # pragma: no cover - real browser
         self,
         url: str,
         predicate: Callable[[str], bool],
@@ -543,9 +665,12 @@ class BrowserFetcher:
 
         from nodriver import cdp
 
-        browser = await self._start()
+        browser = await _RUNTIME.ensure_browser()
+        # The browser is shared/reused across calls, so this op runs in its OWN
+        # tab (closed in finally): otherwise its CDP handlers + Network.enable
+        # would leak onto a long-lived tab and bleed into later calls.
+        tab = await browser.get("about:blank", new_tab=True)
         try:
-            tab = await browser.get("about:blank")
             state: Dict[str, Optional[str]] = {"url": None}
             found = asyncio.Event()
 
@@ -592,7 +717,10 @@ class BrowserFetcher:
 
             return body, cookies
         finally:
-            browser.stop()
+            try:
+                await tab.close()
+            except Exception as err:
+                logger.debug(f"tab.close() failed (continuing): {err}")
 
     async def _get_after_scroll(
         self,
@@ -602,30 +730,27 @@ class BrowserFetcher:
         max_rounds: int,
     ) -> FetchResult:  # pragma: no cover - drives a real browser
         scroll_wait = 2.0  # per-round pause for the next lazy batch to load
-        browser = await self._start()
-        try:
-            page = await browser.get(url)
-            await self._wait_for_content(page, url, ready_selector=count_selector)
-            prev = -1
-            unchanged = 0
-            for _ in range(max_rounds):
-                try:
-                    await page.evaluate(_scroll_to_bottom_js(scroll_selector))
-                except Exception as err:
-                    logger.debug(f"scroll failed (continuing): {err}")
-                await page.wait(scroll_wait)
-                try:
-                    count = int(await page.evaluate(_count_elements_js(count_selector)))
-                except Exception:
-                    count = prev
-                if count <= prev:
-                    unchanged += 1
-                    if unchanged >= 3:  # no growth for 3 rounds -> list is fully loaded
-                        break
-                else:
-                    unchanged = 0
-                    prev = count
-            logger.debug(f"scroll-to-load settled at {prev} items: {url}")
-            return FetchResult(url=url, status=200, text=await page.get_content())
-        finally:
-            browser.stop()
+        browser = await _RUNTIME.ensure_browser()
+        page = await browser.get(url)
+        await self._wait_for_content(page, url, ready_selector=count_selector)
+        prev = -1
+        unchanged = 0
+        for _ in range(max_rounds):
+            try:
+                await page.evaluate(_scroll_to_bottom_js(scroll_selector))
+            except Exception as err:
+                logger.debug(f"scroll failed (continuing): {err}")
+            await page.wait(scroll_wait)
+            try:
+                count = int(await page.evaluate(_count_elements_js(count_selector)))
+            except Exception:
+                count = prev
+            if count <= prev:
+                unchanged += 1
+                if unchanged >= 3:  # no growth for 3 rounds -> list fully loaded
+                    break
+            else:
+                unchanged = 0
+                prev = count
+        logger.debug(f"scroll-to-load settled at {prev} items: {url}")
+        return FetchResult(url=url, status=200, text=await page.get_content())

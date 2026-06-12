@@ -20,7 +20,9 @@ def _no_real_browser():
 
     Every BrowserFetcher path is supposed to be mocked; if a test misses one,
     we want an immediate error pointing at the gap -- not a browser window (and
-    a 45s timeout). Patches the lazy entry points used by the fetcher/probe.
+    a long timeout). The shared browser session launches via
+    ``_BrowserRuntime._launch`` (the single ``nodriver.start`` seam), so blocking
+    that blocks every BrowserFetcher op.
     """
 
     def _boom(*args, **kwargs):
@@ -29,8 +31,7 @@ def _no_real_browser():
             "Mock BrowserFetcher / nodriver in this test."
         )
 
-    # BrowserFetcher._start and the probe both call nodriver.start; block both.
-    with mock.patch("scraper.fetchers.BrowserFetcher._start", side_effect=_boom):
+    with mock.patch("scraper.fetchers._BrowserRuntime._launch", side_effect=_boom):
         yield
 
 

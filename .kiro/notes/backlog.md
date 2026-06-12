@@ -720,11 +720,22 @@ lock-serialized session. Plan + status:
     os + LOG_LEVEL_ENV imports). Kept LOG_LEVEL_ENV as an external "set level via
     env" read feature in configure_logging; fixed the spawn-worker comments;
     test_cli now asserts the logger level only.
-  - [ ] (b) shared lock-serialized browser session: one ProactorEventLoop in a
-    daemon thread owns the browser; worker threads borrow via
-    run_coroutine_threadsafe. Collapses N browsers -> 1 reusable session and
-    removes the per-call asyncio.run() "I/O operation on closed pipe" shutdown
-    noise. LIVE-VALIDATE (nodriver-on-Proactor-in-daemon-thread).
+  - [x] (b) shared lock-serialized browser session: `_BrowserRuntime` owns one
+    event loop on a daemon thread (Proactor on Windows) + one shared browser;
+    every BrowserFetcher op routes through `_RUNTIME.submit(coro)` (marshalled
+    onto the loop thread via run_coroutine_threadsafe, serialized by a lock) and
+    uses `ensure_browser()` instead of per-call start/stop. Collapses N browsers
+    -> 1 reusable session; the per-call asyncio.run() is gone (removes the
+    Windows "I/O operation on closed pipe" shutdown noise); browser stopped once
+    at interpreter exit (atexit) with a short post-stop sleep so transports close
+    inside the live loop. capture_xhr now runs in its OWN tab (new_tab + close in
+    finally) so its CDP handlers don't leak onto the shared browser. conftest
+    guard repointed to `_BrowserRuntime._launch`. The loop-thread + serialization
+    + lifecycle are unit-tested with plain coroutines (4 tests); the
+    browser-launching methods are real-browser-only (# pragma: no cover).
+    LIVE-VALIDATE on a real download: nodriver-on-Proactor-in-daemon-thread, the
+    1-browser-reuse across search/chapters/reader, capture_xhr tab lifecycle, and
+    that the shutdown noise is actually gone.
   - [ ] (c) opt-in persistent profile (C11(1)) on top -- trivially safe given a
     single session (no SingletonLock collision). The interactive manual-solve
     half is already done (BrowserFetcher challenge-detect + indefinite wait).

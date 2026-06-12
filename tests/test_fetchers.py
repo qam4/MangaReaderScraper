@@ -19,6 +19,7 @@ from scraper.fetchers import (
     Fetcher,
     FetchResult,
     RequestsFetcher,
+    _BrowserRuntime,
     _count_elements_js,
     _in_page_fetch_js,
     _looks_like_challenge,
@@ -318,3 +319,87 @@ def test_fetch_soup_defaults_to_curlcffi():
     ctor.assert_called_once_with()
     assert captured["url"] == "http://x"
     assert soup.body.text == "hi"
+
+
+# ===================== shared browser session runtime =====================
+# These exercise _BrowserRuntime's loop-thread + serialization + lifecycle with
+# plain coroutines -- no nodriver, no browser (the _launch/ensure_browser paths
+# are real-browser-only). They prove the concurrency machinery in isolation.
+
+
+def test_browser_runtime_submit_runs_on_dedicated_loop_thread():
+    import threading
+
+    runtime = _BrowserRuntime()
+    try:
+
+        async def who():
+            return threading.current_thread().name
+
+        name = runtime.submit(who())
+        # the coroutine ran on the runtime's dedicated loop thread, NOT the
+        # caller (main) thread
+        assert name == "browser-loop"
+        assert name != threading.current_thread().name
+    finally:
+        runtime.shutdown()
+
+
+def test_browser_runtime_serializes_concurrent_ops():
+    import asyncio
+    import threading
+
+    runtime = _BrowserRuntime()
+    state = {"active": 0, "max": 0}
+    guard = threading.Lock()
+
+    async def op():
+        with guard:
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+        await asyncio.sleep(0.05)
+        with guard:
+            state["active"] -= 1
+        return True
+
+    try:
+        threads = [
+            threading.Thread(target=lambda: runtime.submit(op())) for _ in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # the runtime lock serializes ops -> never more than one ran at a time
+        assert state["max"] == 1
+    finally:
+        runtime.shutdown()
+
+
+def test_browser_runtime_shutdown_stops_loop_thread():
+    runtime = _BrowserRuntime()
+
+    async def noop():
+        return None
+
+    runtime.submit(noop())  # lazily starts the loop thread
+    thread = runtime._thread
+    assert thread is not None and thread.is_alive()
+
+    runtime.shutdown()
+    assert not thread.is_alive()
+    # idempotent: a second shutdown is a no-op
+    runtime.shutdown()
+
+
+def test_browser_runtime_submit_propagates_exceptions():
+    runtime = _BrowserRuntime()
+
+    async def boom():
+        raise ValueError("op failed")
+
+    try:
+        with pytest.raises(ValueError, match="op failed"):
+            runtime.submit(boom())
+    finally:
+        runtime.shutdown()
