@@ -531,6 +531,7 @@ class BrowserFetcher:
         await self._focus_window(page)
         elapsed = 0.0
         content = ""
+        warned = False
         while True:
             await page.wait(self.wait)
             elapsed += self.wait
@@ -548,6 +549,18 @@ class BrowserFetcher:
                     return content
             elif not _looks_like_challenge(content):
                 return content
+            # Still not ready. If it looks like a Cloudflare challenge, tell the
+            # user ONCE: an interactive Turnstile ("Verify you are human") needs
+            # a real click we can't reliably automate, so they must complete it
+            # in the (foregrounded) browser window.
+            if not warned and _looks_like_challenge(content):
+                logger.info(
+                    "Cloudflare verification needed: if a 'Verify you are "
+                    "human' checkbox is shown in the browser window, click it "
+                    "to continue (waiting up to %.0fs)...",
+                    self.timeout,
+                )
+                warned = True
             if elapsed >= self.timeout:
                 logger.warning(
                     f"page not ready (selector={ready_selector!r}) after "

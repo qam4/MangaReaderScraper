@@ -114,7 +114,7 @@ class KakalotMangaParser(BaseMangaParser):
         positive ``ready_selector`` wait returns as soon as the real content
         actually renders, so a fast clear isn't penalised.
         """
-        return BrowserFetcher(timeout=120)
+        return BrowserFetcher(timeout=180)
 
     def all_chapter_ids(self) -> Iterable[str]:
         url = self._manga_page_url()
