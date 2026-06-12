@@ -47,6 +47,65 @@ class ChapterDownload:
     complete: bool = True
 
 
+@dataclass
+class DownloadSummary:
+    """End-of-run tally of a download, derived from the worker results.
+
+    Categories (from each ``ChapterDownload``'s ``complete`` + ``pages``):
+      * ``downloaded``       -- fetched fully this run (complete, has pages)
+      * ``already_present``  -- skipped because already on disk (complete, no
+        pages returned)
+      * ``incomplete``       -- fetched but missing some pages (saved with an
+        ``-incomplete`` suffix)
+      * ``failed``           -- couldn't fetch at all (no page urls / chapter
+        doesn't exist)
+    """
+
+    downloaded: List[str]
+    already_present: List[str]
+    incomplete: List[str]
+    failed: List[str]
+
+    @property
+    def requested(self) -> int:
+        return (
+            len(self.downloaded)
+            + len(self.already_present)
+            + len(self.incomplete)
+            + len(self.failed)
+        )
+
+    @property
+    def ok(self) -> bool:
+        """True when nothing is incomplete or failed."""
+        return not self.incomplete and not self.failed
+
+
+def summarize_downloads(downloads: Iterable["ChapterDownload"]) -> DownloadSummary:
+    """Tally worker results into a :class:`DownloadSummary`. Pure / unit-tested.
+
+    A ``pages is None`` result is either an already-on-disk skip (complete) or a
+    hard failure (not complete); a result WITH pages is a full download
+    (complete) or a missing-pages one (not complete). Each id list is sorted in
+    canonical chapter order for stable, readable output.
+    """
+    downloaded: List[str] = []
+    already_present: List[str] = []
+    incomplete: List[str] = []
+    failed: List[str] = []
+    for d in downloads:
+        if d.pages is None:
+            (already_present if d.complete else failed).append(d.chapter_id)
+        else:
+            (downloaded if d.complete else incomplete).append(d.chapter_id)
+    return DownloadSummary(
+        downloaded=sort_chapter_ids(downloaded),
+        already_present=sort_chapter_ids(already_present),
+        incomplete=sort_chapter_ids(incomplete),
+        failed=sort_chapter_ids(failed),
+    )
+
+
 def sanitize_filename(filename: str) -> str:
     """
     Convert a string to a safe filename
@@ -432,7 +491,29 @@ class MangaBuilder:
         for download in downloads:
             self._add_download_to_manga(download)
 
+        self._log_download_summary(downloads)
         return self.manga
+
+    def _log_download_summary(self, downloads: List["ChapterDownload"]) -> None:
+        """Print an end-of-run tally so the user sees, at a glance, how the
+        download went -- and is told explicitly about any incomplete/failed
+        chapters (which are easy to miss in the scrolled-past per-chapter logs).
+        """
+        s = summarize_downloads(downloads)
+        self.adapter.info(
+            f"Download summary: {s.requested} requested -> "
+            f"{len(s.downloaded)} downloaded, "
+            f"{len(s.already_present)} already present, "
+            f"{len(s.incomplete)} incomplete, {len(s.failed)} failed"
+        )
+        if s.incomplete:
+            self.adapter.warning(
+                f"Incomplete chapters (missing pages): {', '.join(s.incomplete)}"
+            )
+        if s.failed:
+            self.adapter.warning(
+                f"Failed chapters (could not fetch): {', '.join(s.failed)}"
+            )
 
     def _add_download_to_manga(self, download: "ChapterDownload") -> None:
         """Assemble one worker result into ``self.manga`` and write it to disk.

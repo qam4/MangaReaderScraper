@@ -752,6 +752,20 @@ lock-serialized session. Plan + status:
   - FOLLOW-UP: bound total download concurrency (today jobs x cpu_count threads
     via nested pools) to stay polite to CDNs.
 
+## UX additions
+- [x] **End-of-run download summary** — `summarize_downloads()` (pure, tested)
+  tallies the worker results into downloaded / already-present / incomplete /
+  failed counts; `MangaBuilder._log_download_summary` prints it at the end of a
+  run and warns with the specific chapter ids that are incomplete (missing
+  pages) or failed (couldn't fetch), so they aren't lost in the scrolled-past
+  per-chapter logs. Derived from the existing `ChapterDownload.complete`/`pages`
+  signal -- no new plumbing.
+- [ ] **`--chapters` honored with `--search`** — today the search path overwrites
+  `args["chapters"]` with the interactive prompt result, so a CLI `--chapters`
+  is silently ignored when combined with `--search`. Pass the CLI selection into
+  `manga_search` as the default (prompt only when none was given). Small, in
+  `__main__.cli` + `manga_search`. Unrelated to threading.
+
 ## Live-verified sources (user, on their laptop)
 - **mangabuddy** (default source) — search + chapter listing + page-image
   download all work end-to-end. CONFIRMED.

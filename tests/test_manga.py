@@ -4,7 +4,15 @@ from pathlib import Path
 import pytest
 
 from scraper.exceptions import ChapterAlreadyPresent, PageAlreadyPresent
-from scraper.manga import Chapter, ChapterDownload, Manga, MangaBuilder, Page
+from scraper.manga import (
+    Chapter,
+    ChapterDownload,
+    DownloadSummary,
+    Manga,
+    MangaBuilder,
+    Page,
+    summarize_downloads,
+)
 from tests.helpers import MockedSiteParser
 
 
@@ -429,6 +437,46 @@ def test_builder_unmatched_selector_skipped_not_indexed():
     builder = MangaBuilder(_GappyDecimalParser())
     manga = builder.get_manga_chapters(chapter_ids=["3"])
     assert manga.chapters_dict == {}
+
+
+# ----------------------------- download summary ----------------------------
+
+
+def test_summarize_downloads_categorizes_results():
+    downloads = [
+        ChapterDownload("2", 2, pages=[(1, b"x", "success")], complete=True),
+        ChapterDownload("1", 1, pages=None, complete=True),  # already on disk
+        ChapterDownload("3", 3, pages=[(1, b"x", "missing")], complete=False),
+        ChapterDownload("4", 4, pages=None, complete=False),  # couldn't fetch
+    ]
+    s = summarize_downloads(downloads)
+    assert s.downloaded == ["2"]
+    assert s.already_present == ["1"]
+    assert s.incomplete == ["3"]
+    assert s.failed == ["4"]
+    assert s.requested == 4
+    assert not s.ok  # has incomplete + failed
+
+
+def test_summarize_downloads_sorts_ids_in_chapter_order():
+    # ids are returned in canonical chapter order, not arrival order
+    downloads = [
+        ChapterDownload("10", 3, pages=[(1, b"x", "success")], complete=True),
+        ChapterDownload("2", 1, pages=[(1, b"x", "success")], complete=True),
+        ChapterDownload("9.5", 2, pages=[(1, b"x", "success")], complete=True),
+    ]
+    s = summarize_downloads(downloads)
+    assert s.downloaded == ["2", "9.5", "10"]
+
+
+def test_summarize_downloads_all_ok():
+    downloads = [
+        ChapterDownload("1", 1, pages=[(1, b"x", "success")], complete=True),
+        ChapterDownload("2", 2, pages=None, complete=True),
+    ]
+    s = summarize_downloads(downloads)
+    assert s.ok
+    assert isinstance(s, DownloadSummary)
 
 
 def teardown_function():
