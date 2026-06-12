@@ -10,13 +10,12 @@ import time
 import zipfile
 from itertools import repeat
 from logging import LoggerAdapter
-from multiprocessing.pool import Pool
+from multiprocessing.pool import ThreadPool
 from typing import List, Optional
 
 from scraper.manga import Manga
 from scraper.utils import (
     atomic_write_path,
-    configure_logging,
     get_adapter,
     get_console,
     resolve_jobs,
@@ -281,7 +280,10 @@ class Bundle:
         logger.info(f"Bundling {num_volumes} volumes...")
         # rich.progress.Progress sharing the logging Console (see
         # utils.get_console) keeps this bar pinned at the bottom while logs
-        # scroll above -- one coordinated rich Live region.
+        # scroll above -- one coordinated rich Live region. This works because
+        # the pool below is a ThreadPool: the workers log in THIS process, so
+        # rich's single-process Live can coordinate them (a process Pool's
+        # workers logged to a separate stderr and the bar couldn't pin).
         from rich.progress import (
             BarColumn,
             MofNCompleteColumn,
@@ -290,7 +292,14 @@ class Bundle:
             TimeElapsedColumn,
         )
 
-        with Pool(self.jobs, initializer=configure_logging) as pool:
+        # ThreadPool, not a process Pool: each volume's heavy work is an EXTERNAL
+        # kcc-c2e subprocess (see _convert_to_mobi), and subprocess.run releases
+        # the GIL while it waits -- so the conversions still run in true parallel
+        # as separate OS processes, while the supervising Python threads just
+        # block. Threads also inherit the parent's logging config (no
+        # initializer) and let the bar pin. The only GIL-bound step is the .cbz
+        # zip, which is light (manga images are already compressed).
+        with ThreadPool(self.jobs) as pool:
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),

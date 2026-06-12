@@ -67,22 +67,16 @@ Each item has a done-when so "done" is unambiguous.
     A6 fixed only the parent-side console sharing — necessary but insufficient.
   - REMAINING WORK → A7 below.
 
-- [ ] **A7 [STRUCT-lite, LOW-PRI] Actually pin the progress bar across workers**
-  - The bar can only be pinned if the parent controls ALL terminal writes during
-    the download. Options (pick when scheduled):
-    1. **Logging queue**: workers use a `QueueHandler` (logging only to a
-       multiprocessing Queue); the parent runs a `QueueListener` whose single
-       RichHandler renders through the Progress's Console. Correct + keeps logs
-       visible AND bar pinned, but real spawn-safe multiprocess plumbing.
-    2. **Quiet workers during download** (simplest, robust): workers log only
-       WARNING+ during the parallel phase, so the parent's bar is essentially the
-       only thing drawing. Lose per-volume INFO lines in the terminal (errors
-       still show). Best effort:payoff.
-    3. Accept it / revert to classic tqdm (degrades more gracefully under foreign
-       writes — repaints at the bottom each tick — but never perfectly pinned).
-  - DONE-WHEN: in a real terminal, a real multiprocess download keeps the bar at
-    the bottom. Live-only to validate (mocked suite can't see it).
-  - PRIORITY: low — cosmetic; the download works fine, the bar just scrolls.
+- [x] **A7 [STRUCT-lite] Actually pin the progress bar across workers** — DONE
+  via the threading migration (see "Threading migration" note below). The bar
+  could only be pinned if the parent controlled all terminal writes during the
+  download; under the old process Pool the workers logged to a separate stderr
+  the parent's rich Live couldn't coordinate. Switching the download pool (and
+  bundle's pool) from a process `Pool` to a `ThreadPool` means the workers log
+  in the SAME process, so the one shared rich Console/Live pins the bar while
+  logs scroll above. USER-CONFIRMED LIVE: "bar is pinned". This resolves A6's
+  leftover caveat too (A6 fixed only parent-side Console sharing; threads close
+  the cross-worker gap).
 
 ## Wave B — orchestration rebuild (STRUCT; B1+B2 are ONE surface — design together)
 
@@ -706,6 +700,36 @@ D (fold D3 into B if rebuilding). Start nibbling at Wave A.
 - Probe-assisted source authoring spec: all 19 tasks (Phases 1-3 + html image
   mode), committed + pushed + CI green.
 - A2 (stale default → mangabuddy) + A5 (total_pages count) — commit 864c363.
+
+## Threading migration (process Pool -> ThreadPool + shared browser session)
+Audit conclusion (with user): the process-per-chapter model mis-placed the
+browser and caused the spawn-class bugs. Download work is I/O-bound (GIL released
+on socket I/O), the heaviest CPU step (PDF/CBZ encode) is parent-side serial, and
+bundle's heavy step is an EXTERNAL kcc-c2e subprocess (GIL released during
+subprocess.run) -- so threads keep the real parallelism while gaining shared
+memory (one browser session, persistent profile safe), shared logging config (no
+spawn workaround), and a pinnable progress bar. A browser cannot cross a process
+boundary, so "browser usable in a worker" REQUIRES threads + one shared,
+lock-serialized session. Plan + status:
+  - [x] (a) download path Pool -> ThreadPool; dropped configure_logging
+    initializer + import. Bar pins (user-confirmed). Commit 95fbed2.
+  - [x] (a') bundle.py Pool -> ThreadPool (kcc-c2e parallelism survives as
+    subprocesses; bar pins; dropped initializer).
+  - [ ] (a'') remove the now-dead LOG_LEVEL_ENV worker-propagation write-path
+    (cli() still sets os.environ[LOG_LEVEL_ENV], read only by configure_logging;
+    no worker re-runs it now). Keep LOG_LEVEL_ENV as an external "set level via
+    env" read feature; remove the write + fix the spawn-worker comments; update
+    test_cli's env-set assertion (the logger-level assertion already covers it).
+  - [ ] (b) shared lock-serialized browser session: one ProactorEventLoop in a
+    daemon thread owns the browser; worker threads borrow via
+    run_coroutine_threadsafe. Collapses N browsers -> 1 reusable session and
+    removes the per-call asyncio.run() "I/O operation on closed pipe" shutdown
+    noise. LIVE-VALIDATE (nodriver-on-Proactor-in-daemon-thread).
+  - [ ] (c) opt-in persistent profile (C11(1)) on top -- trivially safe given a
+    single session (no SingletonLock collision). The interactive manual-solve
+    half is already done (BrowserFetcher challenge-detect + indefinite wait).
+  - FOLLOW-UP: bound total download concurrency (today jobs x cpu_count threads
+    via nested pools) to stay polite to CDNs.
 
 ## Live-verified sources (user, on their laptop)
 - **mangabuddy** (default source) — search + chapter listing + page-image
