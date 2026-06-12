@@ -735,7 +735,10 @@ lock-serialized session. Plan + status:
     browser-launching methods are real-browser-only (# pragma: no cover).
     LIVE-VALIDATE on a real download: nodriver-on-Proactor-in-daemon-thread, the
     1-browser-reuse across search/chapters/reader, capture_xhr tab lifecycle, and
-    that the shutdown noise is actually gone.
+    that the shutdown noise is actually gone. UPDATE: validated LOCALLY against
+    about:blank (tools probe, since deleted) -- the runtime launches and the
+    `I/O operation on closed pipe` shutdown noise is GONE (vs the per-call
+    asyncio.run pattern, which still shows it). Real-site reuse still to confirm.
   - [x] (b-fix1) live: the persistent browser kept raising itself over the CLI
     (old code called bring_to_front on every page load). Split `_focus_window`
     into `_enable_focus_emulation` (passive -- clears CF without stealing OS
@@ -765,7 +768,12 @@ lock-serialized session. Plan + status:
     INTERACTIVE challenge brings it on-screen + maximizes (`_show_browser_window`)
     + `_bring_to_front` so the user can solve it. Best-effort. LIVE-VALIDATE: that
     Chrome honors the off-screen position (some builds clamp window pos) and that
-    the menu keeps focus.
+    the menu keeps focus. UPDATE: CONFIRMED LOCALLY (about:blank probe) -- Chrome
+    honors the off-screen launch (window bounds came back left=-32000,top=-32000);
+    minimize() was confirmed a no-op (reports MINIMIZED state but bounds reset to
+    0,0,1280,720 -- the "resized not minimized" the user saw); maximize() works
+    for restore. Menu-focus feel + kakalot scroll-while-offscreen still to confirm
+    on a real run (off-screen keeps the page VISIBLE, so lazy-load should be ok).
   - [ ] (b-headless) **headless vs headful from the PROBE verdict** (user idea):
     the probe already classifies requests / nodriver-headless / nodriver-headful
     / nodriver-manual, but parsers all use a headful `BrowserFetcher()`. Thread
