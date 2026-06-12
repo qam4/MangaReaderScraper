@@ -106,62 +106,17 @@ def test_all_chapter_ids_empty_page_raises():
 # -------------------------------- page_urls -------------------------------
 
 
-ONE_PX_PNG = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
-    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
-)
-
-
-def test_page_urls_captures_browser_rendered_images():
-    # The CDN only serves the live browser, so page_urls drives the browser to
-    # capture image bytes (via fetch_rendered_images) and caches them; it
-    # returns the urls in document order.
+def test_page_urls_not_supported_fails_fast():
+    # Page-image download is blocked for this family: the reader is behind an
+    # interactive Cloudflare Turnstile and a browser-only image CDN. page_urls
+    # must fail fast (no browser, no hang) with a message that explains why.
     parser = MangaKakaMangaParser("dragon-ball")
     parser._chapter_urls = {"520.5": "https://x/manga/dragon-ball/chapter-520-5"}
-    fake = mock.Mock()
-    fake.fetch_rendered_images.return_value = [
-        ("https://cdn/0.webp", ONE_PX_PNG),
-        ("https://cdn/1.webp", ONE_PX_PNG),
-    ]
-    with mock.patch.object(parser, "_page_fetcher", return_value=fake):
-        pages = parser.page_urls("520.5")
-    assert pages == [(1, "https://cdn/0.webp"), (2, "https://cdn/1.webp")]
-    # the reader url + container selector + image attr were passed through
-    fake.fetch_rendered_images.assert_called_once_with(
-        "https://x/manga/dragon-ball/chapter-520-5",
-        parser.reader_selector,
-        "src",
-    )
-    # bytes are cached for page_data to serve
-    assert parser._image_bytes["https://cdn/0.webp"] == ONE_PX_PNG
-
-
-def test_page_urls_no_images_raises():
-    parser = MangaKakaMangaParser("dragon-ball")
-    parser._chapter_urls = {"520.5": "https://x/c"}
-    fake = mock.Mock()
-    fake.fetch_rendered_images.return_value = []
-    with mock.patch.object(parser, "_page_fetcher", return_value=fake):
-        with pytest.raises(ChapterDoesntExist):
-            parser.page_urls("520.5")
-
-
-def test_page_data_serves_cached_browser_bytes():
-    # page_data does no network -- it serves the bytes captured in page_urls.
-    parser = MangaKakaMangaParser("dragon-ball")
-    parser._image_bytes = {"https://cdn/0.webp": ONE_PX_PNG}
-    num, data, status = parser.page_data((1, "https://cdn/0.webp"))
-    assert (num, status) == (1, "success")
-    assert data == ONE_PX_PNG
-
-
-def test_page_data_missing_returns_placeholder():
-    parser = MangaKakaMangaParser("dragon-ball")
-    parser._image_bytes = {}
-    num, data, status = parser.page_data((3, "https://cdn/2.webp"))
-    assert (num, status) == (3, "missing")
-    assert data  # a placeholder image was generated
+    with pytest.raises(ChapterDoesntExist) as excinfo:
+        parser.page_urls("520.5")
+    message = str(excinfo.value).lower()
+    assert "turnstile" in message
+    assert "not" in message and "supported" in message
 
 
 # --------------------------------- search ---------------------------------

@@ -12,18 +12,28 @@ written, so the chapter/search stages were rewritten against fresh captures
     e.g. ``chapter-700-6``) and whose text is the displayed number
     ("Chapter 700.6"). Like the mangabuddy parser we map number -> href and
     reuse that href as the reader url (the number lives in the text, not the
-    href, so it can't be reconstructed from the path).
-  * Reader page: ``div.container-chapter-reader`` holding the page ``<img>``
-    (``src`` for nato/kaka, ``data-src`` for nelo) -- unchanged.
+    href, so it can't be reconstructed from the path). The list is
+    INFINITE-SCROLL (no "show all"), so ``all_chapter_ids`` drives the browser
+    to scroll the list to the bottom (BrowserFetcher.get_after_scroll) before
+    parsing -- otherwise only the latest ~50 chapters appear.
   * Search: ``div.story_item`` cards (title in ``h3.story_name`` / ``img alt``,
     slug from the card link).
+
+LIMITATION -- page-image download is NOT supported for this family. The reader
+page is gated by an INTERACTIVE Cloudflare Turnstile (a human must click the
+"Verify you are human" checkbox on every chapter) AND the image CDN
+(2xstorage.com / waitst.com, hosts rotate) serves bytes only to that live
+browser session. Every extraction path was defeated -- see ``page_urls`` for
+the full list. So search + chapter listing work; ``page_urls`` fails fast with
+a clear message rather than hanging. (Reader markup, for reference if the site
+ever loosens up: ``div.container-chapter-reader`` holding the page ``<img>``,
+``src`` for nato/kaka, ``data-src`` for nelo.)
 
 Each site subclass just sets a few class attributes (base_url, manga_path,
 page_img_attr). LIVE-VERIFICATION CAVEAT: parsing is confirmed against the
 captured fixtures; the live fetch is exercised by mocked tests, not a live run.
 """
 
-import io
 import logging
 import re
 from pathlib import Path
@@ -31,7 +41,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from PIL import Image
 
 from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import BrowserFetcher
@@ -90,17 +99,12 @@ class KakalotMangaParser(BaseMangaParser):
     base_url: str = ""
     manga_path: str = "{base_url}/manga/{slug}"
     page_img_attr: str = "src"
-    # CSS selector for the reader container holding the page <img>s.
-    reader_selector: str = "div.container-chapter-reader"
     # CSS selector for the (infinite-scroll) chapter-list container.
     chapter_list_selector: str = "div.chapter-list"
 
     def __init__(self, manga_url: str, base_url: Optional[str] = None) -> None:
         super().__init__(manga_url, base_url or self.base_url)
         self._chapter_urls: Dict[str, str] = {}
-        # page-image bytes captured by the browser in page_urls, keyed by url;
-        # page_data just serves these (the CDN only answers the live browser).
-        self._image_bytes: Dict[str, bytes] = {}
 
     def _manga_page_url(self) -> str:
         return self.manga_path.format(base_url=self.base_url, slug=self.manga_url)
@@ -151,52 +155,28 @@ class KakalotMangaParser(BaseMangaParser):
         return url
 
     def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
-        """Capture every page image for a chapter using the live browser.
+        """Page-image download is NOT supported for this family.
 
-        The image CDN serves bytes ONLY to the browser session that rendered the
-        reader page (every HTTP client 403s, even with cookies + Referer; the
-        images are cross-origin so an in-page fetch is CORS-blocked). So we read
-        the bytes of the browser's own image responses via CDP and cache them;
-        ``page_data`` then just serves the cache. Slow, but it is the only thing
-        that works for this family.
+        The reader page sits behind an interactive Cloudflare Turnstile (a human
+        must click "Verify you are human" on EVERY chapter) AND the image CDN
+        serves bytes only to that live browser session. Every extraction path we
+        tried is defeated: curl_cffi / cloudscraper (403 even with cookies +
+        Referer), direct navigation (blocked: top-level nav vs image
+        sub-resource), Network.getResponseBody (-32000, body not retained),
+        canvas (cross-origin taint), and Fetch.getResponseBody (nodriver routes
+        the call to a different CDP session -> "Fetch domain not enabled", and
+        pausing responses hangs the page). Search and chapter listing work; bulk
+        page-image download does not.
+
+        We fail fast here (rather than open and hang a browser) so the rest of
+        the run stays responsive. See the README limitation note.
         """
-        reader_url = self.chapter_url(chapter)
-        logger.info(f"Rendering {reader_url} to capture page images...")
-        pairs = self._page_fetcher().fetch_rendered_images(
-            reader_url, self.reader_selector, self.page_img_attr
+        raise ChapterDoesntExist(
+            f"{self.manga_url} chapter {chapter}: page-image download is not "
+            "supported for this source -- its reader is behind an interactive "
+            "Cloudflare Turnstile and a browser-only image CDN (see README). "
+            "Search and chapter listing work; downloading page images does not."
         )
-        self._image_bytes = {url: data for url, data in pairs}
-        if not self._image_bytes:
-            raise ChapterDoesntExist(
-                f"No page images for {self.manga_url} chapter {chapter}"
-            )
-        return [(i, url) for i, (url, _data) in enumerate(pairs, start=1)]
-
-    def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
-        """Serve a page image from the bytes the browser captured in page_urls.
-
-        No network here -- the CDN only answers the live browser, so the bytes
-        were already harvested. Validates the image and falls back to a
-        placeholder if it is missing/corrupt (same contract as the base).
-        """
-        page_num, img_url = page_url
-        content = self._image_bytes.get(img_url)
-        if not content:
-            return (
-                int(page_num),
-                self.create_page(f"Page {page_num} missing\n{img_url}"),
-                "missing",
-            )
-        try:
-            Image.open(io.BytesIO(content)).verify()
-        except Exception as err:
-            logger.error(f"page {page_num} at {img_url} corrupted: {err}")
-            return (
-                int(page_num),
-                self.create_page(f"Page {page_num} corrupted.\n{err}\n{img_url}"),
-                "corrupted",
-            )
-        return (int(page_num), content, "success")
 
 
 class KakalotSearchParser(BaseSearchParser):

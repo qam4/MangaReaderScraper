@@ -31,7 +31,7 @@ from __future__ import annotations
 import json as _json
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Callable, Dict, Optional, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -282,46 +282,6 @@ def _in_page_fetch_js(url: str) -> str:
     )
 
 
-# JS that forces lazy-loaded images to actually fetch: copy each img's
-# ``data-src`` into ``src`` and scroll to the bottom so any scroll-triggered
-# loaders fire. Returns the count touched. Pure (no interpolation).
-_FORCE_LAZY_IMAGES_JS = (
-    "(() => {"
-    "  let n = 0;"
-    "  document.querySelectorAll('img[data-src]').forEach(i => {"
-    "    const ds = i.getAttribute('data-src');"
-    "    if (ds && (!i.src || i.src.startsWith('data:'))) { i.src = ds; n++; }"
-    "  });"
-    "  window.scrollTo(0, document.body.scrollHeight);"
-    "  return n;"
-    "})()"
-)
-
-
-def _collect_img_urls_js(selector: str, attr: str) -> str:
-    """JS returning a JSON string of the ordered, absolute image urls inside
-    ``selector``, preferring ``attr`` then ``data-src`` then ``src`` (skipping
-    ``data:`` placeholders).
-
-    Returns ``JSON.stringify(...)`` rather than the raw array: nodriver's
-    ``evaluate`` hands back clean values for primitives (incl. strings) but
-    RemoteObject dicts for arrays/objects, so we round-trip through JSON and
-    ``json.loads`` on the Python side. Pure -- unit-testable.
-    """
-    return (
-        "(() => {"
-        f"  const c = document.querySelector({_json.dumps(selector)});"
-        "  if (!c) return '[]';"
-        "  const urls = Array.from(c.querySelectorAll('img')).map(e =>"
-        f"    e.getAttribute({_json.dumps(attr)}) || e.getAttribute('data-src')"
-        "     || e.getAttribute('src') || '')"
-        "    .filter(u => u && !u.startsWith('data:'))"
-        "    .map(u => new URL(u, location.href).href);"
-        "  return JSON.stringify(urls);"
-        "})()"
-    )
-
-
 def _count_elements_js(selector: str) -> str:
     """JS returning the number of elements matching ``selector``. Pure."""
     return f"document.querySelectorAll({_json.dumps(selector)}).length"
@@ -425,22 +385,6 @@ class BrowserFetcher:
         import asyncio
 
         return asyncio.run(self._capture_xhr(url, predicate, trigger_js, with_cookies))
-
-    def fetch_rendered_images(self, page_url: str, selector: str, attr: str = "src"):
-        """Return ``[(url, bytes)]`` for every image inside ``selector`` on a
-        browser-rendered page, in document order.
-
-        For CDNs that serve images ONLY to the live browser session (the
-        kakalot family: every HTTP client 403s even with cookies + Referer, and
-        the images are cross-origin so an in-page ``fetch`` is CORS-blocked).
-        We let the browser load the page (clearing the challenge), force the
-        lazy ``data-src`` images to fetch, then read the bytes of the browser's
-        OWN image responses via CDP ``Network.getResponseBody`` -- which isn't
-        subject to CORS. A url whose body can't be read comes back as ``b""``.
-        """
-        import asyncio
-
-        return asyncio.run(self._fetch_rendered_images(page_url, selector, attr))
 
     def get_after_scroll(
         self,
@@ -648,97 +592,6 @@ class BrowserFetcher:
 
             return body, cookies
         finally:
-            browser.stop()
-
-    async def _fetch_rendered_images(
-        self, page_url: str, selector: str, attr: str
-    ):  # pragma: no cover - drives a real browser
-        import base64
-
-        from nodriver import cdp
-
-        browser = await self._start()
-        try:
-            tab = await browser.get("about:blank")
-            # url -> captured image bytes. We intercept at the Fetch RESPONSE
-            # stage and read each image's body off the PAUSED response (which,
-            # unlike Network.getResponseBody, is reliable and not CORS-bound).
-            captured: Dict[str, bytes] = {}
-
-            async def on_paused(evt: cdp.fetch.RequestPaused):
-                rid = evt.request_id
-                url = evt.request.url
-                try:
-                    is_img = evt.resource_type == cdp.network.ResourceType.IMAGE
-                    if is_img and evt.response_status_code:
-                        body, b64 = await tab.send(
-                            cdp.fetch.get_response_body(request_id=rid)
-                        )
-                        captured[url] = (
-                            base64.b64decode(body) if b64 else body.encode("latin-1")
-                        )
-                except Exception as err:
-                    logger.debug(f"fetch body capture failed for {url}: {err}")
-                finally:
-                    # MUST continue every paused request (incl. the document and
-                    # non-images) or the page hangs.
-                    try:
-                        await tab.send(cdp.fetch.continue_request(request_id=rid))
-                    except Exception:
-                        pass
-
-            tab.add_handler(cdp.fetch.RequestPaused, on_paused)
-            # Intercept ONLY image responses. Pausing everything (url "*")
-            # stalls Cloudflare's own challenge handshake -> it escalates to an
-            # interactive Turnstile and loops forever. Scoping to images leaves
-            # the challenge traffic untouched so it clears normally.
-            await tab.send(
-                cdp.fetch.enable(
-                    patterns=[
-                        cdp.fetch.RequestPattern(
-                            url_pattern="*",
-                            resource_type=cdp.network.ResourceType.IMAGE,
-                            request_stage=cdp.fetch.RequestStage.RESPONSE,
-                        )
-                    ]
-                )
-            )
-
-            await tab.get(page_url)
-            await self._wait_for_content(tab, page_url, ready_selector=selector)
-
-            ordered: List[str] = []
-            # scroll to pull in every lazy image, and wait until each image url
-            # we can see has had its body captured (or we hit the timeout).
-            waited = 0.0
-            while waited < self.timeout:
-                try:
-                    await tab.evaluate(_FORCE_LAZY_IMAGES_JS)
-                    await tab.evaluate(_scroll_to_bottom_js(None))
-                except Exception as err:
-                    logger.debug(f"scroll/lazy failed (continuing): {err}")
-                await tab.wait(self.wait)
-                waited += self.wait
-                raw = await tab.evaluate(_collect_img_urls_js(selector, attr))
-                try:
-                    ordered = _json.loads(raw) if raw else []
-                except (TypeError, ValueError):
-                    ordered = []
-                if ordered and all(u in captured for u in ordered):
-                    break
-
-            results: List[Tuple[str, bytes]] = []
-            for url in ordered:
-                data = captured.get(url, b"")
-                if not data:
-                    logger.warning(f"no image bytes captured for {url}")
-                results.append((url, data))
-            return results
-        finally:
-            try:
-                await tab.send(cdp.fetch.disable())
-            except Exception:
-                pass
             browser.stop()
 
     async def _get_after_scroll(

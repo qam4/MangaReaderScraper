@@ -420,8 +420,53 @@ Each item has a done-when so "done" is unambiguous.
       C10/C11 fetcher-escalation case. (manganato chapters/search work.)
   - NET C2 STATUS: mangapark/mangareader/mangafast RETIRED; mangago + the
     kakalot trio (manganelo/manganato/mangakaka) FIXED against fresh captures;
-    all strict-optional exemptions removed. Only loose end: manganato reader CF
-    wall (live-verify / C10-C11).
+    all strict-optional exemptions removed. Loose end RESOLVED — see C2-kakalot-images
+    below: the kakalot reader is an unsurmountable interactive-Turnstile +
+    browser-only-CDN wall; download is now documented-unsupported (fail fast).
+
+- [x] **C2-kakalot-images [PROBE] kakalot-family page-image download — VERDICT: not automatable**
+  - WHY: the C2 loose end ("does curl_cffi/cloudscraper clear the natomanga/
+    nelomanga reader wall?"). Live-tested extensively on the kakalot family
+    (manganelo=nelomanga.net, manganato=natomanga.com, mangakaka=mangakakalot.gg).
+  - FINDING (evidence-backed, user live runs + probe): the reader page is gated
+    by an **INTERACTIVE Cloudflare Turnstile** (manual "Verify you are human"
+    click required PER CHAPTER — only clears when the browser window is
+    foregrounded) AND the **image CDN (2xstorage.com / waitst.com, hosts rotate)
+    serves bytes only to the live browser session**. Every image-extraction path
+    was defeated: curl_cffi / cloudscraper (403 even with cookies + Referer),
+    direct navigation (blocked), `Network.getResponseBody` (-32000, body not
+    retained), canvas (CORS taint), `Fetch.getResponseBody` (nodriver multi-
+    session routing bug → "Fetch domain not enabled"; pausing responses hangs the
+    page and forced a manual kill).
+  - DECISION (agreed with user): unsurmountable wall — leave it in a good
+    non-hanging state, keep the learnings. `kakalot.py::page_urls` now fails fast
+    with a clear message (no browser, no hang); the hanging Fetch-interception
+    capture (`fetch_rendered_images` + JS helpers) was removed from fetchers.py;
+    README documents the limitation; tests assert the fail-fast behaviour. Search
+    + chapter listing still work (787 Naruto chapters parsed via scroll-to-load).
+  - Gates green, 379 pass.
+
+- [x] **Browser toolbox primitives (kept from the kakalot experiment)** — reusable
+  `BrowserFetcher` capabilities proven useful even though kakalot download is a
+  dead end. All live in `scraper/fetchers.py`:
+    * **Focus emulation** (`_focus_window`) — CDP `setFocusEmulationEnabled` +
+      `setWebLifecycleState('active')` + `bring_to_front`, so a *passive* CF
+      challenge clears even when the OS window is backgrounded (a background
+      process can't reliably steal real focus). DONE.
+    * **Challenge-detect + manual-wait** (`_wait_for_content` + `_looks_like_challenge`)
+      — detects a CF/Turnstile interstitial, prints a one-time "click the Verify
+      you are human checkbox" prompt, and waits INDEFINITELY while a challenge is
+      on-screen (human-in-the-loop solve); only the non-challenge stall is
+      timeout-bounded so a real load problem can't hang forever. DONE.
+    * **Scroll-to-load** (`get_after_scroll`, `_count_elements_js`,
+      `_scroll_to_bottom_js`) — drives infinite-scroll lists to the bottom until
+      the element count stops growing before parsing. DONE (used by kakalot
+      `all_chapter_ids`).
+  - FUTURE PRIMITIVE (recorded, NOT built — no unused code): a **"click to reveal
+    / show all chapters"** helper for sites that hide the full chapter list behind
+    a button. Build it only when a real source needs it.
+  - RELATED: the human-in-the-loop challenge wait overlaps C11 (manual captcha-
+    solve + persistent session); the persistent-profile half of C11 is still open.
 
 - [x] **C3 [QUICK, after C1] De-dup `page_data` download loop** (L1) — THE main
   answer to "MangaFire has a lot of ad-hoc code"

@@ -26,6 +26,18 @@ Availability varies over time (see the note above). `mangafire` is the most
 actively maintained parser. Adding a new source is documented in
 [docs/adding-a-source.md](docs/adding-a-source.md).
 
+### Known source limitations
+
+- **kakalot family (`manganelo`, `manganato`, `mangakaka`)** — search and
+  chapter listing work, but **page-image download does not**. The reader page
+  is gated behind an *interactive* Cloudflare Turnstile (a human must click the
+  "Verify you are human" checkbox on every chapter) and the image CDN serves
+  bytes only to that live browser session, so there is no automatable download
+  path. These sources are still useful for searching and browsing chapter
+  lists; a download attempt fails fast with an explanatory message rather than
+  hanging on a browser. Their chapter list is infinite-scroll, which the
+  browser fetcher handles by scrolling to the bottom before parsing.
+
 ## Install
 
 This fork is developed with [uv](https://docs.astral.sh/uv/) and pinned to
