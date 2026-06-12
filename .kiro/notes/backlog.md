@@ -281,9 +281,9 @@ Each item has a done-when so "done" is unambiguous.
   run. Possible follow-up: a combined cross-stage recommendation.txt (today each
   stage writes its own).
 
-- [~] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
-  (uniform fetcher-ladder reachability)** — IMAGE + PAGE STAGES **DONE**;
-  API stage is the remaining slice. Delivered: `candidate_image_urls` (page-image
+- [x] **C10 [STRUCT] Probe: recommend the CHEAPEST working fetcher per stage
+  (uniform fetcher-ladder reachability)** — DONE (image + page + API stages).
+  Delivered: `candidate_image_urls` (page-image
   cluster, src OR data-src, skips data: placeholders + nav imgs) +
   `check_image_ladder` (requests → curl_cffi → cloudscraper, carrying page
   Referer + the live session cookies read via CDP) reporting the cheapest tier
@@ -301,15 +301,16 @@ Each item has a done-when so "done" is unambiguous.
   decision logic via `cheapest_working` is pure + unit-tested (3 new tests:
   cheap-tier-wins, browser-fallback, all-walled→None). `cheapest_working` + url
   extraction stay pure/fixture-tested; per-tier GET injected (mocked in tests).
-  REMAINING (optional, smaller now): rewire the API check
-  (`_check_api_backends`, today requests+curl_cffi) to also try cloudscraper so
-  all three stages report via one uniform mechanism. The original verbose
-  analysis below is retained for context.
-  - REMAINING (optional extension): rewire the
-  page check (`compare_fetches`, today requests-vs-browser) and API check
-  (`_check_api_backends`, today requests+curl_cffi) onto the same `FETCHER_LADDER`
-  primitives so cloudscraper is tried everywhere and all three stages report via
-  one uniform mechanism. — the bigger gap behind it. The probe is good at finding
+  API STAGE (this session): `_check_api_backends` now also tries cloudscraper --
+  but only when requests AND curl_cffi both failed (no extra request to an
+  endpoint a cheaper client already reads, Req 7.1); `backend_verdict` gained a
+  `cloudscraper_ok_json` tier (requests < curl_cffi < cloudscraper < blocked) and
+  the "cloudscraper" verdict flows through `_pick_default_fetcher` /
+  `_verdict_to_fetcher` unchanged (both already pass through any non-blocked
+  verdict). +1 pure test for `backend_verdict` ranking. So cloudscraper is now
+  exercised by ALL stages (page + image + API) and every stage reports the
+  cheapest working fetcher. The original verbose analysis below is retained for
+  historical context.
   WHERE the content is (URLs/endpoints/selectors); it is weak at finding the
   LEAST-INVOLVED / FASTEST way to GET it. That second question is the high-value
   one: a parser that opens

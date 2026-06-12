@@ -18,6 +18,7 @@ from scraper.probe import (
     _element_selector,
     analyze_html,
     api_dump_filename,
+    backend_verdict,
     build_field_map,
     candidate_image_urls,
     cheapest_working,
@@ -1420,6 +1421,16 @@ def test_cheapest_working_returns_cheapest_tier():
         == "cloudscraper"
     )
     assert cheapest_working({"requests": False}) is None
+
+
+def test_backend_verdict_ranks_cheapest_first():
+    # cheapest-first: requests < curl_cffi < cloudscraper < blocked
+    assert backend_verdict(True, True, True) == "requests"
+    assert backend_verdict(False, True, True) == "curl_cffi"
+    assert backend_verdict(False, False, True) == "cloudscraper"
+    assert backend_verdict(False, False, False) == "blocked"
+    # cloudscraper defaults off so the old two-arg calls still mean "blocked"
+    assert backend_verdict(False, False) == "blocked"
 
 
 def test_candidate_image_urls_from_reader_fixtures():

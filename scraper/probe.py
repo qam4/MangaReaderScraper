@@ -1690,12 +1690,18 @@ def summarize_backend_probe(label: str, status, error, body) -> str:
     return f"  {label}: status={status} len={blen} json={is_json} -> {verdict}"
 
 
-def backend_verdict(requests_ok_json: bool, curl_ok_json: bool) -> str:
-    """Rank one endpoint's two backend probes into a single verdict token.
+def backend_verdict(
+    requests_ok_json: bool,
+    curl_ok_json: bool,
+    cloudscraper_ok_json: bool = False,
+) -> str:
+    """Rank one endpoint's backend probes into a single verdict token.
 
-    ``"requests"`` when plain requests returned JSON (cheapest), else
+    Cheapest-first: ``"requests"`` when plain requests returned JSON, else
     ``"curl_cffi"`` when curl_cffi (Chrome impersonation) returned JSON, else
-    ``"blocked"`` when neither did. The ranking requests < curl_cffi mirrors
+    ``"cloudscraper"`` when cloudscraper (CF JS interstitial bypass) returned
+    JSON, else ``"blocked"`` when none did. The ranking
+    requests < curl_cffi < cloudscraper mirrors the FETCHER_LADDER /
     :func:`_pick_default_fetcher`; the resulting verdict is exactly what the
     in-memory ``api_backends`` map fed to :func:`synthesize_recommendation`
     expects (Req 1.2, 1.3). Pure -- no IO, derived from the SAME probe attempts
@@ -1705,6 +1711,8 @@ def backend_verdict(requests_ok_json: bool, curl_ok_json: bool) -> str:
         return "requests"
     if curl_ok_json:
         return "curl_cffi"
+    if cloudscraper_ok_json:
+        return "cloudscraper"
     return "blocked"
 
 
@@ -1767,7 +1775,6 @@ def _check_api_backends(
         lines.append(
             summarize_backend_probe("curl_cffi  ", curl_status, curl_error, curl_body)
         )
-        lines.append("")
         # Reuse the SAME outcomes (status + body) to rank the verdict -- "got
         # JSON" matches summarize_backend_probe's "JSON OK": status 200, no
         # error, and a body that parses as JSON.
@@ -1777,11 +1784,33 @@ def _check_api_backends(
         curl_ok_json = (
             curl_error is None and curl_status == 200 and looks_like_json(curl_body)
         )
-        verdict_map[url] = backend_verdict(req_ok_json, curl_ok_json)
+        # cloudscraper (CF JS-interstitial bypass) -- only when the two cheaper
+        # tiers already failed, so we never add a third request to an endpoint a
+        # cheaper client already reads (stay polite, Req 7.1).
+        cs_ok_json = False
+        if not (req_ok_json or curl_ok_json):
+            cs_status: Optional[int] = None
+            cs_body: Optional[str] = None
+            cs_error: Optional[str] = None
+            try:
+                import cloudscraper  # type: ignore
+
+                cs_resp = cloudscraper.create_scraper().get(url, timeout=20)
+                cs_status, cs_body = cs_resp.status_code, cs_resp.text
+            except Exception as err:
+                cs_error = str(err)
+            lines.append(
+                summarize_backend_probe("cloudscraper", cs_status, cs_error, cs_body)
+            )
+            cs_ok_json = (
+                cs_error is None and cs_status == 200 and looks_like_json(cs_body)
+            )
+        lines.append("")
+        verdict_map[url] = backend_verdict(req_ok_json, curl_ok_json, cs_ok_json)
     lines.append(
-        "If curl_cffi shows 'JSON OK', the parser can use CurlCffiFetcher (no "
-        "browser) for these endpoints. If both are blocked but the browser "
-        "captured a body, the parser needs BrowserFetcher."
+        "If requests/curl_cffi/cloudscraper shows 'JSON OK', the parser can use "
+        "that (cheapest-first) fetcher with no browser. If all are blocked but "
+        "the browser captured a body, the parser needs BrowserFetcher."
     )
     return "\n".join(lines) + "\n", verdict_map
 
