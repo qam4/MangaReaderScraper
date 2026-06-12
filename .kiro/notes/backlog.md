@@ -770,6 +770,17 @@ lock-serialized session. Plan + status:
     via nested pools) to stay polite to CDNs.
 
 ## UX additions
+- [x] **Stable chapter file index (de-dup fix)** — a chapter's saved filename
+  used the position in the CURRENT selection (`enumerate(chapter_ids)`), so
+  "download 700.6 alone" -> `..._chapter_1_700.6` but "download all" ->
+  `..._chapter_<realpos>_700.6`; the already-on-disk check rebuilt the path from
+  the run's index and never matched, so the same chapter re-downloaded under two
+  names. Now the index is the chapter's STABLE 1-based position in the full
+  series list (`MangaBuilder._chapter_order`, set in get_manga_chapters), so the
+  name is identical regardless of selection and de-dup holds. Also stabilizes
+  `Chapter.number` + bundle ordering. Regression test added. (Pre-existing bug.)
+  NOTE: existing downloads with the old selection-based name get re-downloaded
+  ONCE into the stable name, then are idempotent.
 - [x] **End-of-run download summary** — `summarize_downloads()` (pure, tested)
   tallies the worker results into downloaded / already-present / incomplete /
   failed counts; `MangaBuilder._log_download_summary` prints it at the end of a

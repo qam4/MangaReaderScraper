@@ -301,6 +301,10 @@ class MangaBuilder:
         self.writer = get_writer(filetype)
         self.jobs: int = resolve_jobs(jobs)
         self.manga: Optional[Manga] = None
+        # {chapter_id: 1-based position in the FULL series list}. Set in
+        # get_manga_chapters and used as each chapter's STABLE file index, so a
+        # chapter's saved name doesn't depend on what else was selected this run.
+        self._chapter_order: Dict[str, int] = {}
 
     def _get_chapter_data_wrapped(self, arg):
         return self._download_chapter(*arg)  # Unpacks (index, chapter_id, on_disk)
@@ -387,10 +391,18 @@ class MangaBuilder:
         """
         assert self.manga is not None
         chapter_ids = list(chapter_ids)
-        # Parent-side (has settings/disk access): which chapters are already saved?
+        # Parent-side (has settings/disk access): which chapters are already
+        # saved? Each chapter's index is its STABLE position in the full series
+        # list (self._chapter_order), NOT its position in this run's selection --
+        # so "download 700.6 alone" and "download all" produce the SAME filename
+        # for 700.6, and the already-on-disk check matches across runs. Fall back
+        # to the selection position only if a chapter somehow isn't in the map.
         worker_args = [
             (index, chapter_id, self.manga.chapter_exists(chapter_id, index))
-            for index, chapter_id in enumerate(chapter_ids, start=1)
+            for chapter_id, index in (
+                (cid, self._chapter_order.get(cid, pos))
+                for pos, cid in enumerate(chapter_ids, start=1)
+            )
         ]
         self.adapter.info("Downloading chapters data...")
         self.adapter.debug(f"self.manga.name={self.manga.name}")
@@ -473,6 +485,15 @@ class MangaBuilder:
 
         if not all_chapter_ids:
             raise Exception("Empty chapters list")
+
+        # Record each chapter's STABLE position in the full series list, used as
+        # its file index (see _get_chapters_data) so a chapter's saved name is
+        # independent of what else was selected this run -- which is what makes
+        # the already-on-disk de-dup work across different --chapters selections.
+        self._chapter_order = {
+            chapter_id: index
+            for index, chapter_id in enumerate(all_chapter_ids, start=1)
+        }
 
         # Selection is chapter-number based (see scraper.selection): chapter_ids are
         # selector tokens like ["9-12", "28.22"], matched against the chapter

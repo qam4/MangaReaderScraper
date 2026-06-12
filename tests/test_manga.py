@@ -439,6 +439,20 @@ def test_builder_unmatched_selector_skipped_not_indexed():
     assert manga.chapters_dict == {}
 
 
+def test_chapter_file_index_is_stable_across_selections():
+    # A chapter's saved name must NOT depend on what else was selected this run.
+    # "12" is the 4th chapter in the full list (9, 9.22, 10, 12), so it is index
+    # 4 whether downloaded alone or among all -- otherwise the already-on-disk
+    # de-dup rebuilds a different path and re-downloads it under a new name.
+    solo = MangaBuilder(_GappyDecimalParser()).get_manga_chapters(chapter_ids=["12"])
+    every = MangaBuilder(_GappyDecimalParser()).get_manga_chapters(chapter_ids=None)
+    assert "_chapter_4_12." in solo.chapters_dict["12"].file_path.name
+    assert (
+        solo.chapters_dict["12"].file_path.name
+        == every.chapters_dict["12"].file_path.name
+    )
+
+
 # ----------------------------- download summary ----------------------------
 
 
