@@ -364,6 +364,7 @@ _CHALLENGE_MARKERS = (
     "checking your browser before",  # legacy CF "I'm Under Attack" mode
     "cf-browser-verification",  # CF challenge container id
     "challenge-platform",  # CF challenge script path
+    "verify you are human",  # Turnstile interactive checkbox label
     "verifying you are human",  # Turnstile / managed challenge
     "enable javascript and cookies to continue",
 )
@@ -529,12 +530,11 @@ class BrowserFetcher:
         # backgrounded browser window never passes it. Raise it to the
         # foreground (best effort) so the verification can complete.
         await self._focus_window(page)
-        elapsed = 0.0
+        elapsed = 0.0  # time the expected content has failed to appear (bounded)
         content = ""
-        warned = False
+        prompted = False
         while True:
             await page.wait(self.wait)
-            elapsed += self.wait
             content = await page.get_content()
             if ready_selector:
                 try:
@@ -549,25 +549,30 @@ class BrowserFetcher:
                     return content
             elif not _looks_like_challenge(content):
                 return content
-            # Still not ready. If it looks like a Cloudflare challenge, tell the
-            # user ONCE: an interactive Turnstile ("Verify you are human") needs
-            # a real click we can't reliably automate, so they must complete it
-            # in the (foregrounded) browser window.
-            if not warned and _looks_like_challenge(content):
-                logger.info(
-                    "Cloudflare verification needed: if a 'Verify you are "
-                    "human' checkbox is shown in the browser window, click it "
-                    "to continue (waiting up to %.0fs)...",
-                    self.timeout,
-                )
-                warned = True
+            # A Cloudflare challenge is on screen. An interactive Turnstile
+            # ("Verify you are human") needs a real click we can't reliably
+            # automate, so the user must complete it in the (foregrounded)
+            # browser window. We do NOT count this toward the timeout -- a human
+            # is working on it -- and just wait.
+            if _looks_like_challenge(content):
+                if not prompted:
+                    logger.info(
+                        "Cloudflare verification needed: click the 'Verify you "
+                        "are human' checkbox in the browser window to continue. "
+                        "Waiting for you..."
+                    )
+                    prompted = True
+                continue
+            # Not a challenge, but the expected content still hasn't appeared --
+            # a load/selector problem, so bound it with the timeout.
+            elapsed += self.wait
             if elapsed >= self.timeout:
                 logger.warning(
                     f"page not ready (selector={ready_selector!r}) after "
                     f"{elapsed:.0f}s, returning anyway: {url}"
                 )
                 return content
-            logger.debug(f"challenge not cleared after {elapsed:.0f}s, waiting: {url}")
+            logger.debug(f"content not ready after {elapsed:.0f}s, waiting: {url}")
 
     async def _fetch_json_in_page(self, establish_url: str, fetch_url: str) -> str:
         import asyncio
