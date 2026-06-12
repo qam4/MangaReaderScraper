@@ -281,6 +281,40 @@ _BROWSER_KWARGS = dict(
 )
 
 
+async def _set_window_minimized(
+    tab, minimized: bool
+) -> None:  # pragma: no cover - real browser
+    """Best-effort minimize/restore of the browser window owning ``tab`` (CDP).
+
+    Keeps the headful window OFF the user's terminal during a normal run, so it
+    doesn't cover the CLI menu/prompts. A minimized + focus-emulated page still
+    clears PASSIVE Cloudflare challenges (focus emulation makes the page report
+    focused/active regardless of window state); an INTERACTIVE challenge restores
+    the window so the user can see and solve it (see ``_wait_for_content``).
+
+    Best-effort: any CDP failure is logged and ignored (the window just stays
+    where it is). LIVE-VALIDATE: a minimized window may throttle rendering, which
+    could affect scroll-driven lazy-load (``get_after_scroll``); if so, restore
+    around that op.
+    """
+    from nodriver import cdp
+
+    try:
+        window_id, _bounds = await tab.send(cdp.browser.get_window_for_target())
+        state = (
+            cdp.browser.WindowState.MINIMIZED
+            if minimized
+            else cdp.browser.WindowState.NORMAL
+        )
+        await tab.send(
+            cdp.browser.set_window_bounds(
+                window_id, cdp.browser.Bounds(window_state=state)
+            )
+        )
+    except Exception as err:
+        logger.debug(f"set_window_bounds failed (continuing): {err}")
+
+
 def _in_page_fetch_js(url: str) -> str:
     """Build the JS that fetches ``url`` from inside the page (credentialed,
     XHR header) and returns the response text. Pure -- unit-testable."""
@@ -465,7 +499,15 @@ class _BrowserRuntime:
         import nodriver as nd
 
         profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
-        return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
+        browser = await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
+        # Minimize immediately so the headful window doesn't sit over the CLI.
+        # Passive challenges still clear (focus emulation); an interactive one
+        # restores the window. Best-effort.
+        try:
+            await _set_window_minimized(browser.main_tab, True)
+        except Exception as err:
+            logger.debug(f"initial minimize failed (continuing): {err}")
+        return browser
 
     def shutdown(self) -> None:
         """Stop the shared browser and the loop thread (registered at exit).
@@ -650,6 +692,8 @@ class BrowserFetcher:
             # raise the window to the front (once) so they can see/solve it.
             if _looks_like_challenge(content):
                 if not prompted:
+                    # restore the (minimized) window so the user can see + solve
+                    await _set_window_minimized(page, False)
                     await self._bring_to_front(page)
                     logger.info(
                         "Cloudflare verification needed: click the 'Verify you "

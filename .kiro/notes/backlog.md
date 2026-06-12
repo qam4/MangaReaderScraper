@@ -757,12 +757,26 @@ lock-serialized session. Plan + status:
     session blocked the main thread on `future.result()` with no timeout, which
     SIGINT can't interrupt on Windows. `submit` now polls `result(timeout=0.5)`
     in a loop and cancels the future on KeyboardInterrupt, so Ctrl-C breaks out.
-  - [ ] (b-followup) the browser window still grabs OS foreground when it first
-    launches (headful Chrome + --start-maximized), covering the CLI menu until
-    the user alt-tabs. Passive focus-emulation no longer re-raises it, and the
-    challenge path only raises it on a real manual solve. Options if it's still
-    annoying: drop --start-maximized, or minimize the window after launch via CDP
-    Browser.setWindowBounds and only restore it for a manual solve. Live-tune.
+  - [x] (b-followup) browser-vs-CLI focus: minimize the headful window
+    immediately after launch (CDP `Browser.setWindowBounds` minimized, via
+    `_set_window_minimized`), so it doesn't sit over the CLI menu/prompts. Passive
+    CF challenges still clear (focus emulation); an INTERACTIVE challenge restores
+    the window (`_set_window_minimized(page, False)` + `_bring_to_front`) so the
+    user can see/solve it. Best-effort (CDP failures ignored). LIVE-VALIDATE: a
+    minimized window may throttle rendering -> could affect scroll-driven
+    lazy-load (`get_after_scroll`, kakalot); if so, restore around that op. Common
+    paths (mangafire capture_xhr, mangabuddy curl_cffi, the menu) don't depend on
+    visibility, so they benefit cleanly.
+  - [ ] (b-headless) **headless vs headful from the PROBE verdict** (user idea):
+    the probe already classifies requests / nodriver-headless / nodriver-headful
+    / nodriver-manual, but parsers all use a headful `BrowserFetcher()`. Thread
+    the probe's per-source verdict into the parser/source so a source that only
+    needs a headless browser runs headless (no window at all -> no focus issue,
+    faster), reserving headful for the manual-solve sources. Needs: a per-source
+    browser-mode setting (declared/derived from a probe) + BrowserFetcher honoring
+    a headless flag (+ the shared session keyed by mode). Larger; design with the
+    registry. Minimize-by-default already removes most of the UX pain, so this is
+    an optimization, not urgent.
   - [ ] (c) opt-in persistent profile (C11(1)) on top -- trivially safe given a
     single session (no SingletonLock collision). The interactive manual-solve
     half is already done (BrowserFetcher challenge-detect + indefinite wait).
