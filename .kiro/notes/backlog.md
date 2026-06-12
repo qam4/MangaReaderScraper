@@ -746,6 +746,23 @@ lock-serialized session. Plan + status:
     chapters finished -- `pool.imap` yields in submission order, so a slow first
     chapter (browser/lock) held the bar back. Switched to `imap_unordered` (order
     doesn't matter; parent assembles by id) + conftest patches imap_unordered.
+  - [x] (b-fix3) live: `_looks_like_challenge` falsely flagged a normal MangaFire
+    page (it carries Cloudflare's always-on challenge-platform/Turnstile SCRIPT),
+    so `_wait_for_content` hung forever prompting "verify you are human" and kept
+    the browser in front. Now matches ONLY real interstitial TEXT (just a moment
+    / verify you are human / ...), never the always-on CF script -- regardless of
+    page size. (The earlier size-gated attempt wasn't enough; MangaFire pages can
+    be under the size hint.)
+  - [x] (b-fix4) live: a stuck browser op couldn't be Ctrl-C'd -- the shared
+    session blocked the main thread on `future.result()` with no timeout, which
+    SIGINT can't interrupt on Windows. `submit` now polls `result(timeout=0.5)`
+    in a loop and cancels the future on KeyboardInterrupt, so Ctrl-C breaks out.
+  - [ ] (b-followup) the browser window still grabs OS foreground when it first
+    launches (headful Chrome + --start-maximized), covering the CLI menu until
+    the user alt-tabs. Passive focus-emulation no longer re-raises it, and the
+    challenge path only raises it on a real manual solve. Options if it's still
+    annoying: drop --start-maximized, or minimize the window after launch via CDP
+    Browser.setWindowBounds and only restore it for a manual solve. Live-tune.
   - [ ] (c) opt-in persistent profile (C11(1)) on top -- trivially safe given a
     single session (no SingletonLock collision). The interactive manual-solve
     half is already done (BrowserFetcher challenge-detect + indefinite wait).

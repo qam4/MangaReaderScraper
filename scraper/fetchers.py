@@ -327,17 +327,21 @@ def _make_marker_predicate(markers) -> Callable[[str], bool]:
     return predicate
 
 
-# Substrings (matched case-insensitively) that mark a Cloudflare / JS
-# verification interstitial rather than real page content. Kept deliberately
-# CF-specific so a real page that merely contains a common phrase isn't mistaken
-# for a challenge.
+# Phrases that only appear on an actual Cloudflare/JS interstitial WALL -- text a
+# human would actually SEE and have to act on. We deliberately do NOT treat
+# Cloudflare's always-on infrastructure (the ``challenge-platform`` / Turnstile
+# SCRIPT, injected into EVERY page of a CF-fronted site, including fully-rendered
+# ones) as a wall: matching it made ``_wait_for_content`` hang forever prompting
+# for a manual solve that wasn't actually needed (e.g. a normal MangaFire series
+# page). A real wall always carries one of these interstitial phrases.
 _CHALLENGE_MARKERS = (
     "just a moment",  # CF interstitial <title>
     "checking your browser before",  # legacy CF "I'm Under Attack" mode
+    "checking if the site connection is secure",
     "cf-browser-verification",  # CF challenge container id
-    "challenge-platform",  # CF challenge script path
     "verify you are human",  # Turnstile interactive checkbox label
     "verifying you are human",  # Turnstile / managed challenge
+    "attention required",
     "enable javascript and cookies to continue",
 )
 
@@ -346,8 +350,13 @@ def _looks_like_challenge(html: str) -> bool:
     """True if ``html`` looks like a Cloudflare/JS verification interstitial
     rather than rendered page content (empty html counts as not-yet-loaded).
 
-    Pure / unit-testable -- the polling in ``BrowserFetcher._get`` uses this to
-    decide whether to keep waiting for the challenge to clear.
+    Matches only STRONG interstitial phrases (see ``_CHALLENGE_MARKERS``), NOT
+    Cloudflare's always-on ``challenge-platform``/Turnstile script -- that script
+    is present on fully-rendered pages too, and treating it as a challenge made
+    the manual-solve wait hang forever on pages where no verification was shown.
+
+    Pure / unit-testable -- the polling in ``BrowserFetcher._wait_for_content``
+    uses this to decide whether to keep waiting for a challenge to clear.
     """
     if not html or not html.strip():
         return True
@@ -423,12 +432,25 @@ class _BrowserRuntime:
         internal timeouts where appropriate.
         """
         import asyncio
+        import concurrent.futures
 
         self._ensure_loop()
         assert self._loop is not None  # _ensure_loop guarantees it
         with self._lock:
             future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-            return future.result()
+            try:
+                # Poll with a short timeout rather than block forever, so a
+                # Ctrl-C on the main thread can break a long/stuck browser op
+                # (e.g. an unsolved challenge): future.result() with no timeout
+                # is NOT interruptible by SIGINT on Windows.
+                while True:
+                    try:
+                        return future.result(timeout=0.5)
+                    except concurrent.futures.TimeoutError:
+                        continue
+            except KeyboardInterrupt:
+                future.cancel()  # best effort; a running coro may not stop
+                raise
 
     async def ensure_browser(self):  # pragma: no cover - launches a real browser
         """Start the shared browser once (on the loop thread) and reuse it."""

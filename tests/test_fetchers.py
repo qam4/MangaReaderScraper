@@ -80,7 +80,6 @@ def test_make_marker_predicate_matches_any_marker():
         "<title>Just a moment...</title>",
         "<html><body>Checking your browser before accessing</body></html>",
         "<div id='cf-browser-verification'></div>",
-        "<script src='/cdn-cgi/challenge-platform/h/b/orchestrate'></script>",
         "<h1>Verifying you are human</h1>",
         "Please enable JavaScript and cookies to continue",
         "",
@@ -101,6 +100,24 @@ def test_looks_like_challenge_true_for_interstitials(html):
 )
 def test_looks_like_challenge_false_for_real_content(html):
     assert not _looks_like_challenge(html)
+
+
+def test_looks_like_challenge_ignores_cf_always_on_script():
+    # The regression: Cloudflare's always-on challenge-platform / Turnstile
+    # SCRIPT is injected into EVERY page of a CF-fronted site, including
+    # fully-rendered ones. It must NOT be treated as a challenge -- doing so made
+    # the manual-solve wait hang forever ("verify you are human") on a normal
+    # page. Only real interstitial TEXT counts, regardless of page size.
+    small = "<script src='/cdn-cgi/challenge-platform/h/b/orchestrate'></script>"
+    assert not _looks_like_challenge(small)
+
+    big_content = "<div class='chapter'>Chapter</div>" * 4000
+    large = (
+        "<html><head>" + small + "<script "
+        "src='https://challenges.cloudflare.com/turnstile/v0/api.js'></script>"
+        "</head><body>" + big_content + "</body></html>"
+    )
+    assert not _looks_like_challenge(large)
 
 
 def test_count_elements_js_embeds_selector():
