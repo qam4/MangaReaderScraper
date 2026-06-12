@@ -284,7 +284,7 @@ _BROWSER_KWARGS = dict(
 async def _set_window_minimized(
     tab, minimized: bool
 ) -> None:  # pragma: no cover - real browser
-    """Best-effort minimize/restore of the browser window owning ``tab`` (CDP).
+    """Best-effort minimize/restore of the browser window owning ``tab``.
 
     Keeps the headful window OFF the user's terminal during a normal run, so it
     doesn't cover the CLI menu/prompts. A minimized + focus-emulated page still
@@ -292,27 +292,19 @@ async def _set_window_minimized(
     focused/active regardless of window state); an INTERACTIVE challenge restores
     the window so the user can see and solve it (see ``_wait_for_content``).
 
-    Best-effort: any CDP failure is logged and ignored (the window just stays
-    where it is). LIVE-VALIDATE: a minimized window may throttle rendering, which
-    could affect scroll-driven lazy-load (``get_after_scroll``); if so, restore
-    around that op.
+    Uses nodriver's high-level ``Tab.minimize`` / ``Tab.maximize`` (they bind the
+    tab's own target id; a raw ``Browser.getWindowForTarget`` with no target id
+    silently fails). Best-effort: any failure is logged and ignored. LIVE-VALIDATE:
+    a minimized window may throttle rendering, which could affect scroll-driven
+    lazy-load (``get_after_scroll``); if so, restore around that op.
     """
-    from nodriver import cdp
-
     try:
-        window_id, _bounds = await tab.send(cdp.browser.get_window_for_target())
-        state = (
-            cdp.browser.WindowState.MINIMIZED
-            if minimized
-            else cdp.browser.WindowState.NORMAL
-        )
-        await tab.send(
-            cdp.browser.set_window_bounds(
-                window_id, cdp.browser.Bounds(window_state=state)
-            )
-        )
+        if minimized:
+            await tab.minimize()
+        else:
+            await tab.maximize()
     except Exception as err:
-        logger.debug(f"set_window_bounds failed (continuing): {err}")
+        logger.debug(f"window state change failed (continuing): {err}")
 
 
 def _in_page_fetch_js(url: str) -> str:
