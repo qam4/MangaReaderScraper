@@ -338,12 +338,13 @@ def test_builder_author_failure_is_swallowed(monkeypatch):
 
 @pytest.mark.real_pool
 def test_builder_populates_pages_under_real_pool():
-    # B2-redesign: with the REAL multiprocessing Pool (mocked_pool_imap opted
-    # out via the real_pool marker), the parent's Manga must still have its pages
-    # populated. The worker runs in a separate (spawned) process on a private
-    # copy of the builder, so this only passes because the parent assembles the
-    # Manga from the worker RETURN values -- the exact bug B2 fixed. Pre-redesign
-    # this would show 0 pages (data only on disk).
+    # B2-redesign: with the REAL pool (mocked_pool_imap opted out via the
+    # real_pool marker), the parent's Manga must still have its pages populated.
+    # The worker returns a ChapterDownload and the parent assembles the Manga
+    # from those RETURN values -- the exact contract B2 fixed (pre-redesign this
+    # showed 0 pages, data only on disk). The contract holds under the thread
+    # pool too; keeping a real-pool test guards it against regressions if the
+    # worker is ever moved back behind a process boundary.
     builder = MangaBuilder(MockedSiteParser())
     manga = builder.get_manga_chapters(chapter_ids=["1", "2"])
 

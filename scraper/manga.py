@@ -4,7 +4,7 @@ Manga building blocks & factories
 
 import logging
 from dataclasses import dataclass, field
-from multiprocessing.pool import Pool, ThreadPool
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Dict, Generator, Iterable, List, Optional
 
@@ -19,7 +19,6 @@ from scraper.new_types import PageData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
 from scraper.utils import (
-    configure_logging,
     get_adapter,
     get_console,
     resolve_jobs,
@@ -253,14 +252,16 @@ class MangaBuilder:
         """
         Download every page of one chapter and RETURN the result. Hermetic: it
         does NOT mutate ``self.manga``, does NOT write to disk, and does NOT read
-        ``settings()`` -- so it behaves identically in a spawned worker process,
-        where module-level config/patches don't propagate.
+        ``settings()`` -- the parent owns those.
 
-        This is the multiprocess worker. Under a spawn ``Pool`` the child runs on
-        a private copy of the builder, so any mutation here would be discarded
-        when the process ends -- only the return value crosses the boundary. The
-        parent decides ``already_on_disk`` (it owns config/disk access) and owns
-        Manga assembly + writing in ``_add_download_to_manga``.
+        This is the worker run by the ``ThreadPool`` in ``_get_chapters_data``.
+        Threads share the parent's address space (and its logging config -- no
+        per-worker re-init needed), so this could mutate ``self.manga`` directly,
+        but it deliberately stays hermetic and returns its result instead: the
+        parent owns Manga assembly + writing in ``_add_download_to_manga``. That
+        keeps the worker free of shared-state races AND means a CPU-bound step
+        (e.g. descramble) could later be handed to a process pool unchanged.
+        The parent decides ``already_on_disk`` (it owns config/disk access).
 
         ``pages`` is ``None`` for a chapter that was skipped -- already complete on
         disk, no page urls, or the chapter doesn't exist.
@@ -313,12 +314,17 @@ class MangaBuilder:
         self, chapter_ids: Iterable[str] = []
     ) -> List["ChapterDownload"]:
         """
-        Download a list of chapters, each in its own worker process, and return
+        Download a list of chapters, each in its own worker thread, and return
         the per-chapter :class:`ChapterDownload` results (in input order).
 
-        The parent decides up front which chapters are already on disk (the only
-        config/disk-dependent step) and passes that in, so the workers stay
-        hermetic. The parent assembles the Manga from these returns.
+        The work is I/O-bound (network), so a ``ThreadPool`` gives real
+        concurrency (the GIL is released during socket I/O) without the cost and
+        spawn semantics of processes: threads share the parent's logging config
+        (no per-worker re-init) and its memory, and -- because the workers log in
+        the same process -- the rich progress bar below can stay pinned. The
+        parent decides up front which chapters are already on disk (the only
+        config/disk-dependent step) and passes that in; the parent assembles the
+        Manga from the returns.
         """
         assert self.manga is not None
         chapter_ids = list(chapter_ids)
@@ -343,7 +349,7 @@ class MangaBuilder:
         )
 
         results: List[ChapterDownload] = []
-        with Pool(self.jobs, initializer=configure_logging) as pool:
+        with ThreadPool(self.jobs) as pool:
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
@@ -410,10 +416,9 @@ class MangaBuilder:
             chapter_ids = select_chapters(chapter_ids, all_chapter_ids)
         self.adapter.debug(f"chapter_ids={chapter_ids}")
 
-        # Download the chapters in parallel worker processes. Each worker returns
-        # a ChapterDownload (it does NOT touch self.manga or disk -- child-side
-        # mutations don't survive a spawn Pool). The PARENT owns assembly +
-        # writing below, so the in-memory Manga is correct after a real run.
+        # Download the chapters in parallel worker threads. Each worker returns
+        # a ChapterDownload; the PARENT owns assembly + writing below (the worker
+        # stays hermetic), so the in-memory Manga is correct after the run.
         downloads = self._get_chapters_data(chapter_ids)
 
         for download in downloads:

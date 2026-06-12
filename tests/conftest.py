@@ -37,16 +37,15 @@ def _no_real_browser():
 @pytest.fixture(autouse=True)
 def mocked_pool_imap(request):
     """
-    Run ``MangaBuilder``'s process Pool single-threaded by patching
-    ``Pool.imap`` -> ``map``, so the (deterministic) builder tests don't spawn
-    real worker processes.
+    Run ``MangaBuilder``'s download ``ThreadPool`` synchronously by patching
+    ``ThreadPool.imap`` -> ``map``, so the (deterministic) builder tests run the
+    workers inline in a single thread.
 
-    This is a TEST CONVENIENCE, not production behaviour: under a real spawn
-    Pool the worker runs on a private copy of the builder, so historically this
-    mask hid the multiprocess data-flow bug (B2). A test that wants to exercise
-    the REAL pool opts out with ``@pytest.mark.real_pool`` -- then the parent
-    must assemble the Manga from the worker RETURN values, which is exactly what
-    the B2 redesign guarantees.
+    This is a TEST CONVENIENCE, not production behaviour: it removes any thread
+    scheduling nondeterminism from the builder tests. A test that wants to
+    exercise the REAL pool opts out with ``@pytest.mark.real_pool`` -- then the
+    parent must assemble the Manga from the worker RETURN values, which is what
+    the B2 redesign guarantees (and which the thread pool preserves).
     """
     if request.node.get_closest_marker("real_pool"):
         yield None
@@ -55,7 +54,7 @@ def mocked_pool_imap(request):
     def pool_imap(self, func, iterable):
         return map(func, iterable)
 
-    with mock.patch("scraper.manga.Pool.imap", pool_imap) as mocked_func:
+    with mock.patch("scraper.manga.ThreadPool.imap", pool_imap) as mocked_func:
         yield mocked_func
 
 
