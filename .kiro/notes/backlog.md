@@ -736,6 +736,16 @@ lock-serialized session. Plan + status:
     LIVE-VALIDATE on a real download: nodriver-on-Proactor-in-daemon-thread, the
     1-browser-reuse across search/chapters/reader, capture_xhr tab lifecycle, and
     that the shutdown noise is actually gone.
+  - [x] (b-fix1) live: the persistent browser kept raising itself over the CLI
+    (old code called bring_to_front on every page load). Split `_focus_window`
+    into `_enable_focus_emulation` (passive -- clears CF without stealing OS
+    foreground, used always) and `_bring_to_front` (only when an interactive
+    challenge needs solving). Normal runs no longer cover the menu. (Chrome may
+    still grab focus ONCE at launch; alt-tab to the terminal.)
+  - [x] (b-fix2) live: the "Downloading chapters 0/3" bar didn't advance though
+    chapters finished -- `pool.imap` yields in submission order, so a slow first
+    chapter (browser/lock) held the bar back. Switched to `imap_unordered` (order
+    doesn't matter; parent assembles by id) + conftest patches imap_unordered.
   - [ ] (c) opt-in persistent profile (C11(1)) on top -- trivially safe given a
     single session (no SingletonLock collision). The interactive manual-solve
     half is already done (BrowserFetcher challenge-detect + indefinite wait).

@@ -39,8 +39,8 @@ def _no_real_browser():
 def mocked_pool_imap(request):
     """
     Run ``MangaBuilder``'s download ``ThreadPool`` synchronously by patching
-    ``ThreadPool.imap`` -> ``map``, so the (deterministic) builder tests run the
-    workers inline in a single thread.
+    ``ThreadPool.imap_unordered`` -> ``map``, so the (deterministic) builder
+    tests run the workers inline in a single thread.
 
     This is a TEST CONVENIENCE, not production behaviour: it removes any thread
     scheduling nondeterminism from the builder tests. A test that wants to
@@ -55,7 +55,9 @@ def mocked_pool_imap(request):
     def pool_imap(self, func, iterable):
         return map(func, iterable)
 
-    with mock.patch("scraper.manga.ThreadPool.imap", pool_imap) as mocked_func:
+    with mock.patch(
+        "scraper.manga.ThreadPool.imap_unordered", pool_imap
+    ) as mocked_func:
         yield mocked_func
 
 

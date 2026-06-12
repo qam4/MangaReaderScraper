@@ -359,7 +359,15 @@ class MangaBuilder:
                 transient=False,
             ) as progress:
                 task = progress.add_task("Downloading chapters", total=len(worker_args))
-                for result in pool.imap(self._get_chapter_data_wrapped, worker_args):
+                # imap_UNORDERED so the bar advances as each chapter actually
+                # finishes, not in submission order: a slow first chapter (e.g.
+                # waiting on the shared browser / a manual Cloudflare solve) would
+                # otherwise hold back the bar while later chapters already
+                # completed. Order doesn't matter -- each ChapterDownload is
+                # self-describing and the parent assembles by chapter id.
+                for result in pool.imap_unordered(
+                    self._get_chapter_data_wrapped, worker_args
+                ):
                     results.append(result)
                     progress.advance(task)
         return results

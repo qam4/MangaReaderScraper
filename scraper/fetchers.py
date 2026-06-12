@@ -544,17 +544,17 @@ class BrowserFetcher:
 
     # -- async implementations --------------------------------------------
 
-    async def _focus_window(self, page) -> None:  # pragma: no cover - real browser
-        """Make the page report as focused/active so Cloudflare's
-        visibility-gated challenge completes even when the OS window is in the
-        background.
+    async def _enable_focus_emulation(
+        self, page
+    ) -> None:  # pragma: no cover - real browser
+        """Make the page report as focused/active WITHOUT stealing OS foreground.
 
-        The robust lever is CDP ``Emulation.setFocusEmulationEnabled`` -- it
-        simulates a focused + active page, so ``document.hasFocus()`` is true and
-        the challenge proceeds without us fighting Windows for real window
-        foreground (a background process can't reliably steal focus anyway). We
-        also pin the page lifecycle to 'active' and bring the tab to front as
-        belt-and-suspenders. All best-effort.
+        CDP ``setFocusEmulationEnabled`` + an 'active' lifecycle state make
+        ``document.hasFocus()`` true so Cloudflare's PASSIVE (visibility-gated)
+        challenge clears even while the window sits in the background. We do NOT
+        raise the window over the user's terminal here -- that's reserved for an
+        actual interactive solve (see ``_bring_to_front``), so a normal run
+        doesn't cover the CLI menu/prompt. All best-effort.
         """
         from nodriver import cdp
 
@@ -566,6 +566,11 @@ class BrowserFetcher:
             await page.send(cdp.page.set_web_lifecycle_state(state="active"))
         except Exception as err:
             logger.debug(f"setWebLifecycleState failed (continuing): {err}")
+
+    async def _bring_to_front(self, page) -> None:  # pragma: no cover - real browser
+        """Raise the browser window to the foreground. Called ONLY when the user
+        must see and solve an interactive challenge -- otherwise we leave the
+        window where it is so it doesn't cover the CLI during a normal run."""
         try:
             await page.bring_to_front()
         except Exception as err:
@@ -593,10 +598,10 @@ class BrowserFetcher:
         On timeout we return the last content (best effort) with a warning
         rather than hanging forever.
         """
-        # Cloudflare's challenge only clears for a VISIBLE/focused page, so a
-        # backgrounded browser window never passes it. Raise it to the
-        # foreground (best effort) so the verification can complete.
-        await self._focus_window(page)
+        # Make the page report focused (passive) so Cloudflare's visibility-gated
+        # challenge can clear WITHOUT raising the window over the user's terminal.
+        # We only bring it to the foreground if an interactive solve is needed.
+        await self._enable_focus_emulation(page)
         elapsed = 0.0  # time the expected content has failed to appear (bounded)
         content = ""
         prompted = False
@@ -618,11 +623,12 @@ class BrowserFetcher:
                 return content
             # A Cloudflare challenge is on screen. An interactive Turnstile
             # ("Verify you are human") needs a real click we can't reliably
-            # automate, so the user must complete it in the (foregrounded)
-            # browser window. We do NOT count this toward the timeout -- a human
-            # is working on it -- and just wait.
+            # automate, so the user must complete it in the browser window. We do
+            # NOT count this toward the timeout -- a human is working on it -- and
+            # raise the window to the front (once) so they can see/solve it.
             if _looks_like_challenge(content):
                 if not prompted:
+                    await self._bring_to_front(page)
                     logger.info(
                         "Cloudflare verification needed: click the 'Verify you "
                         "are human' checkbox in the browser window to continue. "
@@ -689,7 +695,7 @@ class BrowserFetcher:
             await tab.send(cdp.network.enable())
 
             await tab.get(url)
-            await self._focus_window(tab)
+            await self._enable_focus_emulation(tab)
             if trigger_js:
                 await tab.wait(3)
                 await tab.evaluate(trigger_js)
