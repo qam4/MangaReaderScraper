@@ -1,6 +1,5 @@
 import argparse
 import logging
-import os
 import sys
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -12,7 +11,7 @@ from scraper.menu import SearchMenu
 from scraper.parsers.types import SiteParserClass
 from scraper.registry import available_sources, get_source
 from scraper.uploaders.types import Uploader
-from scraper.utils import LOG_LEVEL_ENV, configure_logging, menu_input, settings
+from scraper.utils import configure_logging, menu_input, settings
 
 CONFIG = settings()["config"]
 
@@ -119,11 +118,9 @@ def cli(arguments: List[str]) -> dict:
     parser = get_parser()
     args = vars(parser.parse_args(arguments))
     logger.debug(f"args={args}")
-    # Apply the chosen log level once, and propagate it to spawned worker
-    # processes (which don't inherit logging config) via the env var that
-    # configure_logging reads as its pool initializer.
+    # Apply the chosen log level once. Workers share this process now
+    # (ThreadPool), so they inherit the config -- no env propagation needed.
     log_level = args.get("log_level") or "INFO"
-    os.environ[LOG_LEVEL_ENV] = log_level
     configure_logging(log_level)
     manga_parser = get_manga_parser(args["source"])
     title = None

@@ -214,16 +214,15 @@ def test_get_invalid_manga_parser():
 
 
 @mock.patch("scraper.__main__.download_manga", mock.Mock(return_value=1))
-def test_log_level_arg_sets_level_and_env(monkeypatch):
+def test_log_level_arg_sets_level(monkeypatch):
     import logging
-    import os
 
     from scraper.utils import LOG_LEVEL_ENV
 
+    # --log-level applies the chosen level in-process. Workers share this process
+    # (ThreadPool), so they inherit it -- no env propagation to assert anymore.
     monkeypatch.delenv(LOG_LEVEL_ENV, raising=False)
     cli(["--manga", "dragonball", "--log-level", "DEBUG"])
-    # the chosen level is applied and propagated to workers via the env var
-    assert os.environ[LOG_LEVEL_ENV] == "DEBUG"
     assert logging.getLogger().level == logging.DEBUG
 
 

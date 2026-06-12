@@ -17,10 +17,12 @@ from urllib3.util.retry import Retry
 
 from scraper.exceptions import CannotExtractChapter
 
-# Env var carrying the chosen log level into spawned worker processes, which do
-# NOT inherit the parent's logging config (esp. on Windows spawn). The CLI sets
-# it once; each pool worker reads it back via ``configure_logging`` as its pool
-# ``initializer``. Keeps logging configured in ONE place instead of three.
+# Optional env var to set the log level (read by ``configure_logging`` when no
+# explicit level is passed, e.g. the import-time call). Lets a user run with
+# ``MANGASCRAPER_LOG_LEVEL=DEBUG`` without the ``--log-level`` flag. Keeps logging
+# configured in ONE place. (Historically also carried the level into spawned
+# worker processes; the download/bundle pools are ThreadPools now, so workers
+# share the parent's config and no propagation is needed.)
 LOG_LEVEL_ENV = "MANGASCRAPER_LOG_LEVEL"
 DEFAULT_LOG_LEVEL = "INFO"
 
@@ -77,10 +79,9 @@ def configure_logging(level: Optional[str] = None) -> None:
 
     Single source of truth for log setup (replaces the three duplicated
     ``logging.basicConfig`` calls). ``level`` defaults to the
-    ``MANGASCRAPER_LOG_LEVEL`` env var, then ``INFO`` -- so worker processes that
-    don't inherit the parent's config can be used as a pool ``initializer`` with
-    no args and still pick up the level the CLI chose. ``force=True`` makes it
-    idempotent (safe to call again from the CLI after argparse).
+    ``MANGASCRAPER_LOG_LEVEL`` env var, then ``INFO`` -- so a user can pick the
+    level via the env var without the ``--log-level`` flag. ``force=True`` makes
+    it idempotent (safe to call again from the CLI after argparse).
 
     The handler renders through the shared ``get_console()`` so it shares one
     Live region with the download progress bar (keeps the bar pinned).

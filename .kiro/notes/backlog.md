@@ -715,11 +715,11 @@ lock-serialized session. Plan + status:
     initializer + import. Bar pins (user-confirmed). Commit 95fbed2.
   - [x] (a') bundle.py Pool -> ThreadPool (kcc-c2e parallelism survives as
     subprocesses; bar pins; dropped initializer).
-  - [ ] (a'') remove the now-dead LOG_LEVEL_ENV worker-propagation write-path
-    (cli() still sets os.environ[LOG_LEVEL_ENV], read only by configure_logging;
-    no worker re-runs it now). Keep LOG_LEVEL_ENV as an external "set level via
-    env" read feature; remove the write + fix the spawn-worker comments; update
-    test_cli's env-set assertion (the logger-level assertion already covers it).
+  - [x] (a'') removed the dead LOG_LEVEL_ENV worker-propagation write-path
+    (cli() no longer sets os.environ[LOG_LEVEL_ENV]; dropped the now-unused
+    os + LOG_LEVEL_ENV imports). Kept LOG_LEVEL_ENV as an external "set level via
+    env" read feature in configure_logging; fixed the spawn-worker comments;
+    test_cli now asserts the logger level only.
   - [ ] (b) shared lock-serialized browser session: one ProactorEventLoop in a
     daemon thread owns the browser; worker threads borrow via
     run_coroutine_threadsafe. Collapses N browsers -> 1 reusable session and
