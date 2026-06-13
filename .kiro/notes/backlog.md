@@ -695,6 +695,38 @@ Two distinct root causes found:
     unit-tested; real-concurrency feel is live-to-confirm but the mechanism is
     proven.
 
+- [ ] **G1 [DECISION, LOW-PRI] KCC delivery: submodule vs git-dep vs self-built**
+  - FINDING: the `kcc` git submodule points at UPSTREAM `ciromattia/kcc` pinned
+    to v10.2.0 and is CLEAN (no local patches) -- the original reason for it
+    (local threading fixes) is gone now that upstream's `--tempdir` flag makes
+    parallel bundling safe. So the submodule is now just a delivery mechanism.
+  - CONSTRAINT: can't simply `pip install KindleComicConverter` -- PyPI is stale
+    at 5.4.1 (2017, pre-`--tempdir`); KCC ships 10.x only via GitHub/choco/winget.
+    KCC's setup.py DOES expose the `kcc-c2e` console script, so it's pip/git
+    installable from source.
+  - OPTIONS (ranked):
+    1. **Keep the submodule** (current). Works; pinned; one manual step
+       (`git submodule update --init` + `uv pip install -e kcc/`). Slightly
+       unconventional for an unpatched upstream, but not wrong.
+    2. **Pinned git dependency** -- `kcc @ git+https://github.com/ciromattia/kcc.git@v10.2.0`
+       in a `bundle` extra; `uv sync --extra bundle` installs it. More idiomatic
+       for a consumed-not-patched dep; drops `.gitmodules` + the `kcc/` checkout
+       + a manual step. NOTE: a direct git-URL dep BLOCKS publishing this project
+       to PyPI (PyPI forbids URL deps) -- fine since we install from source.
+    3. **Self-manufactured artifact** -- build a wheel from the tag and vendor it
+       (`kcc @ file://...whl`) / host a tiny PEP-503 index (GitHub Release/Pages)
+       / publish a renamed GPL fork to PyPI. All MORE work than (2) for the same
+       result; only actually REQUIRED if we ever publish MangaReaderScraper to
+       PyPI (then we'd need KCC on a real index).
+  - CAVEAT (all options): KCC hard-requires PySide6 (Qt, heavy) in
+    install_requires even for the CLI -- so installing KCC is heavy either way;
+    bundling is already opt-in/extra-setup, so that's consistent.
+  - DECISION: keep the submodule for now (no functional benefit to changing; the
+    swap touches the install path + needs a heavy live `uv sync --extra bundle`
+    to validate). Option 2 is the tidy/idiomatic choice if/when we care; option 3
+    only if publishing to PyPI. Revisit deliberately, not as a drive-by.
+  - PRIORITY: low -- cosmetic/DX, no correctness impact.
+
 ---
 
 ## Suggested order
