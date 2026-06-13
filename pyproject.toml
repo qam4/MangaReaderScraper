@@ -37,7 +37,8 @@ upload = [
 manga-scraper = "scraper.__main__:cli_entry"
 
 [project.urls]
-Homepage = "https://github.com/superDross/MangaReaderScraper"
+Homepage = "https://github.com/qam4/MangaReaderScraper"
+Upstream = "https://github.com/superDross/MangaReaderScraper"
 
 [dependency-groups]
 # Dev tooling, installed by default with `uv sync`.

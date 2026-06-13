@@ -1,5 +1,11 @@
 # MangaReaderScraper — Code Review
 
+> **Historical snapshot (pre-refactor).** This describes the `scraper/` package
+> as it was on the `mangafire-parser-rewrite` branch, before the Wave A–F
+> cleanup. Many issues here are now fixed (e.g. `--volumes` → `--chapters`,
+> dead sources retired, the fetcher abstraction). Kept as the evidence the
+> refactor was based on; not a description of the current tree.
+
 Status: review note. A read-through of the whole `scraper/` package and the
 test suite on the `mangafire-parser-rewrite` branch, written to surface
 concrete problems and improvement directions. Pairs with

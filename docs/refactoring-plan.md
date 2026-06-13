@@ -1,5 +1,11 @@
 # MangaReaderScraper — Sanitization & Refactoring Plan
 
+> **Historical snapshot (pre/mid-refactor).** Written against the
+> `mangafire-parser-rewrite` branch. The "Phase log" near the end tracks what
+> was actually done; much of the earlier analysis (e.g. `--volumes`, dead
+> sources, the chapter-id saga) has since been addressed. Kept as the design
+> record, not a description of the current tree.
+
 Status: proposal / design note. Captures concrete findings from working on
 the MangaFire parser (the parser rewrite, the network probe, and the test
 suite that exposed several import-time breakages).

@@ -530,10 +530,18 @@ Each item has a done-when so "done" is unambiguous.
     renders as-is. Test asserts a JP title (鋼の錬金術師) and an accented one
     (Pokémon) survive in the rendered table. Gates green.
 
-- [ ] **D3 [DECISION] Project rename** — `MangaReaderScraper` names a dead site.
-  Package (`scraper/`) already neutral; only project/repo/dist/pyproject name +
-  README stale. Friction: repo rename breaks clone URLs/CI/install. Only worth it
-  bundled with the Wave B rebuild; standalone it's just paint (A2 is the real fix).
+- [~] **D3 [DECISION] Project rename** — DECISION: **keep the name** for now.
+  "MangaReaderScraper" reads fine generically ("scraper for manga-reader sites"),
+  it doesn't have to mean the dead mangareader.net; the package (`scraper/`) and
+  CLI (`manga-scraper`) are already neutral. User would PREFER a rename but it's
+  deferred: low value + friction (repo rename, clone URLs) and needs a chosen
+  name + the GitHub repo rename (user action). Revisit if/when a name is picked.
+  - DONE alongside this: the actual stale-doc fixes hiding in D3 -- README
+    quick-start refreshed (volume→chapter wording + retired `mangareader` demo
+    source → `mangabuddy`); pyproject `Homepage` repointed to the fork
+    (`qam4/...`) with `Upstream` kept for attribution; historical-snapshot banner
+    added to docs/code-review.md + docs/refactoring-plan.md so their pre-refactor
+    content isn't mistaken for current.
 
 - [x] **D4 [QUICK] De-personalize `bundle.py`** — DONE: `WRITER_DEFAULT` is now
   the neutral `"Unknown"` (was the maintainer's name, which shipped as the

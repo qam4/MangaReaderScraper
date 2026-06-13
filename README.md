@@ -78,22 +78,22 @@ Search for a series, pick it from the table, then choose what to download:
 ```
 $ uv run manga-scraper --search dragon ball
 
-+----+---------------------------------+-----------------+-------------+
-|    | Title                           |   Latest Volume | Source      |
-|----+---------------------------------+-----------------+-------------|
-|  1 | Dragon Ball: Episode of Bardock |               3 | mangareader |
-|  2 | Dragon Ball SD                  |              35 | mangareader |
-|  3 | DragonBall Next Gen             |               4 | mangareader |
-|  4 | Dragon Ball                     |             520 | mangareader |
-|  5 | Dragon Ball Z - Rebirth of F    |               3 | mangareader |
-|  6 | Dragon Ball Super               |              62 | mangareader |
-+----+---------------------------------+-----------------+-------------+
++----+---------------------------------+------------------+------------+
+|    | Title                           |   Latest Chapter | Source     |
+|----+---------------------------------+------------------+------------|
+|  1 | Dragon Ball: Episode of Bardock |                3 | mangabuddy |
+|  2 | Dragon Ball SD                  |               35 | mangabuddy |
+|  3 | DragonBall Next Gen             |                4 | mangabuddy |
+|  4 | Dragon Ball                     |              520 | mangabuddy |
+|  5 | Dragon Ball Z - Rebirth of F    |                3 | mangabuddy |
+|  6 | Dragon Ball Super               |               62 | mangabuddy |
++----+---------------------------------+------------------+------------+
 Select manga number
 
 >> 6
 
 Dragon Ball Super has been selected for download.
-Which volume(s) do you want to download (Enter alone to download all volumes)?
+Which chapter(s) do you want to download (Enter alone to download all chapters)?
 
 >> 1-25 33 56
 ```
