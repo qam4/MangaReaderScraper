@@ -781,6 +781,17 @@ lock-serialized session. Plan + status:
     a headless flag (+ the shared session keyed by mode). Larger; design with the
     registry. Minimize-by-default already removes most of the UX pain, so this is
     an optimization, not urgent.
+    - DECISION (analysis): **DEFER until a source actually needs it** -- building
+      it now would be unused plumbing. Reasoning: (1) headless Chrome is more
+      bot-detectable and typically FAILS Cloudflare, so the CF-gated browser
+      sources (mangafire/mangago/kakalot) must stay headful; (2) the non-CF
+      sources mostly use curl_cffi, not the browser; (3) with the single shared
+      session, headless is a PROCESS-WIDE choice, not per-source. So no current
+      source is a headless candidate -> a flag/attribute would sit unused. The
+      probe's `nodriver-headless` verdict identifies the case (JS-rendered, no
+      wall); add the per-source mode + a headless launch flag WHEN such a source
+      appears, and validate it live then. (off-screen launch already fixed the
+      focus UX this would otherwise help.)
   - [x] (c) opt-in persistent profile (C11(1)) -- `BROWSER_PROFILE_ENV`
     (`MANGASCRAPER_BROWSER_PROFILE`): when set, `_resolve_profile_dir` reuses
     that dir as nodriver's user_data_dir so a manually-solved challenge +
