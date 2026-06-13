@@ -672,21 +672,20 @@ Two distinct root causes found:
   - DONE-WHEN: ✅ ruff + mypy + 366 tests green; no `vol_*`/`Volume`/model-layer
     `volume` symbols remain.
 
-- [~] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure** — the
-  Retry-After half is DONE; a cross-worker global ease-off is the remaining part.
-  - DONE (this session): `download_image` special-cases 429/503 (`_RATE_LIMIT_STATUSES`)
-    and honors a numeric `Retry-After` header -- it waits AT LEAST that long
-    (capped at `retry_after_cap=120s` so a hostile value can't stall the run),
-    instead of the shorter exponential backoff. `_parse_retry_after` is pure +
-    unit-tested (seconds form; HTTP-date/negative/non-string -> None). So the site
-    telling us "wait N seconds" is now obeyed per request.
-  - STILL OPEN (the cross-worker part): when rate-limit signals appear, reduce
-    OVERALL request rate across the download threads (not just per-request delay)
-    -- e.g. a shared token-bucket / semaphore that all worker threads consult.
-    Much easier now that downloads are THREADS (shared memory, no cross-process
-    plumbing). DONE-WHEN: repeated 429/503 across workers visibly lowers the
-    aggregate request rate; live to validate.
-  - PRIORITY: low.
+- [x] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure** — DONE.
+  - Retry-After: `download_image` special-cases 429/503 and honors a numeric
+    `Retry-After` (waits at least that long, capped at 120s), `_parse_retry_after`
+    pure + tested.
+  - Cross-worker ease-off: `_RateLimitThrottle` (process-wide, thread-safe) -- a
+    429/503 in ANY download sets a shared cooldown; every download thread waits
+    it out before its NEXT request (consulted once at the top of `download_image`,
+    not in the retry loop, so it composes with the per-request backoff). Easy now
+    that downloads are threads (shared memory). conftest resets it per-test for
+    isolation; 3 new tests (no-op when unlimited, ease-off+clear, sibling ease-off).
+  - DONE-WHEN met: repeated rate-limit responses lower the aggregate request rate
+    (not just per-request delay); Retry-After respected. Aggregate behaviour
+    unit-tested; real-concurrency feel is live-to-confirm but the mechanism is
+    proven.
 
 ---
 

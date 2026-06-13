@@ -36,6 +36,18 @@ def _no_real_browser():
 
 
 @pytest.fixture(autouse=True)
+def _reset_download_throttle():
+    """Reset the process-wide download rate-limit throttle around each test, so a
+    429/503 in one test can't leak a cooldown into the next (which would make the
+    next download's before_request sleep and skew sleep-count assertions)."""
+    from scraper.fetchers import _THROTTLE
+
+    _THROTTLE.reset()
+    yield
+    _THROTTLE.reset()
+
+
+@pytest.fixture(autouse=True)
 def mocked_pool_imap(request):
     """
     Run ``MangaBuilder``'s download ``ThreadPool`` synchronously by patching

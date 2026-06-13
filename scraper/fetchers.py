@@ -179,6 +179,58 @@ def _parse_retry_after(value) -> Optional[float]:
     return seconds if seconds >= 0 else None
 
 
+# Default global ease-off when a rate-limit response carries no Retry-After.
+_RATE_LIMIT_COOLDOWN_DEFAULT = 5.0
+
+
+class _RateLimitThrottle:
+    """Process-wide, thread-safe adaptive throttle (F4).
+
+    Normally a no-op. When ANY download reports a rate-limit (429/503), it sets a
+    shared cooldown; every download thread waits out that cooldown before its
+    NEXT request, so the WHOLE download eases off -- not just the one request
+    that got throttled. The cooldown is absolute (monotonic deadline) and decays
+    naturally (we never extend it once it has passed). Works because the download
+    workers are threads now (shared memory); under the old process pool this
+    would have needed cross-process plumbing.
+
+    Consulted ONCE per ``download_image`` call (at the top), never inside its
+    retry loop -- so it composes with, and doesn't disturb, that loop's own
+    per-request exponential backoff.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cooldown_until = 0.0
+
+    def on_rate_limited(self, seconds: float) -> None:
+        """Record that the site is throttling us: ease off for ``seconds``."""
+        import time
+
+        with self._lock:
+            self._cooldown_until = max(
+                self._cooldown_until, time.monotonic() + max(seconds, 0.0)
+            )
+
+    def before_request(self) -> None:
+        """Wait out any active shared cooldown before issuing a request."""
+        import time
+
+        with self._lock:
+            wait = self._cooldown_until - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+
+    def reset(self) -> None:
+        """Clear the cooldown (used by tests for isolation)."""
+        with self._lock:
+            self._cooldown_until = 0.0
+
+
+# Process-wide shared throttle consulted by download_image (see _RateLimitThrottle).
+_THROTTLE = _RateLimitThrottle()
+
+
 def download_image(
     url: str,
     headers: Optional[Dict[str, str]] = None,
@@ -219,6 +271,10 @@ def download_image(
 
     from curl_cffi import requests as creq  # type: ignore
 
+    # Ease off if a sibling download recently hit a rate-limit (F4): consulted
+    # once here, not per-retry, so it composes with the backoff loop below.
+    _THROTTLE.before_request()
+
     attempt = 0
     while attempt < max_tries:
         retry_after: Optional[float] = None
@@ -240,6 +296,15 @@ def download_image(
                 # The server is explicitly throttling us; honor its Retry-After.
                 retry_after = _parse_retry_after(
                     getattr(resp, "headers", {}).get("Retry-After")
+                )
+                # Signal ALL download threads to ease off (F4), capped.
+                _THROTTLE.on_rate_limited(
+                    min(
+                        retry_after
+                        if retry_after is not None
+                        else _RATE_LIMIT_COOLDOWN_DEFAULT,
+                        retry_after_cap,
+                    )
                 )
             logger.warning(
                 f"{label} attempt {attempt + 1}/{max_tries} "

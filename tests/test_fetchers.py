@@ -26,6 +26,7 @@ from scraper.fetchers import (
     _looks_like_challenge,
     _make_marker_predicate,
     _parse_retry_after,
+    _RateLimitThrottle,
     _resolve_profile_dir,
     _scroll_to_bottom_js,
     download_image,
@@ -500,3 +501,53 @@ def test_download_image_caps_a_hostile_retry_after():
     assert out == b"img"
     waited = slept.call_args_list[0].args[0]
     assert 120.0 <= waited <= 180.0  # cap (120) + up to half (60) jitter
+
+
+# ===================== cross-worker rate-limit ease-off ===================
+
+
+def test_rate_limit_throttle_no_op_when_not_limited():
+    # before_request never sleeps if no rate-limit was reported
+    throttle = _RateLimitThrottle()
+    with mock.patch("time.sleep") as slept:
+        throttle.before_request()
+    slept.assert_not_called()
+
+
+def test_rate_limit_throttle_eases_off_then_clears():
+    throttle = _RateLimitThrottle()
+    throttle.on_rate_limited(8)
+    with mock.patch("time.sleep") as slept:
+        throttle.before_request()
+    assert slept.call_count == 1
+    assert slept.call_args_list[0].args[0] > 0  # waited out the cooldown
+    # reset clears it
+    throttle.reset()
+    with mock.patch("time.sleep") as slept2:
+        throttle.before_request()
+    slept2.assert_not_called()
+
+
+def test_download_image_eases_off_siblings_after_rate_limit():
+    # A 429/503 in one download sets a SHARED cooldown; a subsequent (separate)
+    # download eases off -- waits it out before its own request -- even though
+    # that one succeeds immediately. This is the cross-worker F4 behaviour.
+    from scraper.fetchers import _THROTTLE
+
+    _THROTTLE.reset()
+    throttled = mock.Mock(status_code=503, content=b"", headers={"Retry-After": "9"})
+    ok1 = mock.Mock(status_code=200, content=b"a")
+    mod1, _ = _fake_curl_module([throttled, ok1])
+    with mock.patch.dict("sys.modules", {"curl_cffi": mod1}):
+        with mock.patch("time.sleep"):
+            download_image("http://cdn/a.jpg")  # sets the shared cooldown
+
+    ok2 = mock.Mock(status_code=200, content=b"b")
+    mod2, _ = _fake_curl_module([ok2])
+    with mock.patch.dict("sys.modules", {"curl_cffi": mod2}):
+        with mock.patch("time.sleep") as slept2:
+            out = download_image("http://cdn/b.jpg")  # should ease off first
+    assert out == b"b"
+    assert slept2.call_count == 1  # eased off before the (successful) request
+    assert slept2.call_args_list[0].args[0] > 0
+    _THROTTLE.reset()
