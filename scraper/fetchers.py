@@ -157,6 +157,27 @@ class CurlCffiFetcher:
 # them (esp. 403) in parallel is what gets the client IP throttled/banned.
 _NO_RETRY_STATUSES = frozenset({401, 403, 404})
 
+# Statuses where the server is explicitly rate-limiting / temporarily down and
+# may send a Retry-After telling us how long to wait.
+_RATE_LIMIT_STATUSES = frozenset({429, 503})
+
+
+def _parse_retry_after(value) -> Optional[float]:
+    """Parse a ``Retry-After`` header (delta-seconds form) to float seconds.
+
+    Returns ``None`` for a missing/non-numeric value (the HTTP-date form is not
+    honored -- CDNs overwhelmingly use seconds) or a negative number. Pure /
+    unit-tested. Tolerant of non-string inputs (returns None) so a mocked or
+    odd header object can't blow up the download loop.
+    """
+    if not value:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+    return seconds if seconds >= 0 else None
+
 
 def download_image(
     url: str,
@@ -168,6 +189,7 @@ def download_image(
     label: str = "image",
     backoff_base: float = 0.5,
     backoff_cap: float = 30.0,
+    retry_after_cap: float = 120.0,
 ) -> Optional[bytes]:
     """Download a page image via ``curl_cffi`` with Chrome TLS impersonation.
 
@@ -183,9 +205,14 @@ def download_image(
     failures are usually transient/rate-limit, so waiting -- increasingly --
     between tries recovers far more pages than hammering instantly (which is what
     left chapters incomplete). No sleep is performed after the final attempt.
-    Returns the raw image bytes on success, or ``None`` once exhausted. Callers
-    own the post-download steps that genuinely differ between sites -- building
-    the placeholder page on failure, image validation, and descrambling.
+
+    On an explicit rate-limit status (429/503), if the server sends a
+    ``Retry-After`` (seconds) we wait at least that long (capped at
+    ``retry_after_cap``) instead of the shorter exponential delay -- the site is
+    telling us how long to back off, so we listen. Returns the raw image bytes on
+    success, or ``None`` once exhausted. Callers own the post-download steps that
+    genuinely differ between sites -- building the placeholder page on failure,
+    image validation, and descrambling.
     """
     import random
     import time
@@ -194,6 +221,7 @@ def download_image(
 
     attempt = 0
     while attempt < max_tries:
+        retry_after: Optional[float] = None
         try:
             session = creq.Session(impersonate=impersonate)  # type: ignore[arg-type]
             if cookies:
@@ -208,6 +236,11 @@ def download_image(
                 # banned. Fail fast instead.
                 logger.warning(f"{label} {resp.status_code} (not retrying): {url}")
                 return None
+            if resp.status_code in _RATE_LIMIT_STATUSES:
+                # The server is explicitly throttling us; honor its Retry-After.
+                retry_after = _parse_retry_after(
+                    getattr(resp, "headers", {}).get("Retry-After")
+                )
             logger.warning(
                 f"{label} attempt {attempt + 1}/{max_tries} "
                 f"status {resp.status_code}: {url}"
@@ -219,6 +252,10 @@ def download_image(
         attempt += 1
         if attempt < max_tries:
             delay = min(backoff_base * (2 ** (attempt - 1)), backoff_cap)
+            if retry_after is not None:
+                # the site told us how long to wait -- never wait LESS than that
+                # (but cap it so a huge/hostile value can't stall the run)
+                delay = min(max(delay, retry_after), retry_after_cap)
             delay += random.uniform(0, delay / 2)  # jitter to de-sync workers
             time.sleep(delay)
     logger.error(f"Download FAILED {label} at {url}")

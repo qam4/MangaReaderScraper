@@ -25,6 +25,7 @@ from scraper.fetchers import (
     _in_page_fetch_js,
     _looks_like_challenge,
     _make_marker_predicate,
+    _parse_retry_after,
     _resolve_profile_dir,
     _scroll_to_bottom_js,
     download_image,
@@ -446,3 +447,56 @@ def test_resolve_profile_dir_defaults_to_fresh_throwaway(monkeypatch):
     assert a.is_dir() and b.is_dir()
     assert a != b
     assert "nodriver_profile_" in a.name
+
+
+# ===================== Retry-After / rate-limit backoff ===================
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("5", 5.0),
+        (" 10 ", 10.0),
+        ("0", 0.0),
+        (None, None),
+        ("", None),
+        ("soon", None),  # HTTP-date form not honored
+        ("-3", None),  # negative ignored
+    ],
+)
+def test_parse_retry_after(value, expected):
+    assert _parse_retry_after(value) == expected
+
+
+def test_parse_retry_after_tolerates_non_string():
+    # a mocked/odd header object must not blow up the download loop
+    assert _parse_retry_after(mock.Mock()) is None
+
+
+def test_download_image_honors_retry_after_header():
+    # a 429/503 with Retry-After: the wait is AT LEAST that many seconds, not the
+    # shorter exponential backoff -- the site told us how long to ease off.
+    throttled = mock.Mock(status_code=503, content=b"", headers={"Retry-After": "7"})
+    ok = mock.Mock(status_code=200, content=b"img")
+    module, _session = _fake_curl_module([throttled, ok])
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        with mock.patch("time.sleep") as slept:
+            out = download_image("http://cdn/p.jpg", backoff_base=0.5)
+    assert out == b"img"
+    assert slept.call_count == 1
+    assert slept.call_args_list[0].args[0] >= 7.0  # honored Retry-After floor
+
+
+def test_download_image_caps_a_hostile_retry_after():
+    # a huge Retry-After is capped so it can't stall the run
+    throttled = mock.Mock(
+        status_code=429, content=b"", headers={"Retry-After": "99999"}
+    )
+    ok = mock.Mock(status_code=200, content=b"img")
+    module, _session = _fake_curl_module([throttled, ok])
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        with mock.patch("time.sleep") as slept:
+            out = download_image("http://cdn/p.jpg", retry_after_cap=120.0)
+    assert out == b"img"
+    waited = slept.call_args_list[0].args[0]
+    assert 120.0 <= waited <= 180.0  # cap (120) + up to half (60) jitter

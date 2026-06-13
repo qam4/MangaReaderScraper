@@ -672,21 +672,21 @@ Two distinct root causes found:
   - DONE-WHEN: ✅ ruff + mypy + 366 tests green; no `vol_*`/`Volume`/model-layer
     `volume` symbols remain.
 
-- [ ] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure**
-  - VALUE (user): the multiprocessing is to be fast on the happy path, but when a
-    site is FAILING we should slow down, not keep fanning out at full concurrency.
-    Today F1 only backs off a SINGLE failed request in its own worker; the other
-    workers keep going full tilt. There's no global "the site is unhappy, everyone
-    ease off."
-  - IDEAS: (a) treat 429/503 specially — wait notably longer than a generic blip,
-    and honor a `Retry-After` header when present (the site is telling us how long
-    to wait); (b) a shared/global rate limiter or concurrency reducer across
-    workers when rate-limit signals appear (needs cross-process coordination, same
-    plumbing family as A7's logging queue).
-  - DONE-WHEN: repeated rate-limit responses reduce overall request rate (not just
-    per-request retry delay); Retry-After respected. Live to validate.
-  - PRIORITY: low — F1's backoff is the cheap floor; this is the principled
-    version. Sequence deliberately.
+- [~] **F4 [STRUCT, LOW-PRI] Respectful adaptive throttling on failure** — the
+  Retry-After half is DONE; a cross-worker global ease-off is the remaining part.
+  - DONE (this session): `download_image` special-cases 429/503 (`_RATE_LIMIT_STATUSES`)
+    and honors a numeric `Retry-After` header -- it waits AT LEAST that long
+    (capped at `retry_after_cap=120s` so a hostile value can't stall the run),
+    instead of the shorter exponential backoff. `_parse_retry_after` is pure +
+    unit-tested (seconds form; HTTP-date/negative/non-string -> None). So the site
+    telling us "wait N seconds" is now obeyed per request.
+  - STILL OPEN (the cross-worker part): when rate-limit signals appear, reduce
+    OVERALL request rate across the download threads (not just per-request delay)
+    -- e.g. a shared token-bucket / semaphore that all worker threads consult.
+    Much easier now that downloads are THREADS (shared memory, no cross-process
+    plumbing). DONE-WHEN: repeated 429/503 across workers visibly lowers the
+    aggregate request rate; live to validate.
+  - PRIORITY: low.
 
 ---
 
