@@ -813,11 +813,12 @@ lock-serialized session. Plan + status:
   pages) or failed (couldn't fetch), so they aren't lost in the scrolled-past
   per-chapter logs. Derived from the existing `ChapterDownload.complete`/`pages`
   signal -- no new plumbing.
-- [ ] **`--chapters` honored with `--search`** — today the search path overwrites
-  `args["chapters"]` with the interactive prompt result, so a CLI `--chapters`
-  is silently ignored when combined with `--search`. Pass the CLI selection into
-  `manga_search` as the default (prompt only when none was given). Small, in
-  `__main__.cli` + `manga_search`. Unrelated to threading.
+- [x] **`--chapters` honored with `--search`** — DONE. `manga_search` gained a
+  `preselected` arg; `cli()` passes the CLI `--chapters` into it (both the
+  `--search` path and the not-found `--manga` fallback), so an explicit
+  `--chapters` is used as-is and the interactive prompt is skipped. Prompt still
+  appears when no `--chapters` was given. 2 tests (honors preselected / prompts
+  when absent).
 
 ## Live-verified sources (user, on their laptop)
 - **mangabuddy** (default source) — search + chapter listing + page-image

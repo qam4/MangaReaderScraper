@@ -2,7 +2,7 @@ from unittest import mock
 
 import pytest
 
-from scraper.__main__ import cli, get_manga_parser
+from scraper.__main__ import cli, get_manga_parser, manga_search
 from scraper.exceptions import MangaDoesNotExist
 from tests.helpers import MockedSiteParser
 
@@ -272,3 +272,29 @@ def test_search_if_failed_manga_match(monkeypatch):
                 "bundle": None,
             }
             assert args == expected
+
+
+def test_manga_search_honors_preselected_chapters():
+    # --search WITH --chapters: the user picks the manga, but the CLI chapter
+    # selection is used as-is (no interactive prompt) -- previously it was
+    # silently dropped.
+    fake_menu = mock.Mock()
+    fake_menu.handle_options.return_value = {"title": "Naruto", "manga_url": "naruto"}
+    with mock.patch("scraper.__main__.SearchMenu", return_value=fake_menu):
+        with mock.patch("scraper.__main__.menu_input") as prompt:
+            title, url, chapters = manga_search(
+                ["naruto"], MockedSiteParser, preselected=["1-3"]
+            )
+    assert (title, url, chapters) == ("Naruto", "naruto", ["1-3"])
+    prompt.assert_not_called()
+
+
+def test_manga_search_prompts_when_no_preselection():
+    # --search WITHOUT --chapters: still prompts interactively (unchanged).
+    fake_menu = mock.Mock()
+    fake_menu.handle_options.return_value = {"title": "Naruto", "manga_url": "naruto"}
+    with mock.patch("scraper.__main__.SearchMenu", return_value=fake_menu):
+        with mock.patch("scraper.__main__.menu_input", return_value="1 2 5") as prompt:
+            _title, _url, chapters = manga_search(["naruto"], MockedSiteParser)
+    assert chapters == ["1", "2", "5"]
+    prompt.assert_called_once()

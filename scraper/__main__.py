@@ -48,17 +48,30 @@ def normalize_chapters(chapters: Optional[List[str]]) -> Optional[List[str]]:
 
 
 def manga_search(
-    query: List[str], parser: SiteParserClass
+    query: List[str],
+    parser: SiteParserClass,
+    preselected: Optional[List[str]] = None,
 ) -> Tuple[str, str, List[str]]:
     """
-    Search for a manga and return the manga name and chapters
-    selected by user input
+    Search for a manga, let the user pick one, and return its name + the chapter
+    selection.
+
+    The user always picks WHICH manga from the results. For the chapters: if
+    ``preselected`` is given (a CLI ``--chapters`` the caller already parsed), it
+    is used as-is and the interactive chapter prompt is skipped -- so
+    ``--search ... --chapters 1-3`` is honored instead of silently ignored.
+    Otherwise we prompt (Enter alone = all chapters).
     """
     menu = SearchMenu(query, parser)
     manga = menu.handle_options()
     logger.debug(f"[manga_search] manga={manga}")
     title = manga["title"]
     url = manga["manga_url"]
+    if preselected:
+        logger.debug(
+            f"[manga_search] using CLI --chapters {preselected}, skipping prompt"
+        )
+        return (title, url, list(preselected))
     msg = (
         "Which chapter(s) do you want to download "
         "(Enter alone to download all chapters)?"
@@ -133,8 +146,10 @@ def cli(arguments: List[str]) -> dict:
         raise IOError("Cannot use --remove without --upload")
 
     if args["search"]:
+        # Honor an explicit CLI --chapters (otherwise it'd be silently dropped by
+        # the interactive prompt); the user still picks WHICH manga.
         title, args["manga"], args["chapters"] = manga_search(
-            args["search"], manga_parser
+            args["search"], manga_parser, preselected=args.get("chapters")
         )
 
     elif args["manga"]:
@@ -170,8 +185,10 @@ def cli(arguments: List[str]) -> dict:
             f"No manga found for {args['manga']}. Searching for closest match."
         )
         args["search"] = [args["manga"]]
+        # Carry the CLI --chapters (already normalized above) through the
+        # fallback search so it's honored there too.
         title, args["manga"], args["chapters"] = manga_search(
-            args["search"], manga_parser
+            args["search"], manga_parser, preselected=args["chapters"]
         )
         args["chapters"] = normalize_chapters(args["chapters"])
         manga = download_manga(
