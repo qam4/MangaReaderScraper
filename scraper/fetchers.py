@@ -182,6 +182,36 @@ def _parse_retry_after(value) -> Optional[float]:
 # Default global ease-off when a rate-limit response carries no Retry-After.
 _RATE_LIMIT_COOLDOWN_DEFAULT = 5.0
 
+# Hard cap on TOTAL concurrent image downloads across the whole process. The
+# download pools nest (chapters in parallel x pages in parallel), so without a
+# shared cap the instantaneous CDN concurrency is jobs x cpu_count -- enough to
+# get the client IP throttled/banned. Overridable via env.
+MAX_CONCURRENT_DOWNLOADS_ENV = "MANGASCRAPER_MAX_CONCURRENT_DOWNLOADS"
+_DEFAULT_MAX_CONCURRENT_DOWNLOADS = 8
+
+
+def _max_concurrent_downloads() -> int:
+    """Resolve the total-concurrent-downloads cap: a positive integer from
+    ``MAX_CONCURRENT_DOWNLOADS_ENV`` if set/valid, else the default. Pure /
+    unit-tested."""
+    import os
+
+    raw = os.environ.get(MAX_CONCURRENT_DOWNLOADS_ENV)
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+    return _DEFAULT_MAX_CONCURRENT_DOWNLOADS
+
+
+# Process-wide download concurrency limiter (see _max_concurrent_downloads).
+# BoundedSemaphore so an accidental extra release raises instead of inflating
+# the cap. Sized at import from the env/default.
+_DOWNLOAD_SEMAPHORE = threading.BoundedSemaphore(_max_concurrent_downloads())
+
 
 class _RateLimitThrottle:
     """Process-wide, thread-safe adaptive throttle (F4).
@@ -272,57 +302,62 @@ def download_image(
     from curl_cffi import requests as creq  # type: ignore
 
     # Ease off if a sibling download recently hit a rate-limit (F4): consulted
-    # once here, not per-retry, so it composes with the backoff loop below.
+    # once here (NOT per-retry, so it composes with the backoff loop) and BEFORE
+    # acquiring a concurrency slot, so a cooling-down thread doesn't hold a slot
+    # while merely waiting.
     _THROTTLE.before_request()
 
-    attempt = 0
-    while attempt < max_tries:
-        retry_after: Optional[float] = None
-        try:
-            session = creq.Session(impersonate=impersonate)  # type: ignore[arg-type]
-            if cookies:
-                session.cookies.update(cookies)
-            resp = session.get(url, headers=headers, timeout=timeout)
-            if resp.status_code == 200:
-                return resp.content
-            if resp.status_code in _NO_RETRY_STATUSES:
-                # A definitive refusal (forbidden / unauthorized / missing):
-                # retrying cannot change the answer, and hammering a 403 in
-                # parallel is exactly what gets the client IP rate-limited or
-                # banned. Fail fast instead.
-                logger.warning(f"{label} {resp.status_code} (not retrying): {url}")
-                return None
-            if resp.status_code in _RATE_LIMIT_STATUSES:
-                # The server is explicitly throttling us; honor its Retry-After.
-                retry_after = _parse_retry_after(
-                    getattr(resp, "headers", {}).get("Retry-After")
-                )
-                # Signal ALL download threads to ease off (F4), capped.
-                _THROTTLE.on_rate_limited(
-                    min(
-                        retry_after
-                        if retry_after is not None
-                        else _RATE_LIMIT_COOLDOWN_DEFAULT,
-                        retry_after_cap,
+    # Hold a global concurrency slot for the whole download (incl. retries), so
+    # the nested pools can't exceed _DOWNLOAD_SEMAPHORE concurrent CDN requests.
+    with _DOWNLOAD_SEMAPHORE:
+        attempt = 0
+        while attempt < max_tries:
+            retry_after: Optional[float] = None
+            try:
+                session = creq.Session(impersonate=impersonate)  # type: ignore[arg-type]
+                if cookies:
+                    session.cookies.update(cookies)
+                resp = session.get(url, headers=headers, timeout=timeout)
+                if resp.status_code == 200:
+                    return resp.content
+                if resp.status_code in _NO_RETRY_STATUSES:
+                    # A definitive refusal (forbidden / unauthorized / missing):
+                    # retrying cannot change the answer, and hammering a 403 in
+                    # parallel is exactly what gets the client IP rate-limited or
+                    # banned. Fail fast instead.
+                    logger.warning(f"{label} {resp.status_code} (not retrying): {url}")
+                    return None
+                if resp.status_code in _RATE_LIMIT_STATUSES:
+                    # The server is explicitly throttling us; honor Retry-After.
+                    retry_after = _parse_retry_after(
+                        getattr(resp, "headers", {}).get("Retry-After")
                     )
+                    # Signal ALL download threads to ease off (F4), capped.
+                    _THROTTLE.on_rate_limited(
+                        min(
+                            retry_after
+                            if retry_after is not None
+                            else _RATE_LIMIT_COOLDOWN_DEFAULT,
+                            retry_after_cap,
+                        )
+                    )
+                logger.warning(
+                    f"{label} attempt {attempt + 1}/{max_tries} "
+                    f"status {resp.status_code}: {url}"
                 )
-            logger.warning(
-                f"{label} attempt {attempt + 1}/{max_tries} "
-                f"status {resp.status_code}: {url}"
-            )
-        except Exception as err:
-            logger.warning(
-                f"{label} attempt {attempt + 1}/{max_tries} failed: {url} - {err}"
-            )
-        attempt += 1
-        if attempt < max_tries:
-            delay = min(backoff_base * (2 ** (attempt - 1)), backoff_cap)
-            if retry_after is not None:
-                # the site told us how long to wait -- never wait LESS than that
-                # (but cap it so a huge/hostile value can't stall the run)
-                delay = min(max(delay, retry_after), retry_after_cap)
-            delay += random.uniform(0, delay / 2)  # jitter to de-sync workers
-            time.sleep(delay)
+            except Exception as err:
+                logger.warning(
+                    f"{label} attempt {attempt + 1}/{max_tries} failed: {url} - {err}"
+                )
+            attempt += 1
+            if attempt < max_tries:
+                delay = min(backoff_base * (2 ** (attempt - 1)), backoff_cap)
+                if retry_after is not None:
+                    # the site told us how long to wait -- never wait LESS than
+                    # that (capped so a huge/hostile value can't stall the run)
+                    delay = min(max(delay, retry_after), retry_after_cap)
+                delay += random.uniform(0, delay / 2)  # jitter to de-sync workers
+                time.sleep(delay)
     logger.error(f"Download FAILED {label} at {url}")
     return None
 

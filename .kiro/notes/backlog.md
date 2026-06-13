@@ -801,8 +801,13 @@ lock-serialized session. Plan + status:
     `_launch` (real browser) stays no-cover. README documents the env var.
     VALIDATED LOCALLY: two sequential runtime sessions reused the same persistent
     dir with NO SingletonLock collision (and no shutdown noise).
-  - FOLLOW-UP: bound total download concurrency (today jobs x cpu_count threads
-    via nested pools) to stay polite to CDNs.
+  - [x] FOLLOW-UP: bound total download concurrency -- DONE. `download_image`
+    holds a process-wide `_DOWNLOAD_SEMAPHORE` (BoundedSemaphore) for the whole
+    call, so the nested pools (jobs x cpu_count) can't exceed a hard cap of
+    concurrent CDN requests. Default 8, overridable via
+    `MANGASCRAPER_MAX_CONCURRENT_DOWNLOADS` (`_max_concurrent_downloads`, pure +
+    unit-tested). Slot acquired AFTER the F4 ease-off wait (so a cooling-down
+    thread doesn't hold a slot). README documents the env var.
 
 ## UX additions
 - [x] **Stable chapter file index (de-dup fix)** — a chapter's saved filename

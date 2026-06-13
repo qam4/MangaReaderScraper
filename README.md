@@ -264,6 +264,22 @@ The shared session reuses that profile, so once you clear a site's check it
 usually stays cleared until the cookie expires. (Safe because there's only ever
 one browser instance — no profile-lock conflicts.)
 
+### Limiting download concurrency
+
+Downloads run in parallel (chapters × pages), capped at **8 concurrent CDN
+requests** process-wide by default so an aggressive fan-out doesn't get your IP
+throttled or banned. Tune it with `MANGASCRAPER_MAX_CONCURRENT_DOWNLOADS`:
+
+```bash
+# Windows (cmd)
+set MANGASCRAPER_MAX_CONCURRENT_DOWNLOADS=4
+# macOS / Linux
+export MANGASCRAPER_MAX_CONCURRENT_DOWNLOADS=4
+```
+
+On top of this, the downloader honors a server's `Retry-After` on 429/503 and,
+when any download is rate-limited, briefly eases off *all* download threads.
+
 ## Adding or fixing a source
 
 See [docs/adding-a-source.md](docs/adding-a-source.md) for the full workflow,

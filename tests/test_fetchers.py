@@ -14,6 +14,7 @@ import pytest
 
 from scraper.fetchers import (
     BROWSER_PROFILE_ENV,
+    MAX_CONCURRENT_DOWNLOADS_ENV,
     BrowserFetcher,
     CloudscraperFetcher,
     CurlCffiFetcher,
@@ -25,6 +26,7 @@ from scraper.fetchers import (
     _in_page_fetch_js,
     _looks_like_challenge,
     _make_marker_predicate,
+    _max_concurrent_downloads,
     _parse_retry_after,
     _RateLimitThrottle,
     _resolve_profile_dir,
@@ -551,3 +553,43 @@ def test_download_image_eases_off_siblings_after_rate_limit():
     assert slept2.call_count == 1  # eased off before the (successful) request
     assert slept2.call_args_list[0].args[0] > 0
     _THROTTLE.reset()
+
+
+# ===================== download concurrency cap ===========================
+
+
+def test_max_concurrent_downloads_default(monkeypatch):
+    monkeypatch.delenv(MAX_CONCURRENT_DOWNLOADS_ENV, raising=False)
+    assert _max_concurrent_downloads() == 8
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("4", 4),
+        ("1", 1),
+        ("20", 20),
+        ("0", 8),  # non-positive -> default
+        ("-3", 8),  # negative -> default
+        ("nope", 8),  # non-int -> default
+        ("", 8),  # empty -> default
+    ],
+)
+def test_max_concurrent_downloads_env_override(raw, expected, monkeypatch):
+    monkeypatch.setenv(MAX_CONCURRENT_DOWNLOADS_ENV, raw)
+    assert _max_concurrent_downloads() == expected
+
+
+def test_download_image_acquires_and_releases_slot():
+    # download_image holds a global concurrency slot for the call and releases
+    # it after -- so the limiter's count is unchanged once the call returns
+    # (a BoundedSemaphore would raise on an unbalanced release).
+    import scraper.fetchers as fetchers
+
+    sem = fetchers._DOWNLOAD_SEMAPHORE
+    before = sem._value  # available permits
+    ok = mock.Mock(status_code=200, content=b"img")
+    module, _session = _fake_curl_module([ok])
+    with mock.patch.dict("sys.modules", {"curl_cffi": module}):
+        assert download_image("http://cdn/p.jpg") == b"img"
+    assert sem._value == before  # slot released
