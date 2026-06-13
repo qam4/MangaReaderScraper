@@ -378,7 +378,7 @@ Each item has a done-when so "done" is unambiguous.
     `await` after `browser.stop()` so transports close inside the loop — but the
     real fix is session reuse.)
 
-- [ ] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
+- [x] **C2 [PROBE] Re-probe + fix-or-retire mangago / mangapark** (your live runs)
   - They scrape Qwik build-hash selectors (`q:key="zn_2"`, `"8t_8"`) + have
     cloudflare-403 notes → likely already broken. Follow the "Re-probing an
     existing source: fix or retire" playbook in docs/adding-a-source.md:
