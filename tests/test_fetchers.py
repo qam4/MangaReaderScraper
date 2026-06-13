@@ -13,6 +13,7 @@ from unittest import mock
 import pytest
 
 from scraper.fetchers import (
+    BROWSER_PROFILE_ENV,
     BrowserFetcher,
     CloudscraperFetcher,
     CurlCffiFetcher,
@@ -24,6 +25,7 @@ from scraper.fetchers import (
     _in_page_fetch_js,
     _looks_like_challenge,
     _make_marker_predicate,
+    _resolve_profile_dir,
     _scroll_to_bottom_js,
     download_image,
     fetch_soup,
@@ -420,3 +422,27 @@ def test_browser_runtime_submit_propagates_exceptions():
             runtime.submit(boom())
     finally:
         runtime.shutdown()
+
+
+# ===================== persistent browser profile (opt-in) ================
+
+
+def test_resolve_profile_dir_uses_persistent_env(tmp_path, monkeypatch):
+    # When MANGASCRAPER_BROWSER_PROFILE is set, the SAME directory is reused
+    # across calls (so a solved challenge / cookies persist), and it's created.
+    target = tmp_path / "profile"
+    monkeypatch.setenv(BROWSER_PROFILE_ENV, str(target))
+    first = _resolve_profile_dir()
+    assert first == target
+    assert first.is_dir()  # created if missing
+    assert _resolve_profile_dir() == target  # stable across runs
+
+
+def test_resolve_profile_dir_defaults_to_fresh_throwaway(monkeypatch):
+    # Unset: a fresh temp profile per call (today's behaviour) -- never shared.
+    monkeypatch.delenv(BROWSER_PROFILE_ENV, raising=False)
+    a = _resolve_profile_dir()
+    b = _resolve_profile_dir()
+    assert a.is_dir() and b.is_dir()
+    assert a != b
+    assert "nodriver_profile_" in a.name

@@ -44,6 +44,7 @@ from typing import (
 
 if TYPE_CHECKING:
     import asyncio
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +299,34 @@ async def _show_browser_window(tab) -> None:  # pragma: no cover - real browser
         logger.debug(f"show window failed (continuing): {err}")
 
 
+# Opt-in persistent browser profile. When this env var names a directory, the
+# shared browser reuses it across runs, so a manually-solved Cloudflare challenge
+# and its cf_clearance cookie SURVIVE between invocations (the "solve once, then
+# continue" escape hatch). Safe because there is a single shared session (one
+# Chrome instance -> no profile SingletonLock collision). Unset (default): a
+# fresh throwaway profile per process, as before.
+BROWSER_PROFILE_ENV = "MANGASCRAPER_BROWSER_PROFILE"
+
+
+def _resolve_profile_dir() -> Path:
+    """Resolve nodriver's ``user_data_dir``.
+
+    Returns the persistent ``BROWSER_PROFILE_ENV`` directory (created if needed)
+    when that env var is set, else a fresh throwaway temp dir. Pure-ish (env +
+    mkdir, no browser) and unit-tested.
+    """
+    import os
+    import tempfile
+    from pathlib import Path
+
+    persistent = os.environ.get(BROWSER_PROFILE_ENV)
+    if persistent:
+        path = Path(persistent).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
+
+
 def _in_page_fetch_js(url: str) -> str:
     """Build the JS that fetches ``url`` from inside the page (credentialed,
     XHR header) and returns the response text. Pure -- unit-testable."""
@@ -476,15 +505,13 @@ class _BrowserRuntime:
         return self._browser
 
     async def _launch(self):  # pragma: no cover - launches a real browser
-        import tempfile
-        from pathlib import Path
-
         import nodriver as nd
 
-        profile = Path(tempfile.mkdtemp(prefix="nodriver_profile_"))
+        profile = _resolve_profile_dir()
         # Opens off-screen via _BROWSER_KWARGS (--window-position), so no
         # post-launch minimize is needed; restored on-screen only for a manual
-        # challenge solve.
+        # challenge solve. The profile is persistent iff BROWSER_PROFILE_ENV is
+        # set (so a solved challenge survives across runs), else throwaway.
         return await nd.start(user_data_dir=profile, **_BROWSER_KWARGS)
 
     def shutdown(self) -> None:

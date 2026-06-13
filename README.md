@@ -240,6 +240,30 @@ adding a new one, the **probe tool** can tell you which backend a page requires
 and surface candidate selectors/endpoints — see
 [docs/adding-a-source.md](docs/adding-a-source.md).
 
+The browser backend runs **one shared session** for the whole process (a single
+Chrome instance reused across search, chapter listing, and reading), launched
+off-screen so it doesn't cover the terminal. If a site shows an interactive
+Cloudflare check ("Verify you are human"), the window comes to the front and the
+run waits for you to click it.
+
+### Persisting a manual Cloudflare solve across runs
+
+By default the browser uses a throwaway profile, so a challenge you solve by
+hand has to be solved again next run. To keep a solved challenge (and its
+`cf_clearance` cookie) between runs, point `MANGASCRAPER_BROWSER_PROFILE` at a
+directory:
+
+```bash
+# Windows (cmd)
+set MANGASCRAPER_BROWSER_PROFILE=%LOCALAPPDATA%\mangascraper-chrome
+# macOS / Linux
+export MANGASCRAPER_BROWSER_PROFILE="$HOME/.cache/mangascraper-chrome"
+```
+
+The shared session reuses that profile, so once you clear a site's check it
+usually stays cleared until the cookie expires. (Safe because there's only ever
+one browser instance — no profile-lock conflicts.)
+
 ## Adding or fixing a source
 
 See [docs/adding-a-source.md](docs/adding-a-source.md) for the full workflow,

@@ -340,24 +340,22 @@ Each item has a done-when so "done" is unambiguous.
     fetcher that avoids a browser, especially per-chapter. Pure analysis
     unit-tested; network behind the existing fetch seam.
 
-- [ ] **C11 [STRUCT] Manual captcha-solve + persistent browser session** — the
-  honest answer to "what do we do at a hard wall?" Today the wall ladder is
-  curl_cffi (TLS impersonation) → cloudscraper (JS IUAM) → headful `nodriver`
-  AUTO-clearance, and the cleared session's cookies CAN be harvested
-  (`capture_xhr(with_cookies=True)` reads them via CDP) and reused by cheap
-  fetchers (`download_image(cookies=...)` / curl_cffi) — that's how MangaFire
-  avoids a browser per image. What's MISSING is human-in-the-loop solve:
-    * `BrowserFetcher` is headful but never DETECTS a remaining challenge,
-      PAUSES for the user to solve it, then resumes — it relies on auto-clear
-      within a fixed `wait`. The probe even names a `nodriver-manual` strategy
-      ("user solves it in the window") that no fetcher implements.
-    * each `BrowserFetcher` call spins a FRESH throwaway profile
-      (`mkdtemp` per call) and `browser.stop()`s in `finally`, so a
-      manually-cleared session does NOT persist across calls; only explicitly
-      harvested cookies carry forward. No reused `user_data_dir`.
-  - WHY (user): curl_cffi / headless often dodge captchas, but some sites are
-    genuinely captcha-protected; a manual-solve-once-then-continue path is a
-    useful escape hatch even if rarely hit.
+- [x] **C11 [STRUCT] Manual captcha-solve + persistent browser session** — DONE
+  (both halves now exist). The honest answer to "what do we do at a hard wall?"
+  Today the wall ladder is curl_cffi (TLS impersonation) → cloudscraper (JS IUAM)
+  → headful `nodriver` AUTO-clearance, and the cleared session's cookies CAN be
+  harvested (`capture_xhr(with_cookies=True)` reads them via CDP) and reused by
+  cheap fetchers (`download_image(cookies=...)` / curl_cffi).
+  - DONE half 1 (human-in-the-loop solve): `_wait_for_content` detects a
+    remaining interactive challenge (strong-text markers), brings the off-screen
+    window on-screen + prompts the user, and waits (indefinitely while the
+    challenge is on-screen; Ctrl-C-interruptible) for them to solve it, then
+    resumes. (kakalot session + the live-fix follow-ups.)
+  - DONE half 2 (persistent session): the shared `_BrowserRuntime` (one browser
+    for the whole process) + opt-in persistent profile (`BROWSER_PROFILE_ENV`,
+    item (c) above) means a manually-cleared session AND its user_data_dir
+    persist across calls and across runs. No more per-call throwaway browser.
+  - Original notes (now historical):
   - DONE-WHEN: (a) an opt-in persistent browser profile (reuse `user_data_dir`
     across runs so a solved challenge + cookies survive); and/or (b) an
     interactive flow: detect challenge → prompt user to solve in the headful
@@ -784,9 +782,15 @@ lock-serialized session. Plan + status:
     a headless flag (+ the shared session keyed by mode). Larger; design with the
     registry. Minimize-by-default already removes most of the UX pain, so this is
     an optimization, not urgent.
-  - [ ] (c) opt-in persistent profile (C11(1)) on top -- trivially safe given a
-    single session (no SingletonLock collision). The interactive manual-solve
-    half is already done (BrowserFetcher challenge-detect + indefinite wait).
+  - [x] (c) opt-in persistent profile (C11(1)) -- `BROWSER_PROFILE_ENV`
+    (`MANGASCRAPER_BROWSER_PROFILE`): when set, `_resolve_profile_dir` reuses
+    that dir as nodriver's user_data_dir so a manually-solved challenge +
+    cf_clearance survive across runs; unset = throwaway mkdtemp (today's
+    behaviour). Safe given the single shared session (no SingletonLock clash).
+    Path-resolution unit-tested (env-set reuses+creates dir; unset = fresh tmp);
+    `_launch` (real browser) stays no-cover. README documents the env var.
+    VALIDATED LOCALLY: two sequential runtime sessions reused the same persistent
+    dir with NO SingletonLock collision (and no shutdown noise).
   - FOLLOW-UP: bound total download concurrency (today jobs x cpu_count threads
     via nested pools) to stay polite to CDNs.
 
