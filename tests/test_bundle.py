@@ -91,3 +91,25 @@ def test_convert_to_mobi_succeeds_when_output_present():
     assert "v.cbz" in cmd
     # --tempdir keeps concurrent conversions from wiping each other's work dirs
     assert "--tempdir" in cmd
+
+
+def test_convert_to_mobi_requests_panel_view_and_gamma():
+    """Pin the two flags that compensate for KCC 10.x default changes.
+
+    KCC 5.x (the old submodule fork) enabled Panel View by default and took
+    gamma 1.8 from the KV device profile. Upstream 10.x disables Panel View
+    unless --hq/-2 is given, and sets every Kindle profile's gamma to 1.0 -- so
+    dropping these flags silently costs tap-to-zoom and washes the pages out.
+    """
+    bundle = _bundle()
+    ok = mock.Mock(returncode=0, stdout="", stderr="")
+    with mock.patch("scraper.bundle.shutil.which", return_value="/usr/bin/kcc-c2e"):
+        with mock.patch("scraper.bundle.subprocess.run", return_value=ok) as run:
+            with mock.patch("scraper.bundle.os.path.exists", return_value=True):
+                bundle._convert_to_mobi("v.cbz", "out/v.mobi")
+    cmd = run.call_args[0][0]
+    # HQ Panel View -> region magnification (tap-to-zoom) on the Kindle
+    assert "--hq" in cmd
+    # gamma must be passed as the flag followed by its value
+    assert "-g" in cmd
+    assert cmd[cmd.index("-g") + 1] == "1.8"

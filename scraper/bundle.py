@@ -140,9 +140,35 @@ class Bundle:
                 "`git submodule update --init` then `uv pip install -e kcc/` "
                 "(plus 7-Zip on PATH and kindlegen for the MOBI step)."
             )
+        # Why each flag is here. Two of them (--hq, -g) exist to undo defaults
+        # that CHANGED when the kcc submodule moved from the old fork (KCC
+        # v5.6.1) to upstream v10.2.0 -- without them the same .cbz produces a
+        # visibly different MOBI than it used to.
+        #
+        #   -u / --upscale  scale pages that are smaller than the device
+        #                   resolution up to it, rather than leaving them small.
+        #   --hq            HQ Panel View, i.e. the tap-to-zoom magnification
+        #                   regions. KCC 5.x enabled Panel View by default;
+        #                   10.x disables it unless --hq or -2 is passed
+        #                   (comic2ebook.py: `if not options.hq and not
+        #                   options.autoscale: options.panelview = False`), so
+        #                   without this the volumes have no zoom on the Kindle.
+        #   -g 1.8          Gamma. KCC took this from the device profile, and
+        #                   the profile we use (KV, the default) carried 1.8;
+        #                   in 10.x every Kindle profile carries 1.0, which
+        #                   makes gamma correction a no-op and renders pages
+        #                   noticeably lighter and flatter. Passing it
+        #                   explicitly restores the previous tone. Caveat: an
+        #                   explicit gamma also applies to COLOUR pages, which
+        #                   the old profile-driven path deliberately skipped.
+        #   --tempdir       keeps concurrent conversions from wiping each
+        #                   other's work dirs -- see the docstring above.
         command = [
             "kcc-c2e",
             "-u",
+            "--hq",
+            "-g",
+            "1.8",
             "--tempdir",
             "-o",
             os.path.dirname(mobi_path),

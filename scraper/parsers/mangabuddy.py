@@ -174,6 +174,40 @@ def _next_data_from_html(html: str) -> Optional[dict]:
         return None
 
 
+def _authors_from_next_data(payload: Optional[dict]) -> Optional[str]:
+    """Extract the author name(s) from a SERIES page's ``__NEXT_DATA__`` payload.
+
+    mangak.io server-renders ``mangak.io/<slug>`` with the whole title record
+    embedded, and the authors sit at ``props.pageProps.initialManga.authors`` as
+    ``[{id, name, slug, url}, ...]``. Confirmed against a real capture (see
+    ``tests/test_files/mangabuddy/series_page.html``).
+
+    There is deliberately no API call for this: the reader only ever hits
+    ``/titles/<id>/chapters``, ``/meta/manga/<id>``, ``/recommendations/<id>``
+    and ``/comments/title/<id>`` -- none of which carry an author -- so the
+    server-rendered page is the only source the site exposes.
+
+    ``initialManga`` also carries a sibling ``artists`` list with an identical
+    shape. We read ONLY ``authors``, because this value feeds ComicInfo
+    ``<Writer>``; pencillers/artists are a different ComicInfo field.
+
+    Returns a comma-separated string (de-duped, order preserved), or ``None``
+    when the payload has no authors. Pure and unit-tested.
+    """
+    if not payload:
+        return None
+    page_props = payload.get("pageProps")
+    if page_props is None:
+        page_props = payload.get("props", {}).get("pageProps", {})
+    manga = (page_props or {}).get("initialManga") or {}
+    names: List[str] = []
+    for entry in manga.get("authors") or []:
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if name and name not in names:
+            names.append(name)
+    return ", ".join(names) if names else None
+
+
 # ================================ parser =================================
 
 
@@ -319,6 +353,46 @@ class MangabuddyMangaParser(BaseMangaParser):
                 f"No page images found for {self.manga_url} chapter {chapter}"
             )
         return list(enumerate(images, start=1))
+
+    def author(self) -> Optional[str]:
+        """Author(s) of the manga, for ComicInfo ``<Writer>``.
+
+        Source is the series page's embedded ``__NEXT_DATA__`` (see
+        ``_authors_from_next_data`` for why there's no API endpoint to ask
+        instead). The HTML front-end is Cloudflare-walled, so this uses the same
+        two-step as ``page_urls``: curl_cffi first, and a browser only if the
+        embedded payload isn't there. The fallback triggers on a MISSING payload,
+        not on a payload that simply lists no authors -- otherwise an
+        author-less series would pay for a browser launch for nothing.
+
+        Best effort by contract (``BaseMangaParser.author``): every failure
+        returns None, and ``bundle`` then falls back to the ini ``[config]
+        writer`` or the neutral default. Costs one extra request per run.
+        """
+        series_url = f"{self.base_url}/{self.manga_url}"
+
+        next_data: Optional[dict] = None
+        try:
+            resp = CurlCffiFetcher().get(series_url, headers=self.headers)
+            if resp.ok:
+                next_data = _next_data_from_html(resp.text)
+        except Exception as err:
+            logger.debug(f"curl_cffi series fetch failed for {series_url}: {err}")
+
+        if next_data is None:
+            logger.info(
+                f"curl_cffi did not yield the series payload; "
+                f"falling back to browser for {series_url}"
+            )
+            try:
+                next_data = _next_data_from_html(BrowserFetcher().get(series_url).text)
+            except Exception as err:  # pragma: no cover - browser/network failure
+                logger.debug(f"author lookup failed for {series_url}: {err}")
+                return None
+        else:
+            logger.info(f"author via curl_cffi (no browser): {series_url}")
+
+        return _authors_from_next_data(next_data)
 
     def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
         """Download a page image with curl_cffi (Chrome impersonation) + Referer.

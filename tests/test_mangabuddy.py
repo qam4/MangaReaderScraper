@@ -22,6 +22,7 @@ from scraper.parsers.mangabuddy import (
     Mangabuddy,
     MangabuddyMangaParser,
     MangabuddySearch,
+    _authors_from_next_data,
     _chapter_map_from_payload,
     _chapter_number_from_name,
     _images_from_chapter_payload,
@@ -35,6 +36,7 @@ SEARCH_JSON = (FIXTURES / "search_naruto.json").read_text(encoding="utf-8")
 CHAPTERS_JSON = (FIXTURES / "chapters_naruto.json").read_text(encoding="utf-8")
 CHAPTER_PAGE_JSON = (FIXTURES / "chapter_page.json").read_text(encoding="utf-8")
 CHAPTER_PAGE_HTML = (FIXTURES / "chapter_page.html").read_text(encoding="utf-8")
+SERIES_PAGE_HTML = (FIXTURES / "series_page.html").read_text(encoding="utf-8")
 
 
 def _ok(text):
@@ -255,6 +257,131 @@ def test_page_urls_no_images_anywhere_raises():
     ):
         with pytest.raises(ChapterDoesntExist):
             parser.page_urls("1")
+
+
+# ============================== author ===================================
+
+
+def test_authors_from_next_data_real_series_page_shape():
+    # the authors live at props.pageProps.initialManga.authors
+    data = _next_data_from_html(SERIES_PAGE_HTML)
+    assert _authors_from_next_data(data) == "Kishimoto Masashi"
+
+
+def test_authors_from_next_data_joins_and_dedupes_multiple():
+    payload = {
+        "props": {
+            "pageProps": {
+                "initialManga": {
+                    "authors": [
+                        {"name": "Alice"},
+                        {"name": "Bob"},
+                        {"name": "Alice"},  # dupe
+                    ]
+                }
+            }
+        }
+    }
+    assert _authors_from_next_data(payload) == "Alice, Bob"
+
+
+def test_authors_from_next_data_ignores_artists():
+    # artists is a sibling field of the same shape; <Writer> must not take it
+    payload = {
+        "props": {
+            "pageProps": {
+                "initialManga": {"artists": [{"name": "Someone"}], "authors": []}
+            }
+        }
+    }
+    assert _authors_from_next_data(payload) is None
+
+
+def test_authors_from_next_data_missing_pieces_return_none():
+    assert _authors_from_next_data(None) is None
+    assert _authors_from_next_data({}) is None
+    assert _authors_from_next_data({"props": {"pageProps": {}}}) is None
+    assert (
+        _authors_from_next_data({"props": {"pageProps": {"initialManga": {}}}}) is None
+    )
+
+
+def test_author_uses_curl_cffi_when_it_clears_the_series_page():
+    parser = MangabuddyMangaParser("naruto")
+    browser = mock.Mock()
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            return_value=FetchResult("u", 200, SERIES_PAGE_HTML),
+        ) as curl_get,
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
+    ):
+        author = parser.author()
+
+    assert author == "Kishimoto Masashi"
+    assert curl_get.call_args[0][0] == "https://mangak.io/naruto"
+    browser.get.assert_not_called()  # no browser launch needed
+
+
+def test_author_falls_back_to_browser_when_curl_is_challenged():
+    parser = MangabuddyMangaParser("naruto")
+    browser = mock.Mock()
+    browser.get.return_value = FetchResult("u", 200, SERIES_PAGE_HTML)
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            return_value=FetchResult("u", 403, "<html>Just a moment...</html>"),
+        ),
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
+    ):
+        author = parser.author()
+
+    browser.get.assert_called_once()
+    assert author == "Kishimoto Masashi"
+
+
+def _series_html_without_authors() -> str:
+    """The series fixture with ``authors`` emptied, rebuilt from the parsed
+    payload rather than by string surgery -- so it can't silently stop matching
+    if the fixture's JSON formatting (or its line endings) ever change."""
+    payload = _next_data_from_html(SERIES_PAGE_HTML)
+    assert payload is not None
+    payload["props"]["pageProps"]["initialManga"]["authors"] = []
+    return (
+        '<html><body><script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(payload)
+        + "</script></body></html>"
+    )
+
+
+def test_author_does_not_launch_browser_for_an_authorless_series():
+    # payload present but no authors -> None WITHOUT paying for a browser
+    parser = MangabuddyMangaParser("naruto")
+    no_authors = _series_html_without_authors()
+    browser = mock.Mock()
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            return_value=FetchResult("u", 200, no_authors),
+        ),
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
+    ):
+        assert parser.author() is None
+    browser.get.assert_not_called()
+
+
+def test_author_returns_none_when_everything_fails():
+    parser = MangabuddyMangaParser("naruto")
+    browser = mock.Mock()
+    browser.get.side_effect = Exception("no browser")
+    with (
+        mock.patch(
+            "scraper.parsers.mangabuddy.CurlCffiFetcher.get",
+            side_effect=Exception("dns"),
+        ),
+        mock.patch("scraper.parsers.mangabuddy.BrowserFetcher", return_value=browser),
+    ):
+        assert parser.author() is None
 
 
 # ============================== site parser ==============================
