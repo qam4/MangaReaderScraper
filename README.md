@@ -168,20 +168,28 @@ The `--bundle` option groups chapters into volumes and converts each to **MOBI**
 the base install, because it shells out to [Kindle Comic Converter
 (KCC)](https://github.com/ciromattia/kcc):
 
-1. **Fetch KCC** (a git submodule pinned to upstream KCC). A plain `git clone`
-   does not pull submodules, so fetch it explicitly:
+1. **Install KCC** via the `bundle` extra, which puts the `kcc-c2e` CLI on your
+   PATH along with all eleven of its runtime dependencies:
    ```bash
-   git submodule update --init
+   uv sync --extra bundle
    ```
-   (Or clone the repo with `git clone --recurse-submodules` in the first place.)
-2. **Install it editable** so the `kcc-c2e` CLI is on your PATH:
-   ```bash
-   uv pip install -e kcc/
-   ```
-3. **7-Zip** (`7z` on your PATH) is required by KCC for archive handling.
+   KCC is pinned in the lockfile to upstream tag `v10.2.0`, so this is
+   reproducible. It is an extra rather than a base dependency because KCC
+   requires PySide6 (a full Qt stack) even for its CLI.
+
+   Do **not** use `uv pip install -e kcc/` (what older revisions of this README
+   said). That installs outside the lockfile, so a later venv rebuild leaves
+   `kcc-c2e` on PATH with its imports broken — `natsort`, `psutil`, `pymupdf`,
+   `numpy`, `mozjpeg_lossless_optimization`, `distro` and friends all disappear.
+
+   The `kcc/` git submodule is no longer needed to *run* bundling; it is kept
+   only for reading KCC's source when diagnosing output changes. If you want it,
+   `git submodule update --init` (or clone with `--recurse-submodules`). Its
+   commit and the lockfile's tag must be bumped together.
+2. **7-Zip** (`7z` on your PATH) is required by KCC for archive handling.
    Install it from [7-zip.org](https://www.7-zip.org/) (Windows users: add the
    install dir, e.g. `C:\Program Files\7-Zip`, to PATH).
-4. **kindlegen** does the final CBZ/EPUB -> MOBI step. Amazon folded it into the
+3. **kindlegen** does the final CBZ/EPUB -> MOBI step. Amazon folded it into the
    Kindle Previewer app and no longer ships the standalone binary, so a Windows
    build (`kindlegen.exe`) is vendored at the repo root. On other platforms you
    must supply your own `kindlegen` on PATH.
@@ -220,6 +228,40 @@ source = mangabuddy
 
 # default filetype to store mangas as
 filetype = pdf
+```
+
+These optional keys are not written on first run, but are read if you add them:
+
+```ini
+[config]
+
+# ComicInfo <Writer> fallback, used when the source exposes no author
+# (MangaFire and mangabuddy do; the others don't). Defaults to "Unknown".
+writer = Jane Doe
+
+# parallel download/bundle workers. Defaults to min(4, CPU count).
+jobs = 4
+
+# flags passed through to kcc-c2e when bundling to MOBI. Defaults to
+# "-u --hq -g 1.8". Any KCC flag works -- this is a verbatim passthrough, so
+# `kcc-c2e --help` is the reference. `--tempdir` is always added (it keeps
+# parallel conversions from wiping each other's work dirs), and `-o` plus the
+# input path are always supplied by the scraper. An empty value means "no
+# rendering flags at all", which is different from omitting the key.
+#
+# Useful ones:
+#   -p KPW34     target a specific device profile (default is KV, 1072x1448;
+#                `kcc-c2e --help` lists them all)
+#   --hq         HQ Panel View -- tap-to-zoom on Kindle. In the default because
+#                KCC 10.x disables Panel View unless this or -2 is passed.
+#   -g 1.8       gamma. In the default because KCC 10.x sets every Kindle
+#                profile's gamma to 1.0, which renders pages lighter/flatter
+#                than KCC 5.x did.
+#   -s           stretch to the device resolution instead of fitting; avoids
+#                KCC's auto-crop trimming a sliver off pages whose aspect ratio
+#                is close to the device's.
+#   --colorautocontrast   apply autocontrast to colour pages (10.x skips them)
+kcc_args = -u --hq -g 1.8
 ```
 
 ## How fetching works (briefly)

@@ -4,6 +4,7 @@ Bundle manga into volumes with multiple chapters
 
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -37,6 +38,57 @@ def _configured_writer() -> str:
         return settings()["config"].get("writer", WRITER_DEFAULT) or WRITER_DEFAULT
     except Exception:
         return WRITER_DEFAULT
+
+
+# Default kcc-c2e flags, used when the ini has no ``[config] kcc_args``.
+# Everything here is a rendering choice you may legitimately want to change per
+# device, which is why it's configurable -- see ``_kcc_args``.
+#
+#   -u / --upscale  scale pages smaller than the device resolution up to it,
+#                   rather than leaving them small. NOTE this is also what
+#                   pushes small pages into KCC's resize/auto-crop path at all
+#                   (image.py: `elif method == BICUBIC and not upscale: pass`).
+#   --hq            HQ Panel View -- the tap-to-zoom magnification regions.
+#                   KCC 5.x enabled Panel View by default; 10.x disables it
+#                   unless --hq or -2 is passed (comic2ebook.py: `if not
+#                   options.hq and not options.autoscale: options.panelview =
+#                   False`), so without this the volumes have no zoom.
+#   -g 1.8          Gamma. KCC used to take this from the device profile and the
+#                   default KV profile carried 1.8; in 10.x every Kindle profile
+#                   carries 1.0, making gamma correction a no-op and rendering
+#                   pages lighter and flatter. Caveat: an explicit gamma also
+#                   applies to COLOUR pages, which the old profile-driven path
+#                   deliberately skipped.
+#
+# Deliberately NOT here: ``-o`` and the input path (we compute those), and
+# ``--tempdir`` (a correctness requirement, force-injected by ``_kcc_args``).
+KCC_ARGS_DEFAULT = "-u --hq -g 1.8"
+
+# Required for parallel bundling; see ``Bundle._convert_to_mobi``. Injected even
+# when the user overrides ``kcc_args``, because dropping it silently corrupts
+# concurrent conversions rather than merely looking different.
+KCC_REQUIRED_ARGS = ["--tempdir"]
+
+
+def _kcc_args() -> List[str]:
+    """The kcc-c2e flags to pass, from the ini ``[config] kcc_args``.
+
+    Passthrough by design: the value is split with ``shlex`` and handed to
+    kcc-c2e as-is, so any KCC flag works (``-p KPW34`` for a different device
+    profile, ``-s`` to stretch instead of crop, ``--colorautocontrast``, ...)
+    without this module needing to know about it. KCC validates them.
+
+    Absent key -> ``KCC_ARGS_DEFAULT``. Present but EMPTY (``kcc_args =``) ->
+    no flags, for "just run plain kcc-c2e". ``KCC_REQUIRED_ARGS`` is always
+    appended, de-duped if the user listed it too. Pure apart from ``settings()``.
+    """
+    try:
+        configured = settings()["config"].get("kcc_args", None)
+    except Exception:
+        configured = None
+    raw = KCC_ARGS_DEFAULT if configured is None else configured
+    args = shlex.split(raw)
+    return args + [a for a in KCC_REQUIRED_ARGS if a not in args]
 
 
 def extract_cbz(archive_path, cbz_output_path):
@@ -105,10 +157,29 @@ class Bundle:
         )
 
     def is_obsolete(self, target: str, dependencies: List[str]) -> bool:
+        """make-style check: does ``target`` need rebuilding from these inputs?
+
+        True when the target is absent, when any input is newer than it, or when
+        an input is MISSING. That last case matters: a chapter that failed to
+        download is still registered in the Manga (under an ``-incomplete``
+        name) but no file was ever written for it, and
+        ``os.path.getmtime`` on it raised ``FileNotFoundError`` here -- from
+        OUTSIDE ``create_volume``'s try block, so it escaped through
+        ``bundle``'s pool and aborted every remaining volume. Reporting
+        "obsolete" instead lets the build attempt fail cleanly inside the try,
+        which skips just this volume and leaves the existing target intact.
+        """
         if not os.path.isfile(target):
             return True
+        target_mtime = os.path.getmtime(target)
         for dependency in dependencies:
-            if os.path.getmtime(target) - os.path.getmtime(dependency) < 0:
+            if not os.path.isfile(dependency):
+                logger.warning(
+                    f"Chapter file {dependency} is missing; cannot rebuild "
+                    f"{os.path.basename(target)} from it"
+                )
+                return True
+            if target_mtime - os.path.getmtime(dependency) < 0:
                 return True
         return False
 
@@ -136,40 +207,15 @@ class Bundle:
         if shutil.which("kcc-c2e") is None:
             raise RuntimeError(
                 "kcc-c2e not found on PATH -- MOBI bundling needs Kindle Comic "
-                "Converter installed. See the README 'Bundling to MOBI' section: "
-                "`git submodule update --init` then `uv pip install -e kcc/` "
-                "(plus 7-Zip on PATH and kindlegen for the MOBI step)."
+                "Converter installed. Run `uv sync --extra bundle` (plus 7-Zip "
+                "on PATH and kindlegen for the MOBI step). See the README "
+                "'Bundling to MOBI' section."
             )
-        # Why each flag is here. Two of them (--hq, -g) exist to undo defaults
-        # that CHANGED when the kcc submodule moved from the old fork (KCC
-        # v5.6.1) to upstream v10.2.0 -- without them the same .cbz produces a
-        # visibly different MOBI than it used to.
-        #
-        #   -u / --upscale  scale pages that are smaller than the device
-        #                   resolution up to it, rather than leaving them small.
-        #   --hq            HQ Panel View, i.e. the tap-to-zoom magnification
-        #                   regions. KCC 5.x enabled Panel View by default;
-        #                   10.x disables it unless --hq or -2 is passed
-        #                   (comic2ebook.py: `if not options.hq and not
-        #                   options.autoscale: options.panelview = False`), so
-        #                   without this the volumes have no zoom on the Kindle.
-        #   -g 1.8          Gamma. KCC took this from the device profile, and
-        #                   the profile we use (KV, the default) carried 1.8;
-        #                   in 10.x every Kindle profile carries 1.0, which
-        #                   makes gamma correction a no-op and renders pages
-        #                   noticeably lighter and flatter. Passing it
-        #                   explicitly restores the previous tone. Caveat: an
-        #                   explicit gamma also applies to COLOUR pages, which
-        #                   the old profile-driven path deliberately skipped.
-        #   --tempdir       keeps concurrent conversions from wiping each
-        #                   other's work dirs -- see the docstring above.
+        # Rendering flags come from the ini (see _kcc_args / KCC_ARGS_DEFAULT);
+        # -o and the input path are ours because they're computed per volume.
         command = [
             "kcc-c2e",
-            "-u",
-            "--hq",
-            "-g",
-            "1.8",
-            "--tempdir",
+            *_kcc_args(),
             "-o",
             os.path.dirname(mobi_path),
             cbz_path,
