@@ -32,6 +32,31 @@ upload = [
     "dropbox",
     "pcloud",
 ]
+# MOBI bundling (--bundle) shells out to Kindle Comic Converter's `kcc-c2e`.
+# Declaring it here makes `uv sync --extra bundle` install KCC *and* its eleven
+# runtime deps (natsort, psutil, PyMuPDF, numpy, mozjpeg-lossless-optimization,
+# distro, packaging, python-slugify, ...) reproducibly from the lockfile.
+# Previously the only thing that installed them was a manual
+# `uv pip install -e kcc/`, so any venv rebuild left `kcc-c2e` on PATH with its
+# imports broken -- see the README 'Bundling to MOBI' section.
+# Opt-in on purpose: KCC hard-requires PySide6 (a full Qt stack) in
+# install_requires even for the CLI, which nobody should pay for unless they
+# bundle. Deliberately NOT in the dev group -- the test suite mocks kcc-c2e, so
+# CI must not drag Qt in.
+bundle = [
+    "KindleComicConverter",
+]
+
+[tool.uv.sources]
+# Installed from upstream git, not from the `kcc/` submodule path, on purpose:
+# a path source has to build its metadata at LOCK time, so `uv lock`/`uv sync`
+# would fail for everyone -- bundlers or not -- whenever the submodule isn't
+# checked out yet. PyPI is not an option either (stale at 5.4.1, from 2017,
+# which predates the --tempdir flag parallel bundling needs). See backlog G1.
+#
+# The `kcc/` submodule stays for reading/diagnosing KCC's behaviour, so this tag
+# and the submodule commit must be bumped TOGETHER (both are v10.2.0 today).
+KindleComicConverter = { git = "https://github.com/ciromattia/kcc", tag = "v10.2.0" }
 
 [project.scripts]
 manga-scraper = "scraper.__main__:cli_entry"

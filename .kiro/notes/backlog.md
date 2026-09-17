@@ -721,11 +721,68 @@ Two distinct root causes found:
   - CAVEAT (all options): KCC hard-requires PySide6 (Qt, heavy) in
     install_requires even for the CLI -- so installing KCC is heavy either way;
     bundling is already opt-in/extra-setup, so that's consistent.
-  - DECISION: keep the submodule for now (no functional benefit to changing; the
-    swap touches the install path + needs a heavy live `uv sync --extra bundle`
-    to validate). Option 2 is the tidy/idiomatic choice if/when we care; option 3
-    only if publishing to PyPI. Revisit deliberately, not as a drive-by.
-  - PRIORITY: low -- cosmetic/DX, no correctness impact.
+  - ~~DECISION: keep the submodule for now~~ -- SUPERSEDED, see RESOLVED below.
+  - RESOLVED (option 2 implemented): this stopped being cosmetic once it caused a
+    real failure. The user hit module-import errors from kcc on a fresh laptop
+    setup, because `uv pip install -e kcc/` installs OUTSIDE the lockfile: any
+    venv rebuild leaves `kcc-c2e` on PATH with all eleven of its runtime deps
+    (natsort, psutil, PyMuPDF, numpy, mozjpeg-lossless-optimization, distro,
+    packaging, python-slugify, ...) gone. Our `pyproject.toml` declared none of
+    them and knew nothing about the submodule, so bundling was one `uv sync`
+    away from broken at all times.
+    - Added a `bundle` optional extra + `[tool.uv.sources] KindleComicConverter =
+      { git = ..., tag = "v10.2.0" }`. `uv sync --extra bundle` now installs KCC
+      and its deps reproducibly from `uv.lock`.
+    - GIT source, not the `kcc/` path: a path source must build its metadata at
+      LOCK time, so `uv lock`/`uv sync` would fail for EVERY user -- bundlers or
+      not -- whenever the submodule isn't checked out. That would have been a
+      worse regression than the bug being fixed.
+    - Verified: `uv lock` resolves the tag to `dc4475bc`, the SAME commit the
+      submodule is pinned to. `uv sync --extra bundle --dry-run` swaps the
+      editable path install for the git pin.
+    - Submodule KEPT (not dropped as option 2 suggested): reading KCC's source
+      is what let us diagnose the Panel View / gamma / auto-crop changes. Its
+      commit and the lockfile tag must now be bumped TOGETHER.
+    - HAZARD to know: a plain `uv sync` (no `--extra bundle`) uninstalls kcc +
+      PySide6. That predates this change (kcc was never in the lock); the
+      difference is there is now a supported way back. A plain `uv run` does not
+      prune -- verified.
+
+- [ ] **G2 [TEST] `--bundle` is effectively untested (31% coverage)**
+  - MEASURED: `scraper/bundle.py` is at 31%, 100 of 145 statements never
+    executed. `tests/test_bundle.py` covers only `_convert_to_mobi`'s command
+    line + error handling, the `<Writer>` source, `_kcc_args` resolution, and
+    (new) `is_obsolete`. Untested: `create_volume`, `bundle()`, `extract_cbz`,
+    `ceiling_division`, `_get_manga_download_dir`, `_get_manga_bundle_dir`.
+  - WHY IT MATTERS: volume naming, the `vol01` zero-padding, the ComicInfo body
+    and the internal archive layout are all unpinned, which is exactly why a
+    whole session of Kindle-output regressions (Panel View, gamma, page tone,
+    chapter-folder renaming) was invisible until the user noticed them ON THE
+    DEVICE. A test would have caught the layout change from the stable-index
+    rename for free.
+  - PROPOSED (no network needed; `tests/test_files/jpgs/*.jpg` are enough to
+    build real chapter `.cbz` inputs, and `_convert_to_mobi` gets mocked):
+    1. `create_volume` end to end -- assert the exact output path
+       (`<bundle>/<name>/cbz/<series> - <name> vol1 ch1-3.cbz`), that the archive
+       contains `ComicInfo.xml` plus one folder per chapter named after the
+       chapter file stem, and that page entries are ordered.
+    2. `bundle()` volume splitting -- 7 chapters at 3/volume gives 3 volumes with
+       the right chapter ranges, and `volume_digits` flips `vol1` -> `vol01` at 10
+       volumes.
+    3. `extract_cbz` -- bad zip, missing file, pre-existing-directory cleanup.
+    4. `_get_manga_bundle_dir` -- the fallback chain to `manga_directory` then
+       `os.getcwd()`.
+    5. ComicInfo body -- note `<Series>` is currently formatted with the VOLUME
+       title, not the series name (`series=title` at the format call), and both
+       KCC versions take the book title from that field. Pin whatever we decide
+       is correct rather than freezing the oddity by accident.
+  - ALSO SPOTTED, not fixed: `extract_cbz` does
+    `logger.error("An error occurred:", e)` -- a second positional arg that isn't
+    a format arg, so any exception other than `BadZipFile`/`FileNotFoundError`
+    emits a logging error instead of the message.
+  - PRIORITY: high for a bundling change, low while bundling is untouched. The
+    `is_obsolete` missing-chapter crash found while writing G2's analysis was
+    fixed separately (with a test that was verified to fail first).
 
 ---
 
