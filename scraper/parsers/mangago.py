@@ -84,6 +84,40 @@ def _chapter_map_from_soup(soup: BeautifulSoup) -> Dict[str, str]:
     return mapping
 
 
+def _authors_from_soup(soup: BeautifulSoup) -> Optional[str]:
+    """Extract the author(s) from a mangago series page, for ComicInfo ``<Writer>``.
+
+    The series page's info table holds one ``<td>`` per field, each introduced by
+    a ``<label>``: ``Status:``, ``Author:``, ``Genre(s):``, ``Alternative:``,
+    ``Latest:``. The authors are the anchors inside the ``Author:`` cell, linking
+    to that author's search page::
+
+        <td><label>Author: </label>
+            <a href="/r/l_search/?name=kishimoto masashi">Kishimoto Masashi</a>
+            1999 released.</td>
+
+    Anchored on the LABEL rather than on the ``l_search`` href: the label is the
+    semantic marker, whereas a search link could legitimately appear elsewhere on
+    the page. The trailing free text ("1999 released.") is ignored because only
+    anchor text is read. Multiple authors -> comma-separated, de-duped, order
+    preserved. Returns None when the field is absent or empty. Pure/unit-tested.
+    """
+    names: List[str] = []
+    for label in soup.find_all("label"):
+        if not isinstance(label, Tag):
+            continue
+        if text(label).strip().rstrip(":").lower() != "author":
+            continue
+        container = label.find_parent("td") or label.parent
+        if not isinstance(container, Tag):
+            continue
+        for anchor in container.find_all("a"):
+            name = text(anchor).strip()
+            if name and name not in names:
+                names.append(name)
+    return ", ".join(names) if names else None
+
+
 def _image_urls_from_soup(soup: BeautifulSoup) -> List[str]:
     """Extract the ordered page-image urls from a mangago reader page.
 
@@ -116,9 +150,26 @@ class MangagoMangaParser(BaseMangaParser):
     def __init__(self, manga_url: str, base_url: str = BASE_URL) -> None:
         super().__init__(manga_url, base_url)
         self._chapter_urls: Dict[str, str] = {}
+        self._series_soup: Optional[BeautifulSoup] = None
 
     def _manga_page_url(self) -> str:
         return f"{self.base_url}/read-manga/{self.manga_url.replace(' ', '_')}"
+
+    def _series_page(self) -> BeautifulSoup:
+        """The series page soup, fetched once per instance and cached.
+
+        Both ``all_chapter_ids`` (chapter list) and ``author`` (ComicInfo
+        ``<Writer>``) read this same page, and ``MangaBuilder`` calls ``author()``
+        BEFORE ``all_chapter_ids()`` -- so whichever runs first pays for the one
+        browser fetch and the other reuses the soup. Without the cache the author
+        lookup would double the series-page fetches, and this page needs a real
+        browser (Cloudflare + JS), which is the expensive part of a run.
+        """
+        if self._series_soup is None:
+            url = self._manga_page_url()
+            logger.info(f"Manga url={url}")
+            self._series_soup = self._fetch_manga_page(url, BrowserFetcher())
+        return self._series_soup
 
     def all_chapter_ids(self) -> Iterable[str]:
         """All chapter numbers for the manga, in canonical order.
@@ -127,9 +178,7 @@ class MangagoMangaParser(BaseMangaParser):
         ``{number: reader_url}`` map so ``chapter_url`` can turn a chapter number
         back into the url the reader page needs.
         """
-        url = self._manga_page_url()
-        logger.info(f"Manga url={url}")
-        soup = self._fetch_manga_page(url, BrowserFetcher())
+        soup = self._series_page()
         self._chapter_urls = _chapter_map_from_soup(soup)
         if not self._chapter_urls:
             raise MangaDoesNotExist(
@@ -147,6 +196,21 @@ class MangagoMangaParser(BaseMangaParser):
                 f"Chapter {chapter} not found for {self.manga_url}"
             )
         return url
+
+    def author(self) -> Optional[str]:
+        """Author(s) from the series page's ``Author:`` field.
+
+        Costs no extra request: it shares the cached series page with
+        ``all_chapter_ids`` (see ``_series_page``). Best effort per the
+        ``BaseMangaParser.author`` contract -- any fetch/parse failure returns
+        None and bundling falls back to the ini ``[config] writer``.
+        """
+        try:
+            soup = self._series_page()
+        except Exception as err:
+            logger.debug(f"author lookup failed for {self.manga_url}: {err}")
+            return None
+        return _authors_from_soup(soup)
 
     def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
         """Return ``[(page_number, image_url)]`` for every page in a chapter.

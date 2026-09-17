@@ -14,6 +14,7 @@ from scraper.exceptions import ChapterDoesntExist
 from scraper.parsers.mangago import (
     MangagoMangaParser,
     MangagoSearch,
+    _authors_from_soup,
     _chapter_map_from_soup,
     _chapter_number_from_label,
     _image_urls_from_soup,
@@ -108,6 +109,59 @@ def test_page_urls_raises_when_no_images():
         parser._chapter_urls = {"1": "https://www.mangago.me/x/mr/v1/c1/pg-1/"}
         with pytest.raises(ChapterDoesntExist):
             parser.page_urls("1")
+
+
+# -------------------------------- author ---------------------------------
+
+
+def test_authors_from_soup_reads_the_author_field():
+    assert _authors_from_soup(_soup(CHAPTERS_HTML)) == "Kishimoto Masashi"
+
+
+def test_authors_from_soup_joins_and_dedupes_multiple():
+    html = """<table><tr><td><label>Author: </label>
+        <a href="/r/l_search/?name=a">Alice</a>
+        <a href="/r/l_search/?name=b">Bob</a>
+        <a href="/r/l_search/?name=a">Alice</a>
+        1999 released.</td></tr></table>"""
+    assert _authors_from_soup(_soup(html)) == "Alice, Bob"
+
+
+def test_authors_from_soup_ignores_other_labelled_fields():
+    # only the Author: cell counts -- not Status:, Genre(s):, Alternative:
+    html = """<table>
+        <tr><td><label>Status: </label><a href="/x">Completed</a></td></tr>
+        <tr><td><label>Genre(s): </label><a href="/g/action">Action</a></td></tr>
+        </table>"""
+    assert _authors_from_soup(_soup(html)) is None
+
+
+def test_authors_from_soup_none_when_field_empty():
+    html = "<table><tr><td><label>Author: </label>unknown</td></tr></table>"
+    assert _authors_from_soup(_soup(html)) is None
+
+
+def test_author_shares_the_cached_series_page_with_chapter_list():
+    """The author must not cost a second browser fetch.
+
+    MangaBuilder calls author() before all_chapter_ids(), and both read the
+    series page, so one fetch has to serve both.
+    """
+    with mock.patch("scraper.parsers.mangago.BrowserFetcher") as BF:
+        BF.return_value.get.return_value = mock.Mock(text=CHAPTERS_HTML)
+        parser = MangagoMangaParser("naruto")
+        author = parser.author()  # runs first, as in the real pipeline
+        ids = list(parser.all_chapter_ids())
+
+    assert author == "Kishimoto Masashi"
+    assert "700.6" in ids  # chapter list still parsed correctly
+    BF.return_value.get.assert_called_once()  # ONE series-page fetch total
+
+
+def test_author_returns_none_on_fetch_failure():
+    with mock.patch("scraper.parsers.mangago.BrowserFetcher") as BF:
+        BF.return_value.get.side_effect = Exception("browser down")
+        assert MangagoMangaParser("naruto").author() is None
 
 
 # -------------------------------- search ---------------------------------
