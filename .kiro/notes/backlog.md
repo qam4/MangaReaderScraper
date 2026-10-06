@@ -778,7 +778,9 @@ Two distinct root causes found:
        `Naruto vol1 ch1-2` -> `Naruto Vol. 01`, and the table of contents went
        `Naruto_chapter_748_700` -> `Chapter 700`.
   - STILL OPEN from the list above: 2 (`bundle()` splitting + `vol01`
-    padding), 3 (`extract_cbz`), 4 (`_get_manga_bundle_dir` fallbacks).
+    padding) and 4 (`_get_manga_bundle_dir` fallbacks). Item 3 is MOOT:
+    `extract_cbz` no longer exists (G3 item 2 copies pages archive-to-archive).
+    Coverage after G3: `scraper/bundle.py` 97% (was 31%).
   - CALIBRE CONTRACT (recorded so it is never "cleaned up" again): the volume
     filename `<series> - <series> vol<N> ch<a>-<b>.cbz` repeats the series name
     ON PURPOSE. Calibre's built-in CBZ reader only parses a ComicBookInfo zip
@@ -787,13 +789,79 @@ Two distinct root causes found:
     metadata from the filename via a regex. The tested regex is in the README.
     On a fresh Calibre the default regex puts the volume name into Author --
     which is exactly what the user hit on a new computer.
-  - ALSO SPOTTED, not fixed: `extract_cbz` does
-    `logger.error("An error occurred:", e)` -- a second positional arg that isn't
-    a format arg, so any exception other than `BadZipFile`/`FileNotFoundError`
-    emits a logging error instead of the message.
+  - ~~ALSO SPOTTED: `extract_cbz` did `logger.error("An error occurred:", e)`~~
+    -- RESOLVED by removal: the function is gone (G3 item 2), and a failed
+    chapter read now logs `Failed to build <volume> (<cause>); skipping volume`.
   - PRIORITY: high for a bundling change, low while bundling is untouched. The
     `is_obsolete` missing-chapter crash found while writing G2's analysis was
     fixed separately (with a test that was verified to fail first).
+
+- [x] **G3 [STRUCT] Rebuild/skip dependencies across download + bundle (6 items)**
+  - ORIGIN: user asked whether the mtime "dependency scheme" could get in the
+    way silently. A review of every skip/reuse decision found six defects, two
+    reproduced before anything was written. All six fixed in order, each with a
+    test verified to fail on the pre-fix code.
+  - 1. **Rebuilding a MOBI kept the stale one and reported success.**
+    REPRODUCED with the real kcc-c2e + kindlegen: KCC never overwrites --
+    `getOutputFilename` (comic2ebook.py) writes `<stem>_kcc0.mobi` beside an
+    existing target -- and `_convert_to_mobi` then checked that `<stem>.mobi`
+    existed, which the STALE file satisfied. Also in the old v5.6.1 fork, so it
+    predates the KCC bump. FIX: convert into a fresh per-volume temp folder
+    inside mobi/, require exactly `<stem>.mobi` there, `os.replace` onto the
+    target; temp removed in `finally`; failure leaves the previous MOBI intact.
+    Re-run of the real repro: one MOBI, new content, no `_kcc0`, no leftovers.
+    NOTE: this also made the advice "delete only the volume .cbz" (given to the
+    user, then corrected) wrong before the fix.
+  - 2. **Rebuilds were blind to settings and content.** A volume counted as
+    current when newer than its chapter files; a MOBI when newer than its
+    volume. So scraper updates, author changes and `kcc_args` edits never
+    reached existing files. FIX: (a) volume = rebuild when the ComicInfo.xml it
+    would get differs from the one inside it (plan first, page counts from the
+    chapter zips' namelists; the same list is counted and copied, so bookmark
+    indices can't drift); (b) `BUNDLE_FORMAT` in ComicInfo `<Notes>` (KCC
+    ignores it) -- bump it and every volume self-invalidates; (c) MOBI =
+    `<manga>/.mobi-stamps.json` records kcc args + KCC version per MOBI,
+    outside mobi/ so a Kindle copy carries no clutter; missing stamp = rebuild
+    once. Real kcc-c2e: conversions per run 1, 0, (args changed) 1, 0.
+    Side effects: `extract_cbz` and `_get_manga_download_dir` removed.
+  - 3. **Chapter identity included the list position.** REPRODUCED: the site
+    inserting chapter 9.5 re-downloaded 10, 11, 12 under new names and left both
+    copies (8 files for 5 chapters). Files were `<name>_chapter_<pos>_<id>`;
+    the "stable index" fix (2ab81c8, recorded under UX additions) made the name
+    independent of the SELECTION but not of the site's list changing. FIX:
+    `<name>_chapter_<id>`; position kept only in memory (`Chapter.order`) for
+    reading order. Old-style files are renamed in place (newest wins), extras
+    MOVED to `.superseded/`, never deleted; only ids the site lists are touched.
+    Volume folders got a position prefix (`003_<stem>`) because KCC
+    natural-sorts them and opaque ids / `700.10` would otherwise misorder the
+    bookmarks -- proven: the ordering test fails with the prefix removed.
+    `BUNDLE_FORMAT` -> 3.
+  - 4. **Bundling needed the site online** (chapter list + author fetched on
+    every run, though all inputs are local). FIX: downloads write
+    `<manga>/.series.json` (source, url, name, author, FULL ordered list);
+    `--offline` with `--bundle` rebuilds from that + files on disk, never
+    touching the network or even the configured source. Missing chapter files
+    are registered incomplete, exactly as online, so volume boundaries match.
+    Equivalence test (online then offline -> both volumes evaluated and found
+    current, nothing rebuilt) PROVEN falsifiable: dropping the author or a
+    chapter from the offline Manga makes it fail.
+  - 5. **Orphaned volumes were never mentioned** (other `--bundle N` /
+    `--chapters` sets, `_kcc0` duplicates; Calibre imports the lot). FIX:
+    `bundle()` ends with a warning listing them; reports only. Found while
+    doing it: the MOBI path was `cbz_path.replace("cbz", "mobi")`, which also
+    rewrote "cbz" inside series names ("Xcbz Saga" -> "Xmobi Saga" folder).
+    Naming now has ONE source, `Bundle._volume_paths`.
+  - 6. **The series name forked the download folder**: search names it after
+    the result title, `--manga` after the slug -> two folders, full
+    re-download. FIX: reuse a folder whose `.series.json` has the same source +
+    url (`--override_name` always wins); for record-less old folders a
+    lookalike name is only WARNED about, with the `--override_name` to use --
+    never adopted on a guess.
+  - USER-VISIBLE ON NEXT RUN: chapter files renamed (no re-download); every
+    volume rebuilt once (format 3) and every MOBI once (no stamp yet). Uploads
+    (unmaintained) now use the new chapter names too.
+  - NOT VERIFIED: anything on the live sites or a device. All checks were
+    offline: unit tests, plus the real kcc-c2e/kindlegen on fixture images.
 
 ---
 
