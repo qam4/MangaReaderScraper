@@ -2,12 +2,15 @@
 Bundle manga into volumes with multiple chapters
 """
 
+import functools
+import json
 import logging
 import os
 import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -78,6 +81,14 @@ KCC_ARGS_DEFAULT = "-u --hq -g 1.8 --metadatatitle 1"
 # concurrent conversions rather than merely looking different.
 KCC_REQUIRED_ARGS = ["--tempdir"]
 
+
+# Version of what create_volume puts in a volume (ComicInfo fields, archive
+# layout). Written into ComicInfo <Notes>, which KCC ignores, so it travels
+# inside the artifact: bump it whenever the volume format changes and every
+# existing volume compares as stale and is rebuilt on the next --bundle,
+# instead of users having to know to delete them. 2 = Series/Volume/Title +
+# chapter bookmarks.
+BUNDLE_FORMAT = 2
 
 # File extensions KCC treats as pages. Mirrors kindlecomicconverter.shared
 # .IMAGE_TYPES (v10.2.0) instead of importing it, because kcc is an optional
@@ -178,6 +189,8 @@ def _comic_info_xml(
         ("Volume", str(volume)),
         ("Title", title),
         ("Writer", writer),
+        # ignored by KCC; it is the in-artifact format stamp (BUNDLE_FORMAT)
+        ("Notes", f"MangaReaderScraper bundle format {BUNDLE_FORMAT}"),
     ):
         if value and value.strip():
             ET.SubElement(root, tag).text = value
@@ -211,24 +224,67 @@ def _kcc_args() -> List[str]:
     return args + [a for a in KCC_REQUIRED_ARGS if a not in args]
 
 
-def extract_cbz(archive_path, cbz_output_path):
-    if os.path.exists(cbz_output_path):
-        logger.debug(f"{archive_path} already unzipped")
-        shutil.rmtree(cbz_output_path)
+# Per-series record of HOW each MOBI was built, so a change of kcc-c2e flags or
+# of the KCC version rebuilds it (file times alone can't see that). Lives in the
+# series' bundle folder, beside cbz/ and mobi/ rather than inside mobi/, so
+# copying the mobi/ folder to a Kindle carries no clutter.
+MOBI_STAMPS_FILE = ".mobi-stamps.json"
+# Volumes convert on a ThreadPool and all record into the one stamps file.
+_STAMPS_LOCK = threading.Lock()
 
-    logger.debug(f"Unzipping {archive_path} to {cbz_output_path}")
+
+@functools.lru_cache(maxsize=1)
+def _kcc_version() -> str:
+    """Installed KCC version, for the MOBI stamp; "unknown" if it can't be read.
+
+    Read from package metadata, so it reflects the KCC in THIS environment (the
+    `bundle` extra). A kcc-c2e on PATH from some other install isn't seen, so a
+    version change there would go unnoticed -- the args part of the stamp still
+    works either way.
+    """
     try:
-        with zipfile.ZipFile(archive_path, "r") as zip:
-            zip.extractall(cbz_output_path)
-    except zipfile.BadZipFile as e:
-        logger.error(f"Invalid zip file {archive_path}")
-        raise e
-    except FileNotFoundError as e:
-        logger.error(f"Zip file not found {archive_path}")
-        raise e
-    except Exception as e:
-        logger.error("An error occurred:", e)
-        raise e
+        from importlib.metadata import version
+
+        return version("KindleComicConverter")
+    except Exception:
+        return "unknown"
+
+
+def _mobi_stamp() -> Dict[str, object]:
+    """What a MOBI built right now would be built with."""
+    return {"kcc_args": _kcc_args(), "kcc_version": _kcc_version()}
+
+
+def _read_stamps(path: str) -> Dict[str, object]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_stamp(path: str, mobi_name: str, stamp: Dict[str, object]) -> None:
+    """Record one MOBI's stamp. Read-modify-write under a lock (volumes convert
+    in parallel threads) and published atomically (no torn JSON on a crash)."""
+    with _STAMPS_LOCK:
+        stamps = _read_stamps(path)
+        stamps[mobi_name] = stamp
+        with atomic_write_path(path) as tmp:
+            tmp.write_text(
+                json.dumps(stamps, indent=2, sort_keys=True), encoding="utf-8"
+            )
+
+
+def _chapter_members(chapter_path: str) -> List[str]:
+    """Entry names (files only) of a chapter archive, in archive order."""
+    with zipfile.ZipFile(chapter_path) as z:
+        return [n for n in z.namelist() if not n.endswith("/")]
+
+
+def _page_count(names: List[str]) -> int:
+    """How many of these entries KCC will treat as pages."""
+    return sum(1 for n in names if n.lower().endswith(_KCC_IMAGE_TYPES))
 
 
 def ceiling_division(n, d):
@@ -254,12 +310,6 @@ class Bundle:
         # [config] writer or the neutral default. Never the maintainer's name.
         self.writer = manga.author or _configured_writer()
         self.jobs: int = resolve_jobs(jobs)
-
-    def _get_manga_download_dir(self) -> str:
-        """
-        Get path to manga download dir.
-        """
-        return settings()["config"]["manga_directory"]
 
     def _get_manga_bundle_dir(self) -> str:
         """
@@ -295,6 +345,34 @@ class Bundle:
                 return True
             if target_mtime - os.path.getmtime(dependency) < 0:
                 return True
+        return False
+
+    def _volume_is_stale(
+        self, cbz_path: str, dependencies: List[str], comic_info: str
+    ) -> bool:
+        """Does the volume ``.cbz`` need rebuilding?
+
+        Yes when ``is_obsolete`` says so (missing, or a chapter file is newer /
+        missing), AND ALSO when the ComicInfo it would get differs from the one
+        it has. File times alone can't see that second case, and it is the one
+        that matters after a scraper update (new ComicInfo fields, or a
+        ``BUNDLE_FORMAT`` bump), or when the site's author changes: the volume
+        is newer than every chapter, so it used to be kept, silently.
+
+        An existing file that can't be read as a volume is rebuilt too.
+        """
+        if self.is_obsolete(cbz_path, dependencies):
+            return True
+        name = os.path.basename(cbz_path)
+        try:
+            with zipfile.ZipFile(cbz_path) as z:
+                existing = z.read("ComicInfo.xml").decode("utf-8")
+        except (OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile):
+            logger.info(f"{name}: existing file is not a readable volume; rebuilding")
+            return True
+        if existing != comic_info:
+            logger.info(f"{name}: metadata or volume format changed; rebuilding")
+            return True
         return False
 
     def create_volume_wrapped(self, arg):
@@ -369,19 +447,16 @@ class Bundle:
         """
         start_time = time.time()
 
-        input_root_path = self._get_manga_download_dir()
         output_root_path = self._get_manga_bundle_dir()
 
         manga_chapters = self.manga.chapters
         manga_title = self.manga.name
         writer = self.writer
-        manga_folder = os.path.join(input_root_path, manga_title)
         output_folder = os.path.join(output_root_path, manga_title)
         os.makedirs(output_folder, exist_ok=True)
         os.makedirs(os.path.join(output_folder, "cbz"), exist_ok=True)
         os.makedirs(os.path.join(output_folder, "mobi"), exist_ok=True)
 
-        cbz_files = [os.path.basename(chapter.file_path) for chapter in manga_chapters]
         # The site's chapter id for each Chapter object ("700.5"). Needed for the
         # ComicInfo labels because Chapter.number is NOT the chapter number --
         # it is the stable file index (position in the full series list).
@@ -394,7 +469,7 @@ class Bundle:
 
         chapter_start = volume_index * self.chapters_per_volume
         chapter_end = min(
-            len(cbz_files) - 1, chapter_start + self.chapters_per_volume - 1
+            len(manga_chapters) - 1, chapter_start + self.chapters_per_volume - 1
         )
         num_chapters = chapter_end - chapter_start + 1
 
@@ -419,108 +494,76 @@ class Bundle:
         # metadata that KCC writes from our ComicInfo.xml.)
         volume_cbz_path = os.path.join(output_folder, "cbz", f"{series} - {title}.cbz")
 
-        # check if the cbz archive needs an update
-        dependencies = [
-            str(manga_chapters[chapter_start + chapter].file_path)
-            for chapter in range(num_chapters)
-        ]
-        if self.is_obsolete(volume_cbz_path, dependencies):
+        members = manga_chapters[chapter_start : chapter_end + 1]
+        dependencies = [str(c.file_path) for c in members]
+
+        # Plan the volume BEFORE deciding whether to rebuild it: the ComicInfo it
+        # would get is part of what "up to date" means (see _volume_is_stale).
+        # Each chapter's entries come straight from its archive, and the SAME
+        # list is both counted for the bookmarks and copied into the volume, so
+        # the page indices can't drift from what's written.
+        try:
+            entries = [_chapter_members(path) for path in dependencies]
+        except Exception as err:
+            # missing / unreadable chapter file (e.g. a chapter that failed to
+            # download): skip just this volume, keep any existing one intact
+            logger.error(f"Failed to build {volume_cbz_path} ({err}); skipping volume")
+            return
+
+        bookmarks: List[Tuple[int, str]] = []
+        pages_so_far = 0
+        for chapter, names in zip(members, entries):
+            pages = _page_count(names)
+            # A zero-page chapter gets no bookmark: its index would point past
+            # the end of KCC's page list when it is the last chapter, and KCC
+            # indexes that list unchecked (IndexError, failed conversion).
+            if pages:
+                bookmarks.append(
+                    (pages_so_far, _chapter_label(chapter_ids.get(id(chapter))))
+                )
+            pages_so_far += pages
+        comic_info = _comic_info_xml(
+            series=series,
+            volume=volume,
+            title=_chapter_range([chapter_ids.get(id(c)) for c in members]),
+            writer=writer,
+            bookmarks=bookmarks,
+        )
+
+        if self._volume_is_stale(volume_cbz_path, dependencies, comic_info):
             logger.info(f"Creating {volume_cbz_path}...")
             # Write to a temp sibling and atomically publish: if anything below
-            # raises (bad chapter file, extract failure, interrupt), the partial
-            # is removed and no corrupt .cbz is left at volume_cbz_path. (Was a
-            # bare ZipFile whose z.close() was skipped on error -> unreadable cbz.)
+            # raises (bad chapter file, interrupt), the partial is removed and no
+            # corrupt .cbz is left at volume_cbz_path.
             try:
                 with atomic_write_path(volume_cbz_path) as tmp_cbz:
                     with zipfile.ZipFile(tmp_cbz, "w") as z:
-                        # Chapter bookmarks for the Kindle table of contents:
-                        # (index of the chapter's first page in the volume,
-                        # label). Collected while zipping because the index is
-                        # the running page count, so ComicInfo.xml is written
-                        # LAST, below.
-                        bookmarks: List[Tuple[int, str]] = []
-                        pages_so_far = 0
-
-                        chapter = 0
-                        while chapter < num_chapters:
-                            cbz_file = cbz_files[chapter_start + chapter]
-                            file_root, _ = os.path.splitext(cbz_file)
-                            logger.debug(f"file_root={file_root}")
-
-                            archive_path = os.path.join(manga_folder, cbz_file)
-                            logger.debug(f"archive_path={archive_path}")
-                            folder = os.path.join(manga_folder, file_root)
-                            logger.debug(f"folder={folder}")
-                            # let an extract failure propagate: the atomic
-                            # context drops the partial cbz rather than publish
-                            # a half-built volume.
-                            extract_cbz(archive_path, folder)
-
-                            # Add every file in the current folder to the volume
-                            chapter_pages = 0
-                            for root, _dirs, files in os.walk(folder):
-                                for filename in files:
-                                    cbz_input_path = os.path.join(folder, filename)
-                                    cbz_output_path = os.path.join(file_root, filename)
-                                    z.write(cbz_input_path, cbz_output_path)
-                                    if filename.lower().endswith(_KCC_IMAGE_TYPES):
-                                        chapter_pages += 1
-
-                            # remove the unzipped chapter
-                            shutil.rmtree(folder)
-
-                            # A zero-page chapter gets no bookmark: its index
-                            # would point past the end of KCC's page list when
-                            # it is the last chapter, and KCC indexes that list
-                            # unchecked (IndexError, failed conversion).
-                            if chapter_pages:
-                                bookmarks.append(
-                                    (
-                                        pages_so_far,
-                                        _chapter_label(
-                                            chapter_ids.get(
-                                                id(
-                                                    manga_chapters[
-                                                        chapter_start + chapter
-                                                    ]
-                                                )
-                                            )
-                                        ),
-                                    )
-                                )
-                            pages_so_far += chapter_pages
-
-                            chapter += 1
-
-                        z.writestr(
-                            "ComicInfo.xml",
-                            _comic_info_xml(
-                                series=series,
-                                volume=volume,
-                                title=_chapter_range(
-                                    [
-                                        chapter_ids.get(id(c))
-                                        for c in manga_chapters[
-                                            chapter_start : chapter_end + 1
-                                        ]
-                                    ]
-                                ),
-                                writer=writer,
-                                bookmarks=bookmarks,
-                            ),
-                        )
-            except Exception:
-                # extracting/zipping a chapter failed; the partial cbz was
-                # cleaned up by atomic_write_path. Abort this volume.
-                logger.error(f"Failed to build {volume_cbz_path}; skipping volume")
+                        for path, names in zip(dependencies, entries):
+                            folder = os.path.splitext(os.path.basename(path))[0]
+                            with zipfile.ZipFile(path) as src:
+                                for name in names:
+                                    z.writestr(f"{folder}/{name}", src.read(name))
+                        z.writestr("ComicInfo.xml", comic_info)
+            except Exception as err:
+                logger.error(
+                    f"Failed to build {volume_cbz_path} ({err}); skipping volume"
+                )
                 return
 
         # Convert the .cbz to .mobi
         volume_mobi_path = volume_cbz_path.replace("cbz", "mobi")
-        # check if the mobi file needs an update
-        if self.is_obsolete(volume_mobi_path, [volume_cbz_path]):
+        stamps_path = os.path.join(output_folder, MOBI_STAMPS_FILE)
+        stamp = _mobi_stamp()
+        mobi_name = os.path.basename(volume_mobi_path)
+        recorded = _read_stamps(stamps_path).get(mobi_name)
+        if self.is_obsolete(volume_mobi_path, [volume_cbz_path]) or recorded != stamp:
+            if recorded is not None and recorded != stamp:
+                logger.info(
+                    f"{mobi_name}: kcc-c2e flags or version changed; rebuilding"
+                )
             logger.info(f"Creating {volume_mobi_path}...")
             self._convert_to_mobi(volume_cbz_path, volume_mobi_path)
+            _record_stamp(stamps_path, mobi_name, stamp)
 
         elapsed_time = time.time() - start_time
         time_str = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))

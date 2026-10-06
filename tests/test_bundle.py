@@ -11,6 +11,7 @@ tests/test_files/jpgs. The two tests that use KCC's own code skip unless the
 optional `bundle` extra is installed (it isn't on CI).
 """
 
+import json
 import os
 import xml.etree.ElementTree as ET
 import zipfile
@@ -22,6 +23,7 @@ import pytest
 
 from scraper.bundle import (
     _KCC_IMAGE_TYPES,
+    BUNDLE_FORMAT,
     Bundle,
     _chapter_label,
     _chapter_range,
@@ -465,19 +467,147 @@ def test_chapter_range(ids, expected):
     assert _chapter_range(ids) == expected
 
 
-def test_create_volume_skips_rebuild_when_volume_is_up_to_date(tmp_path):
+# ===================== content-aware rebuilds (item 2) ===================
+#
+# Rebuilding used to depend ONLY on file times: a volume was "current" if it was
+# newer than its chapter files, and a MOBI if it was newer than its volume. So a
+# scraper update that changes the metadata, an author change on the site, or a
+# `kcc_args` edit never reached existing volumes -- silently.
+
+
+def _run_volume(manga, cfg, per_volume, kcc_args=None, writer=None):
+    """create_volume once, with the MOBI step stubbed to write a real file."""
+    config = dict(cfg["config"])
+    if kcc_args is not None:
+        config["kcc_args"] = kcc_args
+    with mock.patch("scraper.bundle.settings", return_value={"config": config}):
+        bundle = Bundle(manga, chapters_per_volume=per_volume, jobs=1)
+        if writer is not None:
+            bundle.writer = writer
+        with (
+            mock.patch("scraper.bundle.shutil.which", return_value="/bin/kcc-c2e"),
+            mock.patch("scraper.bundle.subprocess.run", side_effect=_fake_kcc()) as run,
+        ):
+            bundle.create_volume(0, 1)
+    return run
+
+
+def test_volume_untouched_when_nothing_changed(tmp_path):
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    volume = out / "Naruto" / "cbz" / "Naruto - Naruto vol1 ch1-2.cbz"
+    mobi = out / "Naruto" / "mobi" / "Naruto - Naruto vol1 ch1-2.mobi"
+    _run_volume(manga, cfg, per_volume)
+    built = volume.read_bytes()
+    # clearly newer than the chapters, and the MOBI newer still -- the order a
+    # real, untouched build leaves behind
+    os.utime(volume, (2_000_000_000, 2_000_000_000))
+    os.utime(mobi, (2_000_000_100, 2_000_000_100))
+
+    run = _run_volume(manga, cfg, per_volume)
+
+    assert volume.read_bytes() == built
+    assert os.path.getmtime(volume) == 2_000_000_000  # not rewritten
+    run.assert_not_called()  # MOBI current too: no kcc-c2e
+
+
+def test_rebuilds_volume_when_its_metadata_would_change(tmp_path):
+    # e.g. the site's author changed, or a scraper update changed ComicInfo --
+    # the volume is newer than every chapter file, so mtimes alone say "current"
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    volume = out / "Naruto" / "cbz" / "Naruto - Naruto vol1 ch1-2.cbz"
+    _run_volume(manga, cfg, per_volume, writer="Old Author")
+    os.utime(volume, (2_000_000_000, 2_000_000_000))
+
+    _run_volume(manga, cfg, per_volume, writer="Masashi Kishimoto")
+
+    assert _comic_info(volume).findtext("Writer") == "Masashi Kishimoto"
+
+
+def test_rebuilds_volume_built_by_an_older_bundle_format(tmp_path):
+    # a volume whose ComicInfo predates the current format (the pre-Series fix
+    # layout, here) is rebuilt without the user having to delete it
     manga, out, cfg, per_volume = _bundled(tmp_path)
     volume = out / "Naruto" / "cbz" / "Naruto - Naruto vol1 ch1-2.cbz"
     volume.parent.mkdir(parents=True)
-    volume.write_bytes(b"already built and newer than its chapters")
+    with zipfile.ZipFile(volume, "w") as z:
+        z.writestr(
+            "ComicInfo.xml",
+            "<ComicInfo><Series>Naruto vol1 ch1-2</Series>"
+            "<Writer>Masashi Kishimoto</Writer></ComicInfo>",
+        )
+    os.utime(volume, (2_000_000_000, 2_000_000_000))
 
-    with mock.patch("scraper.bundle.settings", return_value=cfg):
-        bundle = Bundle(manga, chapters_per_volume=per_volume, jobs=1)
-        with mock.patch.object(bundle, "_convert_to_mobi"):
-            bundle.create_volume(0, 1)
+    _run_volume(manga, cfg, per_volume)
 
-    # untouched: the mtime check short-circuited the rebuild
-    assert volume.read_bytes() == b"already built and newer than its chapters"
+    assert _comic_info(volume).findtext("Series") == "Naruto"
+
+
+def test_rebuilds_volume_with_unreadable_existing_file(tmp_path):
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    volume = out / "Naruto" / "cbz" / "Naruto - Naruto vol1 ch1-2.cbz"
+    volume.parent.mkdir(parents=True)
+    volume.write_bytes(b"not a zip at all")
+    os.utime(volume, (2_000_000_000, 2_000_000_000))
+
+    _run_volume(manga, cfg, per_volume)
+
+    assert _comic_info(volume).findtext("Series") == "Naruto"
+
+
+def test_rebuilds_mobi_when_kcc_args_change(tmp_path):
+    # the MOBI is newer than its volume, so mtimes alone say "current"
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    mobi = out / "Naruto" / "mobi" / "Naruto - Naruto vol1 ch1-2.mobi"
+    _run_volume(manga, cfg, per_volume, kcc_args="-u --hq")
+    os.utime(mobi, (2_000_000_000, 2_000_000_000))
+
+    run = _run_volume(manga, cfg, per_volume, kcc_args="-u --hq -s")
+
+    run.assert_called_once()
+    assert "-s" in run.call_args[0][0]
+
+
+def test_mobi_untouched_when_kcc_args_unchanged(tmp_path):
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    mobi = out / "Naruto" / "mobi" / "Naruto - Naruto vol1 ch1-2.mobi"
+    _run_volume(manga, cfg, per_volume, kcc_args="-u --hq")
+    os.utime(mobi, (2_000_000_000, 2_000_000_000))
+
+    run = _run_volume(manga, cfg, per_volume, kcc_args="-u --hq")
+
+    run.assert_not_called()
+
+
+def test_rebuilds_mobi_with_no_stamp(tmp_path):
+    # a MOBI from before stamps existed: how it was built is unknown, so rebuild
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    mobi = out / "Naruto" / "mobi" / "Naruto - Naruto vol1 ch1-2.mobi"
+    _run_volume(manga, cfg, per_volume)
+    (out / "Naruto" / ".mobi-stamps.json").unlink()
+    os.utime(mobi, (2_000_000_000, 2_000_000_000))
+
+    run = _run_volume(manga, cfg, per_volume)
+
+    run.assert_called_once()
+
+
+def test_mobi_stamp_records_args_and_kcc_version_outside_mobi_dir(tmp_path):
+    # kept OUT of mobi/ so copying that folder to the Kindle carries no clutter
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    _run_volume(manga, cfg, per_volume, kcc_args="-u --hq")
+    stamps = json.loads((out / "Naruto" / ".mobi-stamps.json").read_text("utf-8"))
+    stamp = stamps["Naruto - Naruto vol1 ch1-2.mobi"]
+    assert stamp["kcc_args"] == ["-u", "--hq", "--tempdir"]
+    assert "kcc_version" in stamp
+    assert sorted(p.name for p in (out / "Naruto" / "mobi").iterdir()) == [
+        "Naruto - Naruto vol1 ch1-2.mobi"
+    ]
+
+
+def test_comic_info_records_the_bundle_format_version():
+    # the in-artifact stamp that lets a future format change invalidate volumes
+    info = ET.fromstring(_comic_info_xml("Naruto", 1, "Chapter 1", "W"))
+    assert info.findtext("Notes") == f"MangaReaderScraper bundle format {BUNDLE_FORMAT}"
 
 
 # ======================= is_obsolete / missing chapters ==================
@@ -523,8 +653,6 @@ def test_is_obsolete_does_not_raise_when_a_dependency_is_missing(tmp_path):
 
 def test_create_volume_skips_volume_with_missing_chapter_instead_of_aborting(tmp_path):
     # end-to-end guard: the exception must not escape create_volume
-    download = tmp_path / "dl"
-    (download / "x").mkdir(parents=True)
     out = tmp_path / "out"
     out.mkdir()
 
@@ -538,15 +666,14 @@ def test_create_volume_skips_volume_with_missing_chapter_instead_of_aborting(tmp
     (volume_dir / "x - x vol1 ch1.cbz").write_bytes(b"stale")
 
     with (
-        mock.patch.object(
-            bundle, "_get_manga_download_dir", return_value=str(download)
-        ),
         mock.patch.object(bundle, "_get_manga_bundle_dir", return_value=str(out)),
         mock.patch.object(bundle, "_convert_to_mobi") as convert,
     ):
         bundle.create_volume(0, 1)  # must return, not raise
 
     convert.assert_not_called()  # never claims a MOBI for a volume it couldn't build
+    # and the existing volume is left exactly as it was
+    assert (volume_dir / "x - x vol1 ch1.cbz").read_bytes() == b"stale"
 
 
 # ==================== kcc arg resolution (ini passthrough) ================

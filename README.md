@@ -209,10 +209,18 @@ Example — download a series as CBZ and bundle every 10 chapters into a MOBI:
 uv run manga-scraper --manga dragon-ball-super --bundle 10
 ```
 
-Volumes land in `<manga_bundle_directory>/<manga>/cbz/` and `.../mobi/`. They
-are rebuilt only when a chapter file is newer than the volume, so after
-upgrading, **delete a series' volume `.cbz` and `.mobi` files** to pick up
-changes to the metadata or the KCC flags.
+Volumes land in `<manga_bundle_directory>/<manga>/cbz/` and `.../mobi/`.
+Re-running `--bundle` only redoes what changed, so you never need to delete
+volumes by hand:
+
+- a volume `.cbz` is rebuilt when a chapter file is newer or missing, or when
+  the metadata it would get (series, author, chapter list, or the scraper's
+  volume format) differs from what it has;
+- a `.mobi` is rebuilt when its `.cbz` is newer, or when the `kcc-c2e` flags
+  (`kcc_args`) or the KCC version differ from the ones it was built with. That
+  is recorded in `<manga>/.mobi-stamps.json`, kept outside `mobi/` so copying
+  that folder to a Kindle carries no clutter. A MOBI with no record (built
+  before this existed) is rebuilt once.
 
 ### What metadata each volume carries
 
