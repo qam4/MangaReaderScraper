@@ -774,6 +774,30 @@ def test_lookalike_folder_without_a_record_is_flagged_not_guessed(tmp_path, capl
     assert "--override_name" in caplog.text
 
 
+def test_an_unreadable_folder_does_not_break_the_folder_lookup(tmp_path):
+    # Found on the Linux CI runner: manga_directory held system folders the user
+    # can't enter (/tmp/systemd-private-*), and stat() of a path inside one
+    # raises PermissionError, which Path.is_file() does NOT swallow (it only
+    # ignores not-found-type errors). The lookup is a convenience; one unreadable
+    # folder must not fail the download, nor hide the folder that does match.
+    fetched: list = []
+    _download(tmp_path, ["1"], fetched, title="Series Title")
+    (tmp_path / "locked").mkdir()
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        if self.parent.name == "locked":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    fetched.clear()
+    with mock.patch.object(Path, "stat", autospec=True, side_effect=stat):
+        manga = _download(tmp_path, ["1"], fetched)
+
+    assert manga.name == "Series Title"  # the recorded folder is still found
+    assert fetched == []
+
+
 # ----------------------------- download summary ----------------------------
 
 

@@ -641,21 +641,36 @@ class MangaBuilder:
         adopting a folder on a guess could merge two different series.
         """
         root = Path(settings()["config"]["manga_directory"])
-        if not root.is_dir():
+        # This lookup is a convenience, so a folder it can't read must not fail
+        # the download. Path.is_file()/is_dir() only swallow not-found-type
+        # errors: a folder we can't enter (e.g. another user's, which the Linux
+        # CI runner's /tmp has) raises PermissionError from them. Such a folder
+        # is skipped, and so is one whose record can't be read or parsed.
+        try:
+            if not root.is_dir():
+                return name
+            folders = list(root.iterdir())
+        except OSError as err:
+            self.adapter.debug(f"Not looking for an existing folder in {root}: {err}")
             return name
         source = getattr(self.parser, "source_name", None)
         url = self.parser.manga.manga_url
         matches: List[str] = []
         lookalikes: List[str] = []
-        for folder in root.iterdir():
-            if not folder.is_dir():
-                continue
-            record_path = folder / SERIES_FILE
-            if record_path.is_file():
-                try:
-                    record = json.loads(record_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
+        for folder in folders:
+            try:
+                if not folder.is_dir():
                     continue
+                record_path = folder / SERIES_FILE
+                record = (
+                    json.loads(record_path.read_text(encoding="utf-8"))
+                    if record_path.is_file()
+                    else None
+                )
+            except (OSError, ValueError) as err:
+                self.adapter.debug(f"Skipping {folder} in the folder lookup: {err}")
+                continue
+            if record is not None:
                 if record.get("manga_url") == url and record.get("source") == source:
                     matches.append(folder.name)
             elif folder.name != name and _loose_name(folder.name) == _loose_name(name):

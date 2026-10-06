@@ -862,6 +862,28 @@ Two distinct root causes found:
     (unmaintained) now use the new chapter names too.
   - NOT VERIFIED: anything on the live sites or a device. All checks were
     offline: unit tests, plus the real kcc-c2e/kindlegen on fixture images.
+  - REGRESSION, FIXED: item 6 broke CI on Linux (15 failures, all one frame).
+    `_existing_series_folder` called `Path.is_file()` on every folder's
+    record, and on 3.13 that raises PermissionError for a folder the user
+    can't enter -- the runner's `/tmp/systemd-private-*`. Passed on Windows
+    because `C:\tmp` has none. Fix: skip unreadable folders; test fakes the
+    PermissionError so it reproduces on any OS (failed before the fix).
+
+- [ ] **G4 [TEST, LOW-PRI] Tests read and write the machine's real `/tmp`**
+  - FOUND by the G3 regression: `tests/conftest.py` (autouse
+    `mocked_manga_settings`) sets `manga_directory` to `"/tmp"` for every
+    test, so results depend on what else is on the machine (`C:\tmp` on
+    Windows) and tests can see each other's files. The G3 tests use
+    `tmp_path` instead, which is the fix pattern.
+  - COST: unknown until counted -- every test relying on the autouse fixture's
+    `/tmp` path (e.g. `tests/test_download.py` asserts `/tmp/...` paths).
+
+- [ ] **G5 [QUICK, LOW-PRI] A non-object `.series.json` still crashes two readers**
+  - `_existing_series_folder` and `load_offline_manga` call `record.get(...)`
+    on whatever `json.loads` returned, so a record that parses as a list or a
+    string raises AttributeError (download fails; `--offline` shows a
+    traceback instead of OfflineSeriesNotFound). Not observed; we only ever
+    write objects. Fix: treat a non-dict like an unreadable record, with a test.
 
 ---
 
