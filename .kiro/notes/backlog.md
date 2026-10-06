@@ -695,7 +695,9 @@ Two distinct root causes found:
     unit-tested; real-concurrency feel is live-to-confirm but the mechanism is
     proven.
 
-- [ ] **G1 [DECISION, LOW-PRI] KCC delivery: submodule vs git-dep vs self-built**
+- [x] **G1 [DECISION, LOW-PRI] KCC delivery: submodule vs git-dep vs self-built**
+  - DONE in f0efa4a (`bundle` extra, see RESOLVED below); the box was left
+    unticked until the backlog review after G3.
   - FINDING: the `kcc` git submodule points at UPSTREAM `ciromattia/kcc` pinned
     to v10.2.0 and is CLEAN (no local patches) -- the original reason for it
     (local threading fixes) is gone now that upstream's `--tempdir` flag makes
@@ -748,7 +750,15 @@ Two distinct root causes found:
       difference is there is now a supported way back. A plain `uv run` does not
       prune -- verified.
 
-- [ ] **G2 [TEST] `--bundle` was effectively untested (31% coverage; partly done)**
+- [x] **G2 [TEST] `--bundle` was effectively untested (31% coverage; partly done)**
+  - CLOSED after G3: the last two (items 2 and 4) are now tests. Splitting: 7
+    chapters at 3 per volume -> `vol1 ch1-3`, `vol2 ch4-6`, `vol3 ch7`, with the
+    right chapters inside each. Padding: 9 volumes -> `vol1`..`vol9`, 10 ->
+    `vol01`..`vol10`. Bundle dir: `manga_bundle_directory`, else
+    `manga_directory`, else the current directory, read through a real
+    ConfigParser. Each was checked against a deliberately broken copy of
+    bundle.py (span off by one, padding fixed at 1, fallback dropped) and
+    failed there.
   - MEASURED: `scraper/bundle.py` is at 31%, 100 of 145 statements never
     executed. `tests/test_bundle.py` covers only `_convert_to_mobi`'s command
     line + error handling, the `<Writer>` source, `_kcc_args` resolution, and
@@ -869,7 +879,19 @@ Two distinct root causes found:
     because `C:\tmp` has none. Fix: skip unreadable folders; test fakes the
     PermissionError so it reproduces on any OS (failed before the fix).
 
-- [ ] **G4 [TEST, LOW-PRI] Tests read and write the machine's real `/tmp`**
+- [x] **G4 [TEST, LOW-PRI] Tests read and write the machine's real `/tmp`**
+  - DONE: the autouse settings fixture is now per test and points
+    `manga_directory` at a new `manga_directory` fixture (the test's
+    `tmp_path`); path assertions use it. `test_utils` uses `tmp_path` as home.
+    The module teardowns that DELETED `/tmp/dragon-ball`, `/tmp/cool_mo_deep`,
+    `/tmp/smelly_pancakes`, `/tmp/.config` and `/tmp/Downloads` are gone.
+  - MEASURED with a `sys.addaudithook` pytest plugin logging every open,
+    listing, mkdir, rename and delete under the real `/tmp` (`C:\tmp` here),
+    excluding pytest's own basetemp: 309 touches from 21 tests before, 0 after,
+    504 passed both times.
+  - ALSO FOUND: `test_settings_creates_base_config` never tested creation; it
+    found the ini the previous test had written. It now asserts the file is
+    absent first.
   - FOUND by the G3 regression: `tests/conftest.py` (autouse
     `mocked_manga_settings`) sets `manga_directory` to `"/tmp"` for every
     test, so results depend on what else is on the machine (`C:\tmp` on
@@ -878,12 +900,57 @@ Two distinct root causes found:
   - COST: unknown until counted -- every test relying on the autouse fixture's
     `/tmp` path (e.g. `tests/test_download.py` asserts `/tmp/...` paths).
 
-- [ ] **G5 [QUICK, LOW-PRI] A non-object `.series.json` still crashes two readers**
+- [x] **G5 [QUICK, LOW-PRI] A non-object `.series.json` still crashes two readers**
+  - DONE: `load_offline_manga` raises `OfflineSeriesNotFound` ("Unreadable
+    offline record ...: not a JSON object"); the folder lookup skips such a
+    folder like an unreadable record. Tests failed on the old code: 5 with the
+    AttributeError, and `null` in the lookup with a wrong "looks like this
+    series but has no .series.json" warning (null parsed to None, which the
+    code read as "no record").
+  - NOT COVERED (read in code, not run): the field types inside a valid
+    object. `"chapters": 5` would raise TypeError in `load_offline_manga`, and
+    a non-string `author` would reach `_comic_info_xml`, whose `.strip()`
+    would fail. We write both correctly; only a hand-edited record hits this.
   - `_existing_series_folder` and `load_offline_manga` call `record.get(...)`
     on whatever `json.loads` returned, so a record that parses as a list or a
     string raises AttributeError (download fails; `--offline` shows a
     traceback instead of OfflineSeriesNotFound). Not observed; we only ever
     write objects. Fix: treat a non-dict like an unreadable record, with a test.
+
+- [ ] **G6 [DEVICE] MOBI pages look slightly too tall on the Kindle**
+  - REPORTED by the user: pages slightly too tall vertically, seen on the
+    device, during the KCC v10.2.0 output review. Not reproduced or measured.
+  - CHECKED in that session: the device-profile theory did not hold, and the
+    theory that KCC 10.x's crop cap (10% per edge) was responsible was
+    weakened by the fixture pages' proportions. The detailed reasoning was not
+    written down at the time.
+  - KNOWN: our default `kcc_args` pass no `-p`, so KCC's default profile `KV`
+    applies (read in `kcc/kindlecomicconverter/comic2ebook.py`) unless the
+    user's ini sets one.
+  - NEEDS from the user: the Kindle model, and what "too tall" looks like
+    (cut off at top/bottom, stretched, or a page taller than the screen so it
+    scrolls). A photo or screenshot of one page would settle which.
+  - OFFLINE CHECK possible: run the real kcc-c2e on the fixture jpgs and
+    compare the output image size with the profile's screen resolution.
+
+- [ ] **G7 [BUG] `--output` / `-o` is accepted but does nothing**
+  - READ in code: `scraper/__main__.py` defines `--output` (default: ini
+    `manga_directory`) and nothing in `scraper/` reads `args["output"]`;
+    downloads always go to the ini `manga_directory`. The README documents it
+    as "Directory to save downloads". So `-o somewhere` silently saves
+    elsewhere. Not run.
+  - DECISION for the user: make it work (thread it through to `Manga`'s paths,
+    and say whether it also moves the bundle directory), or remove the flag
+    and the README line.
+
+- [ ] **G8 [TEST, LOW-PRI] Importing `scraper.__main__` reads the real user ini**
+  - MEASURED with the G4 audit hook pointed at `~/.config`: one open of
+    `~/.config/mangascraper.ini`, during test collection. Cause, read in code:
+    `scraper/__main__.py` line 20 runs `CONFIG = settings()["config"]` at
+    import, and `settings()` creates the ini when it is missing
+    (`scraper/utils.py`). INFERRED from that, not run: a test run on a machine
+    with no ini writes one into the real home. The `mocked_manga_env_var_cli`
+    fixture patches `CONFIG` only after that import.
 
 ---
 
