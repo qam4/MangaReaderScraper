@@ -402,6 +402,11 @@ def load_offline_manga(
         )
     except ValueError as err:
         raise OfflineSeriesNotFound(f"Unreadable offline record {record_path}: {err}")
+    if not isinstance(record, dict):
+        # valid JSON of the wrong shape ([], "x", null) -- we only write objects
+        raise OfflineSeriesNotFound(
+            f"Unreadable offline record {record_path}: not a JSON object"
+        )
 
     all_ids = [str(c) for c in record.get("chapters") or []]
     if not all_ids:
@@ -645,7 +650,8 @@ class MangaBuilder:
         # the download. Path.is_file()/is_dir() only swallow not-found-type
         # errors: a folder we can't enter (e.g. another user's, which the Linux
         # CI runner's /tmp has) raises PermissionError from them. Such a folder
-        # is skipped, and so is one whose record can't be read or parsed.
+        # is skipped, and so is one whose record can't be read or parsed, or
+        # parses to something other than a JSON object.
         try:
             if not root.is_dir():
                 return name
@@ -662,15 +668,22 @@ class MangaBuilder:
                 if not folder.is_dir():
                     continue
                 record_path = folder / SERIES_FILE
+                has_record = record_path.is_file()
                 record = (
                     json.loads(record_path.read_text(encoding="utf-8"))
-                    if record_path.is_file()
+                    if has_record
                     else None
                 )
             except (OSError, ValueError) as err:
                 self.adapter.debug(f"Skipping {folder} in the folder lookup: {err}")
                 continue
-            if record is not None:
+            if has_record:
+                if not isinstance(record, dict):
+                    self.adapter.debug(
+                        f"Skipping {folder} in the folder lookup: its "
+                        f"{SERIES_FILE} is not a JSON object"
+                    )
+                    continue
                 if record.get("manga_url") == url and record.get("source") == source:
                     matches.append(folder.name)
             elif folder.name != name and _loose_name(folder.name) == _loose_name(name):

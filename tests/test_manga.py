@@ -674,6 +674,20 @@ def test_offline_without_a_record_says_how_to_get_one(tmp_path):
             load_offline_manga("series", "cbz")
 
 
+@pytest.mark.parametrize("content", ["[]", '"series"', "null", "3"])
+def test_offline_record_that_is_not_an_object_is_reported_as_unreadable(
+    tmp_path, content
+):
+    # valid JSON, wrong shape: must be the clean OfflineSeriesNotFound exit, not
+    # an AttributeError traceback from calling .get() on it
+    folder = tmp_path / "series"
+    folder.mkdir()
+    (folder / SERIES_FILE).write_text(content, encoding="utf-8")
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        with pytest.raises(OfflineSeriesNotFound, match="Unreadable offline record"):
+            load_offline_manga("series", "cbz")
+
+
 def test_offline_rebuild_of_an_up_to_date_series_changes_nothing(tmp_path):
     """The strongest check that offline == online: bundling a series offline
     right after bundling it online must find every volume already current."""
@@ -795,6 +809,20 @@ def test_an_unreadable_folder_does_not_break_the_folder_lookup(tmp_path):
 
     assert manga.name == "Series Title"  # the recorded folder is still found
     assert fetched == []
+
+
+@pytest.mark.parametrize("content", ["[]", "null"])
+def test_folder_lookup_skips_a_record_that_is_not_an_object(tmp_path, caplog, content):
+    # "Se ries" would be flagged as a lookalike if it had NO record; it has one,
+    # just not a usable one, so it is skipped like an unreadable record -- not
+    # crashed on ("[]".get), and not called record-less ("null" parses to None)
+    odd = tmp_path / "Se ries"
+    odd.mkdir()
+    (odd / SERIES_FILE).write_text(content, encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        manga = _download(tmp_path, ["1"], [])
+    assert manga.name == "series"
+    assert "look like" not in caplog.text
 
 
 # ----------------------------- download summary ----------------------------
