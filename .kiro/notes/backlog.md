@@ -933,7 +933,20 @@ Two distinct root causes found:
   - OFFLINE CHECK possible: run the real kcc-c2e on the fixture jpgs and
     compare the output image size with the profile's screen resolution.
 
-- [ ] **G7 [BUG] `--output` / `-o` is accepted but does nothing**
+- [x] **G7 [BUG] `--output` / `-o` is accepted but does nothing**
+  - HISTORY (git log -G): it worked in the first version (58500e8, 2017,
+    passed to the PDF writer) and stopped in 4b872b9 (2018-12-30), when the
+    converter refactor wrote to the config constant and the CLI stopped
+    passing it on. The 2019 references only echoed it back from cli().
+  - DECISION (user): make it work.
+  - DONE: `-o` is the download folder for the run. It reaches every download
+    call (including the one after a fallback search) and `--offline`, through
+    a `directory` on `Download`, `MangaBuilder`, `Manga` and
+    `load_offline_manga`; `_download_root` falls back to the ini
+    `manga_directory`, read when used. The default is now None instead of the
+    ini value read at import. Bundle output is unchanged
+    (`manga_bundle_directory`). 3 of 4 new tests in tests/test_cli.py failed on
+    the old code; the 4th guards the default.
   - READ in code: `scraper/__main__.py` defines `--output` (default: ini
     `manga_directory`) and nothing in `scraper/` reads `args["output"]`;
     downloads always go to the ini `manga_directory`. The README documents it

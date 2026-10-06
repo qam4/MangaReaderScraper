@@ -4,6 +4,7 @@ import pytest
 
 from scraper.__main__ import cli, cli_entry, get_manga_parser, manga_search
 from scraper.exceptions import MangaDoesNotExist, OfflineSeriesNotFound
+from scraper.manga import SERIES_FILE
 from tests.helpers import MockedSiteParser
 
 PARAMETERS = [
@@ -12,7 +13,7 @@ PARAMETERS = [
         {
             "filetype": "pdf",
             "manga": "dragonball",
-            "output": "/tmp",
+            "output": None,
             "search": None,
             "source": "mangabuddy",
             "chapters": None,
@@ -28,7 +29,7 @@ PARAMETERS = [
         {
             "filetype": "pdf",
             "manga": "dragonball",
-            "output": "/tmp",
+            "output": None,
             "search": None,
             "source": "mangabuddy",
             "chapters": ["1", "2"],
@@ -44,7 +45,7 @@ PARAMETERS = [
         {
             "filetype": "cbz",
             "manga": "one-piece",
-            "output": "/tmp",
+            "output": None,
             "search": None,
             "source": "mangabuddy",
             "chapters": ["231"],
@@ -84,7 +85,7 @@ PARAMETERS = [
         {
             "filetype": "pdf",
             "manga": "something",
-            "output": "/tmp",
+            "output": None,
             "search": None,
             "source": "mangabuddy",
             "chapters": ["1-5", "40"],
@@ -100,7 +101,7 @@ PARAMETERS = [
         {
             "filetype": "pdf",
             "manga": "something",
-            "output": "/tmp",
+            "output": None,
             "search": None,
             "source": "mangabuddy",
             "chapters": ["1-5", "40"],
@@ -122,7 +123,7 @@ SEARCH_PARAMETERS = [
             "search": ["dragon", "ball"],
             "source": "mangabuddy",
             "chapters": ["5"],
-            "output": "/tmp",
+            "output": None,
             "filetype": "pdf",
             "upload": None,
             "override_name": None,
@@ -139,7 +140,7 @@ SEARCH_PARAMETERS = [
             "search": ["dragonball"],
             "source": "mangabuddy",
             "chapters": ["8", "9"],
-            "output": "/tmp",
+            "output": None,
             "filetype": "pdf",
             "override_name": None,
             "remove": False,
@@ -156,7 +157,7 @@ SEARCH_PARAMETERS = [
             "search": ["dragonball"],
             "source": "mangabuddy",
             "chapters": ["6-10"],
-            "output": "/tmp",
+            "output": None,
             "filetype": "pdf",
             "upload": None,
             "override_name": None,
@@ -173,7 +174,7 @@ SEARCH_PARAMETERS = [
             "search": ["dragonball"],
             "source": "mangabuddy",
             "chapters": None,
-            "output": "/tmp",
+            "output": None,
             "filetype": "pdf",
             "upload": None,
             "override_name": None,
@@ -190,7 +191,7 @@ SEARCH_PARAMETERS = [
             "search": ["dragonball"],
             "source": "mangabuddy",
             "chapters": ["6-10", "12"],
-            "output": "/tmp",
+            "output": None,
             "filetype": "pdf",
             "upload": None,
             "override_name": None,
@@ -250,7 +251,9 @@ def test_offline_bundles_from_disk_without_touching_the_site():
             ]
         )  # fmt: skip
 
-    load.assert_called_once_with("Dragon Ball", "cbz", chapter_ids=["1-20"])
+    load.assert_called_once_with(
+        "Dragon Ball", "cbz", chapter_ids=["1-20"], directory=None
+    )
     bundle.assert_called_once_with(offline_manga, 10, jobs=None)
 
 
@@ -308,6 +311,60 @@ def test_offline_without_a_record_exits_cleanly(caplog):
     assert "run it once without --offline" in caplog.text
 
 
+# ------------------------ --output (backlog G7) ---------------------------
+#
+# --output was parsed but read by nothing from 2018 (4b872b9) on, so `-o X`
+# silently saved into the ini manga_directory. It is the download folder for
+# the run, which --offline must then read from as well.
+
+
+def test_output_sets_the_download_folder_for_this_run(tmp_path, manga_directory):
+    out = tmp_path / "elsewhere"
+    with mock.patch("scraper.__main__.get_manga_parser", return_value=MockedSiteParser):
+        cli(["--manga", "dragon-ball", "--chapters", "1", "--output", str(out)])
+    assert (out / "dragon-ball" / "dragon-ball_chapter_1.pdf").is_file()
+    assert (out / "dragon-ball" / SERIES_FILE).is_file()  # the --offline record
+    assert not (manga_directory / "dragon-ball").exists()
+
+
+def test_without_output_downloads_go_to_the_configured_folder(manga_directory):
+    with mock.patch("scraper.__main__.get_manga_parser", return_value=MockedSiteParser):
+        cli(["--manga", "dragon-ball", "--chapters", "1"])
+    assert (manga_directory / "dragon-ball" / "dragon-ball_chapter_1.pdf").is_file()
+
+
+def test_output_reaches_the_download_after_a_fallback_search(tmp_path):
+    out = str(tmp_path / "elsewhere")
+    calls = []
+
+    def fake_download(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise MangaDoesNotExist("nope")  # the slug lookup fails
+
+    with (
+        mock.patch("scraper.__main__.download_manga", side_effect=fake_download),
+        mock.patch(
+            "scraper.__main__.manga_search", return_value=("Title", "slug", ["2"])
+        ),
+    ):
+        cli(["--manga", "nope", "-o", out])
+    assert [c.get("directory") for c in calls] == [out, out]
+
+
+def test_offline_reads_the_series_from_the_output_folder(tmp_path):
+    out = tmp_path / "elsewhere"
+    with mock.patch("scraper.__main__.get_manga_parser", return_value=MockedSiteParser):
+        cli(["--manga", "dragon-ball", "-q", "1", "-f", "cbz", "-o", str(out)])
+    with mock.patch("scraper.__main__.bundle") as bundle:
+        cli(["--manga", "dragon-ball", "-q", "1", "--offline", "--bundle", "1",
+             "-o", str(out)])  # fmt: skip
+    manga = bundle.call_args[0][0]
+    assert [c.file_path for c in manga.chapters] == [
+        out / "dragon-ball" / "dragon-ball_chapter_1.cbz"
+    ]
+
+
 @mock.patch("scraper.__main__.download_manga", mock.Mock(return_value=1))
 def test_log_level_arg_sets_level(monkeypatch):
     import logging
@@ -359,7 +416,7 @@ def test_search_if_failed_manga_match(monkeypatch):
                 "search": ["dragonballzz"],
                 "source": "mangabuddy",
                 "chapters": ["2"],
-                "output": "/tmp",
+                "output": None,
                 "filetype": "pdf",
                 "upload": None,
                 "override_name": None,

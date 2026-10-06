@@ -104,9 +104,11 @@ def download_manga(
     parser: SiteParserClass,
     preferred_name: Optional[str] = None,
     jobs: Optional[int] = None,
+    directory: Optional[str] = None,
 ) -> Manga:
-    """Download a manga"""
-    downloader = Download(manga_url, filetype, parser, jobs=jobs)
+    """Download a manga into ``directory`` (``--output``; None means the ini
+    ``manga_directory``)."""
+    downloader = Download(manga_url, filetype, parser, jobs=jobs, directory=directory)
     manga = downloader.download_chapters(chapters, manga_title, preferred_name)
     return manga
 
@@ -150,7 +152,9 @@ def offline_bundle(args: dict) -> dict:
         raise IOError("--offline needs --manga <series folder name>")
     args["manga"] = name
     args["chapters"] = normalize_chapters(args["chapters"])
-    manga = load_offline_manga(name, "cbz", chapter_ids=args["chapters"])
+    manga = load_offline_manga(
+        name, "cbz", chapter_ids=args["chapters"], directory=args["output"]
+    )
     bundle(manga, args["bundle"], jobs=args.get("jobs"))
     return args
 
@@ -207,6 +211,7 @@ def cli(arguments: List[str]) -> dict:
             parser=manga_parser,
             preferred_name=args["override_name"],
             jobs=args.get("jobs"),
+            directory=args["output"],
         )
     except MangaDoesNotExist:
         # The direct slug lookup failed. Fall back to a search for the same
@@ -234,6 +239,7 @@ def cli(arguments: List[str]) -> dict:
             parser=manga_parser,
             preferred_name=args["override_name"],
             jobs=args.get("jobs"),
+            directory=args["output"],
         )
 
     if args["upload"]:
@@ -292,7 +298,13 @@ def get_parser() -> argparse.ArgumentParser:
         type=str,
         help="chapter(s) to download",
     )
-    parser.add_argument("--output", "-o", default=CONFIG["manga_directory"])
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="folder to download into, and that --offline reads from "
+        "(default: the ini manga_directory)",
+    )
     parser.add_argument(
         "--filetype",
         "-f",

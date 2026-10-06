@@ -202,6 +202,12 @@ class Chapter:
         return len(self._pages)
 
 
+def _download_root(directory: Optional[str]) -> str:
+    """The folder series are downloaded into: ``directory`` (the CLI's
+    ``--output``) when given, else the ini ``manga_directory``, read at use."""
+    return directory or settings()["config"]["manga_directory"]
+
+
 @dataclass
 class Manga:
     """
@@ -214,6 +220,9 @@ class Manga:
     # from the parser's author() hook. None when the site/parser doesn't expose
     # one (most don't) -> bundle falls back to a neutral default.
     author: Optional[str] = None
+    # The download folder this series' own folder sits in (--output); None
+    # means the ini manga_directory. See _download_root.
+    directory: Optional[str] = None
     _chapters: Dict[str, Chapter] = field(default_factory=dict, repr=False)
 
     def __repr__(self) -> str:
@@ -231,7 +240,7 @@ class Manga:
 
     def _chapter_path(self, chapter_id: str) -> Path:
         """Create chapter path"""
-        manga_dir = settings()["config"]["manga_directory"]
+        manga_dir = _download_root(self.directory)
         return Path(
             f"{manga_dir}/{self.name}/{self.name}_chapter_{chapter_id}.{self.filetype}"
         )
@@ -375,7 +384,10 @@ SERIES_FILE = ".series.json"
 
 
 def load_offline_manga(
-    name: str, filetype: str = "cbz", chapter_ids: Optional[Iterable[str]] = None
+    name: str,
+    filetype: str = "cbz",
+    chapter_ids: Optional[Iterable[str]] = None,
+    directory: Optional[str] = None,
 ) -> Manga:
     """Rebuild a series' ``Manga`` from local files only, for ``--offline``.
 
@@ -387,10 +399,12 @@ def load_offline_manga(
     a chapter that failed to download, so volume boundaries don't shift.
 
     ``chapter_ids`` are ``--chapters`` selector tokens, applied to the recorded
-    list. Raises ``OfflineSeriesNotFound`` when there is no record.
+    list. ``directory`` is the download folder (``--output``; None means the ini
+    ``manga_directory``). Raises ``OfflineSeriesNotFound`` when there is no
+    record.
     """
     name = sanitize_filename(name)
-    manga = Manga(name, filetype)
+    manga = Manga(name, filetype, directory=directory)
     record_path = manga._chapter_path("x").parent / SERIES_FILE
     try:
         record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -398,7 +412,8 @@ def load_offline_manga(
         raise OfflineSeriesNotFound(
             f"No offline record for '{name}' ({record_path} is missing). Run the "
             "same download once without --offline to create it; --manga must "
-            "be the series folder name under manga_directory."
+            "be the series folder name in the download folder (--output, else "
+            "the ini manga_directory)."
         )
     except ValueError as err:
         raise OfflineSeriesNotFound(f"Unreadable offline record {record_path}: {err}")
@@ -456,9 +471,15 @@ class MangaBuilder:
     """
 
     def __init__(
-        self, parser: SiteParser, filetype="pdf", jobs: Optional[int] = None
+        self,
+        parser: SiteParser,
+        filetype="pdf",
+        jobs: Optional[int] = None,
+        directory: Optional[str] = None,
     ) -> None:
         self.parser: SiteParser = parser
+        # download folder (--output); None means the ini manga_directory
+        self.directory: Optional[str] = directory
         self.adapter = get_adapter(logger, self.parser.manga.manga_url)
         self.type: str = filetype
         self.writer = get_writer(filetype)
@@ -645,7 +666,7 @@ class MangaBuilder:
         warned about, with the ``--override_name`` that would reuse it --
         adopting a folder on a guess could merge two different series.
         """
-        root = Path(settings()["config"]["manga_directory"])
+        root = Path(_download_root(self.directory))
         # This lookup is a convenience, so a folder it can't read must not fail
         # the download. Path.is_file()/is_dir() only swallow not-found-type
         # errors: a folder we can't enter (e.g. another user's, which the Linux
@@ -710,8 +731,7 @@ class MangaBuilder:
         """
         Create a manga directory if it does not exist.
         """
-        download_dir = settings()["config"]["manga_directory"]
-        manga_dir = Path(download_dir) / manga_name
+        manga_dir = Path(_download_root(self.directory)) / manga_name
         manga_dir.mkdir(parents=True, exist_ok=True)
 
     def get_manga_chapters(
@@ -739,7 +759,7 @@ class MangaBuilder:
             f"title={title}, manga_url={self.parser.manga.manga_url}, preferred_name={preferred_name}"
         )
         # Create a Manga instance
-        self.manga = Manga(preferred_name, self.type)
+        self.manga = Manga(preferred_name, self.type, directory=self.directory)
         # Author (parent-side) for ComicInfo <Writer>; None for parsers/sites
         # that don't expose one. Best-effort: a failure here must not abort a
         # download, so swallow and leave author unset.

@@ -24,10 +24,14 @@ class Download:
         filetype: str,
         parser: SiteParserClass,
         jobs: Optional[int] = None,
+        directory: Optional[str] = None,
     ) -> None:
         self.manga_url: str = manga_url
         self.factory: MangaBuilder = MangaBuilder(
-            parser=parser(manga_url), filetype=filetype, jobs=jobs
+            parser=parser(manga_url),
+            filetype=filetype,
+            jobs=jobs,
+            directory=directory,
         )
         self.adapter: LoggerAdapter = get_adapter(logger, manga_url)
         self.type: str = filetype

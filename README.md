@@ -150,7 +150,7 @@ usage: manga-scraper [-h] [--manga [MANGA ...]] [--search [SEARCH ...]]
 | `--manga` | `-m` | Manga series name / url slug to download |
 | `--search` | `-s` | Search the source and pick from a results table |
 | `--chapters` | `-q` | Chapters to download (single, ranges, or a mix); omit for all |
-| `--output` | `-o` | Directory to save downloads (defaults to config `manga_directory`) |
+| `--output` | `-o` | Directory to save downloads, and the one `--offline` reads from (defaults to config `manga_directory`; volumes still go to `manga_bundle_directory`) |
 | `--filetype` | `-f` | `pdf` or `cbz` (defaults to config `filetype`) |
 | `--source` | `-z` | Site to scrape from (defaults to config `source`) |
 | `--override_name` | `-n` | Rename the manga for all saved files |
@@ -213,7 +213,8 @@ To rebuild volumes **without contacting the site** (it's down, blocking you,
 or you're offline), add `--offline`. It works from the chapters already on disk
 plus a small `.series.json` record each download leaves beside them, so it
 gives the same volumes an online run would. `--manga` (or `--override_name`)
-is then the series' folder name under `manga_directory`:
+is then the series' folder name under `manga_directory`, or under the
+`--output` folder if the download used one (pass the same `--output` again):
 
 ```bash
 uv run manga-scraper --manga "Dragon Ball Super" --bundle 10 --offline
