@@ -748,7 +748,7 @@ Two distinct root causes found:
       difference is there is now a supported way back. A plain `uv run` does not
       prune -- verified.
 
-- [ ] **G2 [TEST] `--bundle` is effectively untested (31% coverage)**
+- [ ] **G2 [TEST] `--bundle` was effectively untested (31% coverage; partly done)**
   - MEASURED: `scraper/bundle.py` is at 31%, 100 of 145 statements never
     executed. `tests/test_bundle.py` covers only `_convert_to_mobi`'s command
     line + error handling, the `<Writer>` source, `_kcc_args` resolution, and
@@ -762,20 +762,31 @@ Two distinct root causes found:
     rename for free.
   - PROPOSED (no network needed; `tests/test_files/jpgs/*.jpg` are enough to
     build real chapter `.cbz` inputs, and `_convert_to_mobi` gets mocked):
-    1. `create_volume` end to end -- assert the exact output path
-       (`<bundle>/<name>/cbz/<series> - <name> vol1 ch1-3.cbz`), that the archive
-       contains `ComicInfo.xml` plus one folder per chapter named after the
-       chapter file stem, and that page entries are ordered.
+    1. ~~`create_volume` end to end~~ -- DONE. Exact filename pinned as the
+       Calibre contract (`test_create_volume_filename_is_the_calibre_contract`),
+       single-chapter form, archive layout, up-to-date skip.
     2. `bundle()` volume splitting -- 7 chapters at 3/volume gives 3 volumes with
        the right chapter ranges, and `volume_digits` flips `vol1` -> `vol01` at 10
        volumes.
     3. `extract_cbz` -- bad zip, missing file, pre-existing-directory cleanup.
     4. `_get_manga_bundle_dir` -- the fallback chain to `manga_directory` then
        `os.getcwd()`.
-    5. ComicInfo body -- note `<Series>` is currently formatted with the VOLUME
-       title, not the series name (`series=title` at the format call), and both
-       KCC versions take the book title from that field. Pin whatever we decide
-       is correct rather than freezing the oddity by accident.
+    5. ~~ComicInfo body~~ -- DONE, and the oddity was a real defect, fixed.
+       `<Series>` now holds the series name, plus `<Volume>`, `<Title>` (real
+       chapter range) and one `<Page Bookmark>` per chapter. Verified with the
+       REAL kcc-c2e, offline, on the fixture jpgs: device title went
+       `Naruto vol1 ch1-2` -> `Naruto Vol. 01`, and the table of contents went
+       `Naruto_chapter_748_700` -> `Chapter 700`.
+  - STILL OPEN from the list above: 2 (`bundle()` splitting + `vol01`
+    padding), 3 (`extract_cbz`), 4 (`_get_manga_bundle_dir` fallbacks).
+  - CALIBRE CONTRACT (recorded so it is never "cleaned up" again): the volume
+    filename `<series> - <series> vol<N> ch<a>-<b>.cbz` repeats the series name
+    ON PURPOSE. Calibre's built-in CBZ reader only parses a ComicBookInfo zip
+    comment, never ComicInfo.xml (calibre `ebooks/metadata/archive.py`,
+    `get_comic_metadata`, read from master), so the user's Calibre takes .cbz
+    metadata from the filename via a regex. The tested regex is in the README.
+    On a fresh Calibre the default regex puts the volume name into Author --
+    which is exactly what the user hit on a new computer.
   - ALSO SPOTTED, not fixed: `extract_cbz` does
     `logger.error("An error occurred:", e)` -- a second positional arg that isn't
     a format arg, so any exception other than `BadZipFile`/`FileNotFoundError`

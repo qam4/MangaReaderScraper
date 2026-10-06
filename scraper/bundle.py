@@ -8,13 +8,15 @@ import shlex
 import shutil
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 import zipfile
 from itertools import repeat
 from logging import LoggerAdapter
 from multiprocessing.pool import ThreadPool
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from scraper.manga import Manga
+from scraper.selection import ChapterId
 from scraper.utils import (
     atomic_write_path,
     get_adapter,
@@ -59,15 +61,132 @@ def _configured_writer() -> str:
 #                   pages lighter and flatter. Caveat: an explicit gamma also
 #                   applies to COLOUR pages, which the old profile-driven path
 #                   deliberately skipped.
+#   --metadatatitle 1
+#                   Book title = "<Series> Vol. NN: <Title>", i.e. the chapter
+#                   range is part of the title the Kindle shows
+#                   ("Naruto Vol. 01: Chapters 700-710"). Without it KCC stops
+#                   at "Naruto Vol. 01", and every volume of a series looks the
+#                   same in the library list. (2 would use <Title> alone.)
 #
 # Deliberately NOT here: ``-o`` and the input path (we compute those), and
 # ``--tempdir`` (a correctness requirement, force-injected by ``_kcc_args``).
-KCC_ARGS_DEFAULT = "-u --hq -g 1.8"
+KCC_ARGS_DEFAULT = "-u --hq -g 1.8 --metadatatitle 1"
 
 # Required for parallel bundling; see ``Bundle._convert_to_mobi``. Injected even
 # when the user overrides ``kcc_args``, because dropping it silently corrupts
 # concurrent conversions rather than merely looking different.
 KCC_REQUIRED_ARGS = ["--tempdir"]
+
+
+# File extensions KCC treats as pages. Mirrors kindlecomicconverter.shared
+# .IMAGE_TYPES (v10.2.0) instead of importing it, because kcc is an optional
+# extra and bundle.py must import without it. A bookmark's page index has to
+# count exactly what KCC counts, or every chapter after the first lands on the
+# wrong page.
+_KCC_IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".jp2", ".avif")
+
+
+def _chapter_label(chapter_id: Optional[str]) -> str:
+    """Kindle table-of-contents label for one chapter, from its SITE id.
+
+    Numeric ids ("700.5") read as "Chapter 700.5". Opaque slugs (sites whose
+    chapters carry no number) are shown as-is rather than inventing a number.
+    Unknown -> "" (the builder drops empty bookmarks). Pure.
+    """
+    if not chapter_id:
+        return ""
+    if ChapterId(chapter_id).value is None:
+        return chapter_id
+    return f"Chapter {chapter_id}"
+
+
+def _chapter_range(chapter_ids: List[Optional[str]]) -> str:
+    """ComicInfo ``<Title>`` for a volume: the REAL chapter numbers it covers.
+
+    "Chapters 700-710", or "Chapter 5" for a one-chapter volume. Unlike the
+    filename's ``ch1-2`` -- which counts positions in this run's selection and
+    is frozen by the Calibre contract -- this uses the site's chapter ids, so it
+    is what the reader actually wants to see. Reaches the device title through
+    ``--metadatatitle 1``, which is in ``KCC_ARGS_DEFAULT``. Pure.
+    """
+    ids = [cid for cid in chapter_ids if cid]
+    if not ids:
+        return ""
+    if ids[0] == ids[-1]:
+        return _chapter_label(ids[0])
+    return f"Chapters {ids[0]}-{ids[-1]}"
+
+
+def _comic_info_xml(
+    series: str,
+    volume: int,
+    title: str,
+    writer: str,
+    bookmarks: Optional[List[Tuple[int, str]]] = None,
+) -> str:
+    """Build the ``ComicInfo.xml`` embedded in each volume ``.cbz``.
+
+    This is the ONLY metadata channel to the device: KCC parses it
+    (``kindlecomicconverter/metadata.py``) and turns it into the MOBI's title,
+    author and table of contents. Only the fields KCC actually reads are
+    emitted:
+
+    * ``Series``  -> the book title on the Kindle. KCC uses it verbatim when no
+      ``-t`` is passed, so this must be the SERIES name ("Naruto"), not the
+      volume title. (It used to be given the volume title, which is why the
+      device showed "Naruto vol1 ch1-2" as the book's name.)
+    * ``Volume``  -> KCC appends ``" Vol. NN"`` to the title (zero-padded to 2).
+    * ``Title``   -> KCC appends ``": <Title>"`` when ``--metadatatitle 1`` is
+      passed, which ``KCC_ARGS_DEFAULT`` does -- so the chapter range is in the
+      device title unless the user's ``kcc_args`` drops the flag.
+    * ``Writer``  -> the MOBI's author (``dc:creator``).
+    * ``Pages``   -> one ``<Page Image=... Bookmark=.../>`` per chapter. KCC
+      collects these as bookmarks and uses them to label the NCX/nav table of
+      contents, which is what makes in-volume chapter navigation readable.
+      WITHOUT them KCC falls back to the archive's folder names, so the Kindle
+      shows internal stems like "Naruto_chapter_701_700".
+
+    ``Number`` is deliberately NOT emitted: KCC appends ``" #" + Number`` to the
+    device title UNCONDITIONALLY (unlike ``Title``, which is opt-in), and in
+    ComicInfo it means an issue number, which a multi-chapter volume does not
+    have.
+
+    Empty fields are SKIPPED, never written as empty tags. KCC's ``parseXML``
+    reads every field via ``.firstChild.nodeValue``, which raises on an empty
+    element, and ``getMetadata`` catches that with a bare ``except Exception``
+    that deletes the file and returns -- so one empty tag would make KCC
+    silently discard the whole ComicInfo, author and bookmarks included.
+
+    ``bookmarks`` is ``[(zero_based_page_index, label), ...]``. Built with
+    ElementTree rather than string interpolation so that an author or series
+    containing ``&`` or ``<`` cannot produce invalid XML (which would hit the
+    same silent discard) -- the old template interpolated raw text, and author
+    names now come from the sites.
+
+    Pure and unit-tested.
+    """
+    root = ET.Element(
+        "ComicInfo",
+        {
+            "xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+            "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+        },
+    )
+    for tag, value in (
+        ("Series", series),
+        ("Volume", str(volume)),
+        ("Title", title),
+        ("Writer", writer),
+    ):
+        if value and value.strip():
+            ET.SubElement(root, tag).text = value
+    bookmarks = [(i, label) for i, label in bookmarks or [] if label and label.strip()]
+    if bookmarks:
+        pages = ET.SubElement(root, "Pages")
+        for image_index, label in bookmarks:
+            ET.SubElement(pages, "Page", {"Image": str(image_index), "Bookmark": label})
+    body = ET.tostring(root, encoding="unicode")
+    return f'<?xml version="1.0" encoding="utf-8"?>\n{body}\n'
 
 
 def _kcc_args() -> List[str]:
@@ -134,12 +253,6 @@ class Bundle:
         # [config] writer or the neutral default. Never the maintainer's name.
         self.writer = manga.author or _configured_writer()
         self.jobs: int = resolve_jobs(jobs)
-        self.comic_info_template = """<?xml version="1.0" encoding="utf-8"?>
-        <ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-        <Series>{series}</Series>
-        <Writer>{writer}</Writer>
-        </ComicInfo>
-        """
 
     def _get_manga_download_dir(self) -> str:
         """
@@ -255,6 +368,12 @@ class Bundle:
         os.makedirs(os.path.join(output_folder, "mobi"), exist_ok=True)
 
         cbz_files = [os.path.basename(chapter.file_path) for chapter in manga_chapters]
+        # The site's chapter id for each Chapter object ("700.5"). Needed for the
+        # ComicInfo labels because Chapter.number is NOT the chapter number --
+        # it is the stable file index (position in the full series list).
+        chapter_ids: Dict[int, str] = {
+            id(c): cid for cid, c in self.manga.chapters_dict.items()
+        }
 
         # Create the volume .cbz file
         volume = volume_index + 1
@@ -270,6 +389,20 @@ class Bundle:
             title = f"{manga_title} vol{volume:0{volume_digits}} ch{chapter_start + 1}"
         else:
             title = f"{manga_title} vol{volume:0{volume_digits}} ch{chapter_start + 1}-{chapter_end + 1}"
+
+        # The "<series> - <title>" filename is DELIBERATE and is an external
+        # contract -- do NOT "simplify" the apparently-duplicated series name.
+        # Calibre reads metadata from the FILENAME for .cbz -- its built-in CBZ
+        # reader only parses a ComicBookInfo zip comment, never ComicInfo.xml
+        # (calibre ebooks/metadata/archive.py, get_comic_metadata) -- via a
+        # user-configured regex that splits on " - ". This shape is what lets it
+        # extract the series and the volume title into the right columns; the
+        # regex is in the README, "Importing volumes into Calibre". Collapsing it
+        # to just "<title>.cbz" breaks that import silently -- the books still
+        # load, with the wrong fields. Pinned by
+        # test_create_volume_filename_is_the_calibre_contract.
+        # (MOBI is unaffected either way: there Calibre reads the real embedded
+        # metadata that KCC writes from our ComicInfo.xml.)
         volume_cbz_path = os.path.join(output_folder, "cbz", f"{series} - {title}.cbz")
 
         # check if the cbz archive needs an update
@@ -286,20 +419,13 @@ class Bundle:
             try:
                 with atomic_write_path(volume_cbz_path) as tmp_cbz:
                     with zipfile.ZipFile(tmp_cbz, "w") as z:
-                        # Add metadata info file
-                        comic_info_str = self.comic_info_template.format(
-                            series=title, writer=writer
-                        )
-                        comic_info_path = os.path.join(
-                            output_folder, f"ComicInfo{volume}.xml"
-                        )
-                        with open(comic_info_path, "w") as the_file:
-                            the_file.write(comic_info_str)
-                        cbz_output_path = os.path.basename(
-                            comic_info_path.replace(str(volume), "")
-                        )
-                        z.write(comic_info_path, cbz_output_path)
-                        os.remove(comic_info_path)
+                        # Chapter bookmarks for the Kindle table of contents:
+                        # (index of the chapter's first page in the volume,
+                        # label). Collected while zipping because the index is
+                        # the running page count, so ComicInfo.xml is written
+                        # LAST, below.
+                        bookmarks: List[Tuple[int, str]] = []
+                        pages_so_far = 0
 
                         chapter = 0
                         while chapter < num_chapters:
@@ -317,16 +443,58 @@ class Bundle:
                             extract_cbz(archive_path, folder)
 
                             # Add every file in the current folder to the volume
+                            chapter_pages = 0
                             for root, _dirs, files in os.walk(folder):
                                 for filename in files:
                                     cbz_input_path = os.path.join(folder, filename)
                                     cbz_output_path = os.path.join(file_root, filename)
                                     z.write(cbz_input_path, cbz_output_path)
+                                    if filename.lower().endswith(_KCC_IMAGE_TYPES):
+                                        chapter_pages += 1
 
                             # remove the unzipped chapter
                             shutil.rmtree(folder)
 
+                            # A zero-page chapter gets no bookmark: its index
+                            # would point past the end of KCC's page list when
+                            # it is the last chapter, and KCC indexes that list
+                            # unchecked (IndexError, failed conversion).
+                            if chapter_pages:
+                                bookmarks.append(
+                                    (
+                                        pages_so_far,
+                                        _chapter_label(
+                                            chapter_ids.get(
+                                                id(
+                                                    manga_chapters[
+                                                        chapter_start + chapter
+                                                    ]
+                                                )
+                                            )
+                                        ),
+                                    )
+                                )
+                            pages_so_far += chapter_pages
+
                             chapter += 1
+
+                        z.writestr(
+                            "ComicInfo.xml",
+                            _comic_info_xml(
+                                series=series,
+                                volume=volume,
+                                title=_chapter_range(
+                                    [
+                                        chapter_ids.get(id(c))
+                                        for c in manga_chapters[
+                                            chapter_start : chapter_end + 1
+                                        ]
+                                    ]
+                                ),
+                                writer=writer,
+                                bookmarks=bookmarks,
+                            ),
+                        )
             except Exception:
                 # extracting/zipping a chapter failed; the partial cbz was
                 # cleaned up by atomic_write_path. Abort this volume.

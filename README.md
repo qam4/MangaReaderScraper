@@ -209,6 +209,60 @@ Example — download a series as CBZ and bundle every 10 chapters into a MOBI:
 uv run manga-scraper --manga dragon-ball-super --bundle 10
 ```
 
+Volumes land in `<manga_bundle_directory>/<manga>/cbz/` and `.../mobi/`. They
+are rebuilt only when a chapter file is newer than the volume, so after
+upgrading, **delete a series' volume `.cbz` and `.mobi` files** to pick up
+changes to the metadata or the KCC flags.
+
+### What metadata each volume carries
+
+Each volume `.cbz` embeds a `ComicInfo.xml`, which KCC turns into the MOBI's
+metadata. On the Kindle that gives you:
+
+| ComicInfo | becomes | example |
+|---|---|---|
+| `Series` + `Volume` + `Title` | the book title | `Naruto Vol. 01: Chapters 700-710` |
+| `Writer` | the author | `Masashi Kishimoto` |
+| one bookmark per chapter | the table of contents | `Chapter 700`, `Chapter 700.5` |
+
+`Writer` is the author extracted from the source (MangaFire, mangabuddy and
+mangago expose one), falling back to the ini `writer` key, then `Unknown`.
+Without the chapter bookmarks KCC labels the table of contents with internal
+folder names such as `Naruto_chapter_748_700`.
+
+### Importing volumes into Calibre
+
+Calibre does **not** read `ComicInfo.xml` when it imports a `.cbz`. Its built-in
+CBZ reader only looks at the archive's zip comment, in the older ComicBookInfo
+format (`get_comic_metadata` in calibre's `ebooks/metadata/archive.py`), so for
+our volumes it falls back to guessing from the **filename**. The
+[EmbedComicMetadata plugin](https://github.com/dickloraine/EmbedComicMetadata)
+can read ComicInfo instead, if you install it. The `.mobi` is different: there
+Calibre reads the real embedded metadata, so MOBIs import correctly with no
+configuration.
+
+That is why volume filenames repeat the series name on purpose:
+
+```
+Naruto - Naruto vol1 ch1-2.cbz
+<series> - <series> vol<N> ch<first>-<last>.cbz
+```
+
+Calibre's default filename regex is `(?P<title>.+) - (?P<author>[^_]+)`, which
+on a fresh install turns that into title `Naruto` and author
+`Naruto vol1 ch1-2.cbz`. Replace it in **Preferences → Import/Export → Adding
+books → "Read metadata from file name"** with:
+
+```
+^(?P<series>.+) - (?P=series) (?P<title>vol(?P<series_index>\d+) ch[\d.]+(?:-[\d.]+)?)(?:\.\w+)?$
+```
+
+which gives series `Naruto`, series index `1`, title `vol1 ch1-2`, so the
+volumes group under one series in order. The `(?P=series)` back-reference is
+what handles series names that themselves contain ` - ` (`Fate - Zero` parses
+as one series rather than splitting on the first dash). It sets no author for
+`.cbz` imports; the MOBI carries the real one.
+
 ## Config
 
 The default config file lives at `$HOME/.config/mangascraper.ini` and is created
@@ -236,14 +290,17 @@ These optional keys are not written on first run, but are read if you add them:
 [config]
 
 # ComicInfo <Writer> fallback, used when the source exposes no author
-# (MangaFire and mangabuddy do; the others don't). Defaults to "Unknown".
+# (MangaFire, mangabuddy and mangago do; the others don't). Defaults to
+# "Unknown".
 writer = Jane Doe
 
 # parallel download/bundle workers. Defaults to min(4, CPU count).
 jobs = 4
 
 # flags passed through to kcc-c2e when bundling to MOBI. Defaults to
-# "-u --hq -g 1.8". Any KCC flag works -- this is a verbatim passthrough, so
+# "-u --hq -g 1.8 --metadatatitle 1". Setting this key REPLACES the default
+# rather than adding to it, so keep any default flag you still want. Any KCC
+# flag works -- this is a verbatim passthrough, so
 # `kcc-c2e --help` is the reference. `--tempdir` is always added (it keeps
 # parallel conversions from wiping each other's work dirs), and `-o` plus the
 # input path are always supplied by the scraper. An empty value means "no
@@ -261,7 +318,10 @@ jobs = 4
 #                KCC's auto-crop trimming a sliver off pages whose aspect ratio
 #                is close to the device's.
 #   --colorautocontrast   apply autocontrast to colour pages (10.x skips them)
-kcc_args = -u --hq -g 1.8
+#   --metadatatitle 1     put the chapter range in the book title on the
+#                         device: "Naruto Vol. 01: Chapters 700-710". In the
+#                         default; drop it to get just "Naruto Vol. 01".
+kcc_args = -u --hq -g 1.8 --metadatatitle 1
 ```
 
 ## How fetching works (briefly)
