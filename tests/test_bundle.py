@@ -11,6 +11,7 @@ tests/test_files/jpgs. The two tests that use KCC's own code skip unless the
 optional `bundle` extra is installed (it isn't on CI).
 """
 
+import configparser
 import json
 import os
 import re
@@ -738,6 +739,106 @@ def test_mobi_name_is_built_from_the_volume_name_not_a_string_replace(tmp_path):
     assert mobi_path == str(
         out / "Xcbz Saga" / "mobi" / "Xcbz Saga - Xcbz Saga vol1 ch1-2.mobi"
     )
+
+
+# ================ bundle(): how chapters split into volumes ===============
+#
+# Volume names count POSITIONS in the bundled chapter list ("ch4-6" is the 4th
+# to 6th chapter), not site chapter ids, and the volume number is zero-padded
+# to the width of the volume count. Both end up in the filename Calibre parses.
+
+
+def _volume_names(out, name, kind="cbz"):
+    return sorted(p.name for p in (out / name / kind).iterdir())
+
+
+def _chapter_folders(volume):
+    """The chapter folders inside a volume .cbz, in archive order."""
+    with zipfile.ZipFile(volume) as z:
+        folders = [n.split("/")[0] for n in z.namelist() if "/" in n]
+    return list(dict.fromkeys(folders))
+
+
+def test_bundle_splits_chapters_into_volumes_of_n_and_a_short_last_one(tmp_path):
+    # 7 chapters at 3 per volume. Site ids 101-107 differ from positions 1-7,
+    # so the folders below show which chapter landed in which volume.
+    chapters = tuple((str(100 + position), position) for position in range(1, 8))
+    manga, out, cfg, _ = _bundled(tmp_path, chapters=chapters)
+
+    _bundle_all(manga, cfg, 3)
+
+    assert _volume_names(out, "Naruto") == [
+        "Naruto - Naruto vol1 ch1-3.cbz",
+        "Naruto - Naruto vol2 ch4-6.cbz",
+        "Naruto - Naruto vol3 ch7.cbz",
+    ]
+    assert _volume_names(out, "Naruto", "mobi") == [
+        "Naruto - Naruto vol1 ch1-3.mobi",
+        "Naruto - Naruto vol2 ch4-6.mobi",
+        "Naruto - Naruto vol3 ch7.mobi",
+    ]
+    cbz = out / "Naruto" / "cbz"
+    assert _chapter_folders(cbz / "Naruto - Naruto vol1 ch1-3.cbz") == [
+        "001_Naruto_chapter_101",
+        "002_Naruto_chapter_102",
+        "003_Naruto_chapter_103",
+    ]
+    assert _chapter_folders(cbz / "Naruto - Naruto vol2 ch4-6.cbz") == [
+        "001_Naruto_chapter_104",
+        "002_Naruto_chapter_105",
+        "003_Naruto_chapter_106",
+    ]
+    assert _chapter_folders(cbz / "Naruto - Naruto vol3 ch7.cbz") == [
+        "001_Naruto_chapter_107",
+    ]
+
+
+@pytest.mark.parametrize(
+    "count,expected",
+    [
+        (
+            9,
+            [f"Naruto - Naruto vol{n} ch{n}.cbz" for n in "123456789"],
+        ),
+        (
+            10,
+            [f"Naruto - Naruto vol0{n} ch{n}.cbz" for n in "123456789"]
+            + ["Naruto - Naruto vol10 ch10.cbz"],
+        ),
+    ],
+)
+def test_bundle_pads_the_volume_number_to_the_width_of_the_volume_count(
+    tmp_path, count, expected
+):
+    # one chapter per volume, either side of the 9 -> 10 volume boundary
+    chapters = tuple((str(n), n) for n in range(1, count + 1))
+    manga, out, cfg, _ = _bundled(tmp_path, chapters=chapters)
+
+    _bundle_all(manga, cfg, 1)
+
+    assert _volume_names(out, "Naruto") == sorted(expected)
+
+
+@pytest.mark.parametrize(
+    "ini_lines,expected",
+    [
+        ("manga_bundle_directory = /b\nmanga_directory = /d", "/b"),
+        ("manga_directory = /d", "/d"),
+        ("", None),  # None: the current directory
+    ],
+    ids=["bundle-dir", "falls-back-to-manga-dir", "falls-back-to-cwd"],
+)
+def test_bundle_directory_falls_back_to_manga_directory_then_cwd(
+    tmp_path, monkeypatch, ini_lines, expected
+):
+    # a REAL ConfigParser, as settings() returns: its SectionProxy.get takes
+    # the fallback positionally, which a plain dict would not prove
+    monkeypatch.chdir(tmp_path)
+    ini = configparser.ConfigParser()
+    ini.read_string("[config]\n" + ini_lines)
+    with mock.patch("scraper.bundle.settings", return_value=ini):
+        bundle_dir = _bundle()._get_manga_bundle_dir()
+    assert bundle_dir == (expected if expected is not None else os.getcwd())
 
 
 # ======================= is_obsolete / missing chapters ==================
