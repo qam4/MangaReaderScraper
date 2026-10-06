@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -324,30 +325,43 @@ class Bundle:
                 "on PATH and kindlegen for the MOBI step). See the README "
                 "'Bundling to MOBI' section."
             )
-        # Rendering flags come from the ini (see _kcc_args / KCC_ARGS_DEFAULT);
-        # -o and the input path are ours because they're computed per volume.
-        command = [
-            "kcc-c2e",
-            *_kcc_args(),
-            "-o",
-            os.path.dirname(mobi_path),
-            cbz_path,
-        ]
-        logger.info(f"command={command}")
-        result = subprocess.run(command, capture_output=True, text=True)
-        # KCC's own output (incl. its `print('ERROR: ...')` lines) goes to
-        # stdout, so surface debug runs and -- on failure -- BOTH streams.
-        combined = ((result.stdout or "") + (result.stderr or "")).strip()
-        if combined:
-            logger.debug(f"kcc-c2e output for {cbz_path}:\n{combined}")
-        if result.returncode != 0 or not os.path.exists(mobi_path):
-            output_tail = combined[-800:]
-            raise RuntimeError(
-                f"kcc-c2e failed converting {cbz_path} to MOBI "
-                f"(exit {result.returncode}); expected {mobi_path}. "
-                "Is kindlegen available to KCC?"
-                + (f"\nkcc-c2e output:\n{output_tail}" if output_tail else "")
-            )
+        # KCC is pointed at an EMPTY per-volume folder, never at mobi/ itself.
+        # KCC never overwrites: when "<stem>.mobi" already exists it writes
+        # "<stem>_kcc0.mobi" beside it (comic2ebook.py getOutputFilename), so a
+        # rebuild into mobi/ left the stale book in place, and checking for
+        # mobi_path then passed on that STALE file -- a silent "success"
+        # (reproduced with the real kcc-c2e + kindlegen). Converting into a
+        # fresh folder means KCC always produces exactly "<stem>.mobi", which
+        # we then os.replace onto the target: atomic on the same filesystem,
+        # and the previous MOBI survives untouched if the conversion fails.
+        mobi_dir = os.path.dirname(mobi_path) or "."
+        stem = os.path.splitext(os.path.basename(cbz_path))[0]
+        work_dir = tempfile.mkdtemp(prefix=".kcc-", dir=mobi_dir)
+        try:
+            # Rendering flags come from the ini (see _kcc_args /
+            # KCC_ARGS_DEFAULT); -o and the input path are ours.
+            command = ["kcc-c2e", *_kcc_args(), "-o", work_dir, cbz_path]
+            logger.info(f"command={command}")
+            result = subprocess.run(command, capture_output=True, text=True)
+            # KCC's own output (incl. its `print('ERROR: ...')` lines) goes to
+            # stdout, so surface debug runs and -- on failure -- BOTH streams.
+            combined = ((result.stdout or "") + (result.stderr or "")).strip()
+            if combined:
+                logger.debug(f"kcc-c2e output for {cbz_path}:\n{combined}")
+            produced = os.path.join(work_dir, f"{stem}.mobi")
+            if result.returncode != 0 or not os.path.isfile(produced):
+                output_tail = combined[-800:]
+                found = sorted(os.listdir(work_dir))
+                raise RuntimeError(
+                    f"kcc-c2e failed converting {cbz_path} to MOBI "
+                    f"(exit {result.returncode}); expected {stem}.mobi"
+                    + (f", got {found}" if found else "")
+                    + ". Is kindlegen available to KCC?"
+                    + (f"\nkcc-c2e output:\n{output_tail}" if output_tail else "")
+                )
+            os.replace(produced, mobi_path)
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     def create_volume(self, volume_index: int, volume_digits: int):
         """
