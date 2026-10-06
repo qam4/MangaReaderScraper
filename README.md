@@ -236,6 +236,12 @@ volumes by hand:
   that folder to a Kindle carries no clutter. A MOBI with no record (built
   before this existed) is rebuilt once.
 
+Volume names depend on `--bundle N` and on the `--chapters` selection, so
+changing either leaves the previous set behind. After each run the scraper
+lists any volume files in `cbz/` and `mobi/` that this run didn't produce,
+including `<name>_kcc0.mobi` duplicates left by older versions. It only
+reports them; deleting them is up to you.
+
 ### What metadata each volume carries
 
 Each volume `.cbz` embeds a `ComicInfo.xml`, which KCC turns into the MOBI's

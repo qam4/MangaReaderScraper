@@ -673,6 +673,73 @@ def test_comic_info_records_the_bundle_format_version():
     assert info.findtext("Notes") == f"MangaReaderScraper bundle format {BUNDLE_FORMAT}"
 
 
+# ======================== orphaned volumes (item 5) ======================
+#
+# Volume names depend on --bundle N and on this run's chapter selection, so a
+# different N or --chapters leaves the previous set behind, and older versions
+# could leave KCC's "<name>_kcc0.mobi" duplicates. Nothing ever mentioned them --
+# and Calibre imports whatever is in the folder.
+
+
+def _bundle_all(manga, cfg, per_volume):
+    with (
+        mock.patch("scraper.bundle.settings", return_value=cfg),
+        mock.patch("scraper.bundle.shutil.which", return_value="/bin/kcc-c2e"),
+        mock.patch("scraper.bundle.subprocess.run", side_effect=_fake_kcc()),
+    ):
+        Bundle(manga, chapters_per_volume=per_volume, jobs=1).bundle()
+
+
+def test_bundle_reports_volume_files_this_run_did_not_produce(tmp_path, caplog):
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    series = out / "Naruto"
+    (series / "cbz").mkdir(parents=True)
+    (series / "mobi").mkdir(parents=True)
+    # left by an earlier --bundle 1 run
+    (series / "cbz" / "Naruto - Naruto vol1 ch1.cbz").write_bytes(b"old")
+    (series / "mobi" / "Naruto - Naruto vol1 ch1.mobi").write_bytes(b"old")
+    # left by the old KCC collision bug
+    (series / "mobi" / "Naruto - Naruto vol1 ch1-2_kcc0.mobi").write_bytes(b"dup")
+
+    with caplog.at_level("WARNING"):
+        _bundle_all(manga, cfg, per_volume)
+
+    text = caplog.text
+    assert "Naruto - Naruto vol1 ch1.cbz" in text
+    assert "Naruto - Naruto vol1 ch1.mobi" in text
+    assert "Naruto - Naruto vol1 ch1-2_kcc0.mobi" in text
+    assert "duplicate" in text  # the _kcc copies are called out as such
+    # the files this run produced are NOT reported
+    assert "Naruto - Naruto vol1 ch1-2.cbz" not in text.replace(
+        "Naruto - Naruto vol1 ch1-2_kcc0", ""
+    )
+    # and nothing is deleted
+    assert (series / "cbz" / "Naruto - Naruto vol1 ch1.cbz").exists()
+    assert (series / "mobi" / "Naruto - Naruto vol1 ch1-2_kcc0.mobi").exists()
+
+
+def test_bundle_reports_nothing_when_the_folder_matches_the_run(tmp_path, caplog):
+    manga, out, cfg, per_volume = _bundled(tmp_path)
+    with caplog.at_level("WARNING"):
+        _bundle_all(manga, cfg, per_volume)
+    assert "not produced by this run" not in caplog.text
+    assert "duplicate" not in caplog.text
+
+
+def test_mobi_name_is_built_from_the_volume_name_not_a_string_replace(tmp_path):
+    # the old `volume_cbz_path.replace("cbz", "mobi")` also rewrote "cbz" inside
+    # the series name, so the MOBI went to the wrong path
+    manga, out, cfg, per_volume = _bundled(tmp_path, name="Xcbz Saga")
+    with mock.patch("scraper.bundle.settings", return_value=cfg):
+        bundle = Bundle(manga, chapters_per_volume=per_volume, jobs=1)
+        with mock.patch.object(bundle, "_convert_to_mobi") as convert:
+            bundle.create_volume(0, 1)
+    cbz_path, mobi_path = convert.call_args[0]
+    assert mobi_path == str(
+        out / "Xcbz Saga" / "mobi" / "Xcbz Saga - Xcbz Saga vol1 ch1-2.mobi"
+    )
+
+
 # ======================= is_obsolete / missing chapters ==================
 
 

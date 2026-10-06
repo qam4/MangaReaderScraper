@@ -6,6 +6,7 @@ import functools
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -305,6 +306,16 @@ def _page_count(names: List[str]) -> int:
     return sum(1 for n in names if n.lower().endswith(_KCC_IMAGE_TYPES))
 
 
+# "<volume>_kcc0.mobi": what KCC names a book when the target already exists.
+_KCC_DUPLICATE = re.compile(r"_kcc\d+\.mobi$")
+
+
+def _list_names(names: List[str], limit: int = 10) -> str:
+    """Names for a log line, capped so a big folder doesn't flood the console."""
+    shown = ", ".join(names[:limit])
+    return shown + (f", and {len(names) - limit} more" if len(names) > limit else "")
+
+
 def ceiling_division(n, d):
     """
     Ceiling division
@@ -459,6 +470,91 @@ class Bundle:
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
+    def _volume_span(self, volume_index: int) -> Tuple[int, int]:
+        """(first, last) 0-based chapter positions in volume ``volume_index``."""
+        start = volume_index * self.chapters_per_volume
+        end = min(len(self.manga.chapters) - 1, start + self.chapters_per_volume - 1)
+        return start, end
+
+    def _volume_paths(
+        self, volume_index: int, volume_digits: int
+    ) -> Tuple[str, str, str]:
+        """(title, .cbz path, .mobi path) for a volume. The ONE place volume
+        names are built, so ``create_volume`` and the orphan report can't
+        disagree about which files belong to this run.
+
+        The "<series> - <title>" filename is DELIBERATE and is an external
+        contract -- do NOT "simplify" the apparently-duplicated series name.
+        Calibre reads metadata from the FILENAME for .cbz -- its built-in CBZ
+        reader only parses a ComicBookInfo zip comment, never ComicInfo.xml
+        (calibre ebooks/metadata/archive.py, get_comic_metadata) -- via a
+        user-configured regex that splits on " - ". This shape is what lets it
+        extract the series and the volume title into the right columns; the
+        regex is in the README, "Importing volumes into Calibre". Collapsing it
+        to just "<title>.cbz" breaks that import silently -- the books still
+        load, with the wrong fields. Pinned by
+        test_create_volume_filename_is_the_calibre_contract. (MOBI is
+        unaffected either way: there Calibre reads the real embedded metadata
+        that KCC writes from our ComicInfo.xml.)
+
+        The .mobi path is built from the same stem, not by
+        ``cbz_path.replace("cbz", "mobi")``, which also rewrote any "cbz"
+        inside the series name.
+        """
+        name = self.manga.name
+        start, end = self._volume_span(volume_index)
+        number = f"vol{volume_index + 1:0{volume_digits}}"
+        chapters = f"ch{start + 1}" if start == end else f"ch{start + 1}-{end + 1}"
+        title = f"{name} {number} {chapters}"
+        folder = os.path.join(self._get_manga_bundle_dir(), name)
+        stem = f"{name} - {title}"
+        return (
+            title,
+            os.path.join(folder, "cbz", f"{stem}.cbz"),
+            os.path.join(folder, "mobi", f"{stem}.mobi"),
+        )
+
+    def _report_orphans(self, num_volumes: int, volume_digits: int) -> None:
+        """Warn about volume files in this series' cbz/ and mobi/ that this run
+        didn't produce. Reports only; never deletes.
+
+        They come from an earlier run with a different ``--bundle N`` or
+        ``--chapters`` selection (volume names depend on both), or are the
+        ``<name>_kcc<N>.mobi`` duplicates older versions left when KCC wrote a
+        rebuilt book beside the old one. Calibre imports whatever is in the
+        folder, so they're worth knowing about.
+        """
+        expected = set()
+        for index in range(num_volumes):
+            _, cbz_path, mobi_path = self._volume_paths(index, volume_digits)
+            expected.update({cbz_path, mobi_path})
+        folder = os.path.join(self._get_manga_bundle_dir(), self.manga.name)
+        duplicates, others = [], []
+        for sub, ext in (("cbz", ".cbz"), ("mobi", ".mobi")):
+            directory = os.path.join(folder, sub)
+            if not os.path.isdir(directory):
+                continue
+            for entry in sorted(os.listdir(directory)):
+                path = os.path.join(directory, entry)
+                if not entry.endswith(ext) or path in expected:
+                    continue
+                if _KCC_DUPLICATE.search(entry):
+                    duplicates.append(entry)
+                else:
+                    others.append(entry)
+        if duplicates:
+            logger.warning(
+                f"{len(duplicates)} duplicate MOBI(s) in {folder}{os.sep}mobi left "
+                "by older versions (KCC wrote the rebuilt book beside the old one); "
+                f"safe to delete: {_list_names(duplicates)}"
+            )
+        if others:
+            logger.warning(
+                f"{len(others)} volume file(s) in {folder} not produced by this run "
+                "(another --bundle size or --chapters selection); delete them if "
+                f"you no longer want them: {_list_names(others)}"
+            )
+
     def create_volume(self, volume_index: int, volume_digits: int):
         """
         Create a bundled volume
@@ -475,35 +571,12 @@ class Bundle:
         os.makedirs(os.path.join(output_folder, "cbz"), exist_ok=True)
         os.makedirs(os.path.join(output_folder, "mobi"), exist_ok=True)
 
-        # Create the volume .cbz file
         volume = volume_index + 1
-
-        chapter_start = volume_index * self.chapters_per_volume
-        chapter_end = min(
-            len(manga_chapters) - 1, chapter_start + self.chapters_per_volume - 1
-        )
-        num_chapters = chapter_end - chapter_start + 1
-
         series = manga_title
-        if num_chapters == 1:
-            title = f"{manga_title} vol{volume:0{volume_digits}} ch{chapter_start + 1}"
-        else:
-            title = f"{manga_title} vol{volume:0{volume_digits}} ch{chapter_start + 1}-{chapter_end + 1}"
-
-        # The "<series> - <title>" filename is DELIBERATE and is an external
-        # contract -- do NOT "simplify" the apparently-duplicated series name.
-        # Calibre reads metadata from the FILENAME for .cbz -- its built-in CBZ
-        # reader only parses a ComicBookInfo zip comment, never ComicInfo.xml
-        # (calibre ebooks/metadata/archive.py, get_comic_metadata) -- via a
-        # user-configured regex that splits on " - ". This shape is what lets it
-        # extract the series and the volume title into the right columns; the
-        # regex is in the README, "Importing volumes into Calibre". Collapsing it
-        # to just "<title>.cbz" breaks that import silently -- the books still
-        # load, with the wrong fields. Pinned by
-        # test_create_volume_filename_is_the_calibre_contract.
-        # (MOBI is unaffected either way: there Calibre reads the real embedded
-        # metadata that KCC writes from our ComicInfo.xml.)
-        volume_cbz_path = os.path.join(output_folder, "cbz", f"{series} - {title}.cbz")
+        chapter_start, chapter_end = self._volume_span(volume_index)
+        title, volume_cbz_path, volume_mobi_path = self._volume_paths(
+            volume_index, volume_digits
+        )
 
         members = manga_chapters[chapter_start : chapter_end + 1]
         dependencies = [str(c.file_path) for c in members]
@@ -562,7 +635,6 @@ class Bundle:
                 return
 
         # Convert the .cbz to .mobi
-        volume_mobi_path = volume_cbz_path.replace("cbz", "mobi")
         stamps_path = os.path.join(output_folder, MOBI_STAMPS_FILE)
         stamp = _mobi_stamp()
         mobi_name = os.path.basename(volume_mobi_path)
@@ -622,3 +694,5 @@ class Bundle:
                     zip(range(num_volumes), repeat(volume_digits)),
                 ):
                     progress.advance(task)
+
+        self._report_orphans(num_volumes, volume_digits)
