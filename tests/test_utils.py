@@ -1,5 +1,3 @@
-import shutil
-from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -61,25 +59,32 @@ def test_get_adapter(caplog, logger):
     assert "[cool-manga:2] Test message" in caplog.text
 
 
-def test_create_base_config():
-    with mock.patch("scraper.utils.Path.home", lambda: Path("/tmp")):
+# Each config test gets its own empty home (tmp_path). They used the machine's
+# real /tmp as home, so test_settings_creates_base_config found the ini the
+# previous test had written and never exercised the creation it is named for,
+# and the module teardown deleted /tmp/.config and /tmp/Downloads outright.
+
+
+def test_create_base_config(tmp_path):
+    with mock.patch("scraper.utils.Path.home", lambda: tmp_path):
         create_base_config()
-        assert Path("/tmp/.config/mangascraper.ini").exists()
+        assert (tmp_path / ".config/mangascraper.ini").exists()
 
 
-def test_settings():
-    with mock.patch("scraper.utils.Path.home", lambda: Path("/tmp")):
+def test_settings(tmp_path):
+    with mock.patch("scraper.utils.Path.home", lambda: tmp_path):
         create_base_config()
         config = settings()
-        assert config["config"]["manga_directory"] == str(Path("/tmp/Downloads"))
+        assert config["config"]["manga_directory"] == str(tmp_path / "Downloads")
         assert config["config"]["source"] == "mangabuddy"
         assert config["config"]["filetype"] == "pdf"
 
 
-def test_settings_creates_base_config():
-    with mock.patch("scraper.utils.Path.home", lambda: Path("/tmp")):
+def test_settings_creates_base_config(tmp_path):
+    with mock.patch("scraper.utils.Path.home", lambda: tmp_path):
+        assert not (tmp_path / ".config/mangascraper.ini").exists()
         settings()
-        assert Path("/tmp/.config/mangascraper.ini").exists()
+        assert (tmp_path / ".config/mangascraper.ini").exists()
 
 
 def test_resolve_jobs_cli_value_wins_and_floors_at_one():
@@ -176,16 +181,3 @@ def test_atomic_write_path_preserves_existing_final_on_failure(tmp_path):
             raise RuntimeError("boom")
     # a failed rewrite must not clobber the previously-good file
     assert final.read_bytes() == b"original"
-
-
-def teardown_module(module):
-    """
-    Remove directories after every test, if present
-
-    Fixtures only work before a test is executed, hence
-    the need for this module teardown.
-    """
-    directories = ["/tmp/.config/", "/tmp/Downloads/"]
-    for directory in directories:
-        if Path(directory).exists():
-            shutil.rmtree(directory)

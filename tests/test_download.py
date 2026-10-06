@@ -1,7 +1,3 @@
-import os
-import shutil
-from pathlib import Path
-
 import pytest
 
 from scraper.__main__ import download_manga
@@ -10,18 +6,18 @@ from tests.helpers import MockedSiteParser
 
 
 @pytest.mark.parametrize("filetype,file_signature", [("pdf", "%PDF-"), ("cbz", "PK")])
-def test_download_manga(filetype, file_signature):
+def test_download_manga(filetype, file_signature, manga_directory):
     downloader = Download("dragon-ball", filetype, MockedSiteParser)
     downloader.download_chapters(["1"])
-    expected_path = f"/tmp/dragon-ball/dragon-ball_chapter_1.{filetype}"
-    assert os.path.exists(expected_path)
+    expected_path = manga_directory / f"dragon-ball/dragon-ball_chapter_1.{filetype}"
+    assert expected_path.exists()
     # check file for PDF/CBZ signature
     with open(expected_path, "rb") as pdf_file:
         pdf = pdf_file.read().decode("utf-8", "ignore")
         assert pdf.startswith(file_signature)
 
 
-def test_download_manga_helper_function(parser):
+def test_download_manga_helper_function(parser, manga_directory):
     download_manga(
         manga_url="dragon-ball",
         manga_title="",
@@ -30,28 +26,11 @@ def test_download_manga_helper_function(parser):
         parser=MockedSiteParser,
         preferred_name="cool_mo_deep",
     )
-    expected_path = "/tmp/cool_mo_deep/cool_mo_deep_chapter_1.pdf"
-    expected_path2 = "/tmp/cool_mo_deep/cool_mo_deep_chapter_2.pdf"
-    assert os.path.exists(expected_path)
-    assert os.path.exists(expected_path2)
+    assert (manga_directory / "cool_mo_deep/cool_mo_deep_chapter_1.pdf").exists()
+    assert (manga_directory / "cool_mo_deep/cool_mo_deep_chapter_2.pdf").exists()
 
 
-def test_download_manga_helper_function_preferred_name(parser):
+def test_download_manga_helper_function_preferred_name(parser, manga_directory):
     download_manga("dragon-ball", "", ["1", "2"], "pdf", MockedSiteParser)
-    expected_path = "/tmp/dragon-ball/dragon-ball_chapter_1.pdf"
-    expected_path2 = "/tmp/dragon-ball/dragon-ball_chapter_2.pdf"
-    assert os.path.exists(expected_path)
-    assert os.path.exists(expected_path2)
-
-
-def teardown_function():
-    """
-    Remove directories after every test, if present
-
-    Fixtures only work before a test is executed, hence
-    the need for this module teardown.
-    """
-    directories = ["/tmp/cool_mo_deep/", "/tmp/dragon-ball/"]
-    for directory in directories:
-        if Path(directory).exists():
-            shutil.rmtree(directory)
+    assert (manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf").exists()
+    assert (manga_directory / "dragon-ball/dragon-ball_chapter_2.pdf").exists()

@@ -73,17 +73,28 @@ def mocked_pool_imap(request):
         yield mocked_func
 
 
-@pytest.fixture(scope="session", autouse=True)
-def mocked_manga_settings():
-    """
-    Mock settings config in manga module to point to /tmp/ dir
+@pytest.fixture
+def manga_directory(tmp_path):
+    """This test's ``manga_directory``: its own empty pytest ``tmp_path``.
 
-    This will be applied to every single test prior to execution
+    It used to be the machine's real ``/tmp``, shared by every test, so tests
+    saw each other's files and whatever else lived there. That is how
+    root-owned folders in the Linux CI runner's /tmp crashed the series-folder
+    lookup, which scans manga_directory, while Windows passed (backlog G4).
+    """
+    return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def mocked_manga_settings(manga_directory):
+    """
+    Mock settings config in manga module to point at this test's
+    ``manga_directory``. Applied to every test.
     """
     mock_config = mock.MagicMock(
         return_value={
             "config": {
-                "manga_directory": "/tmp",
+                "manga_directory": str(manga_directory),
                 "source": "mangabuddy",
                 "filetype": "pdf",
                 "upload_root": "/",

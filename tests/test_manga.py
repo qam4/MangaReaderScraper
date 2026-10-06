@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 from pathlib import Path
 from unittest import mock
 
@@ -102,43 +101,43 @@ def test_pages_property_in_chapter_returns_a_sorted_list(chapter):
     assert chapter.pages == expected
 
 
-def test_manga_get_chapter_path():
+def test_manga_get_chapter_path(manga_directory):
     manga = Manga("dragon-ball", "pdf")
     chapter_path = manga._chapter_path("1")
-    expected = "/tmp/dragon-ball/dragon-ball_chapter_1.pdf"
-    assert Path(chapter_path) == Path(expected)
+    expected = manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf"
+    assert Path(chapter_path) == expected
 
 
-def test_manga_get_chapter_path_cbz():
+def test_manga_get_chapter_path_cbz(manga_directory):
     manga = Manga("dragon-ball", "cbz")
     chapter_path = manga._chapter_path("1")
-    expected = "/tmp/dragon-ball/dragon-ball_chapter_1.cbz"
-    assert Path(chapter_path) == Path(expected)
+    expected = manga_directory / "dragon-ball/dragon-ball_chapter_1.cbz"
+    assert Path(chapter_path) == expected
 
 
-def test_manga_add_chapter():
+def test_manga_add_chapter(manga_directory):
     manga = Manga("dragon-ball", "pdf")
     manga.add_chapter("1")
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     assert manga.chapters_dict == {"1": v1}
     assert manga.chapters_dict["1"] == v1
 
 
-def test_add_multiple_chapters_to_manga():
+def test_add_multiple_chapters_to_manga(manga_directory):
     manga = Manga("dragon-ball", "pdf")
     manga.chapters = ["1", "2"]
     assert manga.chapters_dict["1"] == Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     assert manga.chapters_dict["2"] == Chapter(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_2.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
     )
     assert len(manga.chapters_dict) == 2
@@ -149,27 +148,27 @@ def test_cant_add_chapter_already_in_manga(manga):
         manga.add_chapter("1")
 
 
-def test_chapters_property_in_manga_returns_a_sorted_list(manga):
+def test_chapters_property_in_manga_returns_a_sorted_list(manga, manga_directory):
     manga.add_chapter("12")
     manga.add_chapter("4")
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
     )
     v2 = Chapter(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_2.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
     )
     v3 = Chapter(
         number="4",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_4.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_4.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_4.pdf"),
     )
     v4 = Chapter(
         number="12",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_12.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_12.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_12.pdf"),
     )
     v1.pages = [(1, b"here", "success"), (2, b"bye", "success")]
@@ -204,25 +203,25 @@ def test_manga_iter(manga):
 
 
 @pytest.mark.parametrize("inval", [["1", "2", "3"], None])
-def test_mangabuilder_get_all_chapters(inval):
+def test_mangabuilder_get_all_chapters(inval, manga_directory):
     parser = MockedSiteParser()
     builder = MangaBuilder(parser)
     manga = builder.get_manga_chapters(chapter_ids=inval)
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
         order=1,
     )
     v2 = Chapter(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_2.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
         order=2,
     )
     v3 = Chapter(
         number="3",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_3.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_3.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_3.pdf"),
         order=3,
     )
@@ -238,13 +237,13 @@ def test_mangabuilder_get_all_chapters(inval):
     assert manga.chapters == [v1, v2, v3]
 
 
-def test_mangabuilder_get_single_chapters(parser):
+def test_mangabuilder_get_single_chapters(parser, manga_directory):
     parser = MockedSiteParser()
     builder = MangaBuilder(parser)
     manga = builder.get_manga_chapters(chapter_ids=["1"])
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        file_path=manga_directory / "dragon-ball/dragon-ball_chapter_1.pdf",
         upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
         order=1,
     )
@@ -257,7 +256,7 @@ def test_mangabuilder_get_single_chapters(parser):
     assert manga.chapters_dict["1"].page[1] == v1.page[1]
 
 
-def test_manga_builder_preferred_name(parser):
+def test_manga_builder_preferred_name(parser, manga_directory):
     parser = MockedSiteParser()
     builder = MangaBuilder(parser)
     manga = builder.get_manga_chapters(
@@ -265,7 +264,7 @@ def test_manga_builder_preferred_name(parser):
     )
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
+        file_path=manga_directory / "smelly_pancakes/smelly_pancakes_chapter_1.pdf",
         upload_path=Path("/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
         order=1,
     )
@@ -836,16 +835,3 @@ def test_summarize_downloads_all_ok():
     s = summarize_downloads(downloads)
     assert s.ok
     assert isinstance(s, DownloadSummary)
-
-
-def teardown_function():
-    """
-    Remove directories after every test, if present
-
-    Fixtures only work before a test is executed, hence
-    the need for this module teardown.
-    """
-    directories = ["/tmp/smelly_pancakes/", "/tmp/dragon-ball/"]
-    for directory in directories:
-        if Path(directory).exists():
-            shutil.rmtree(directory)
