@@ -86,9 +86,11 @@ KCC_REQUIRED_ARGS = ["--tempdir"]
 # layout). Written into ComicInfo <Notes>, which KCC ignores, so it travels
 # inside the artifact: bump it whenever the volume format changes and every
 # existing volume compares as stale and is rebuilt on the next --bundle,
-# instead of users having to know to delete them. 2 = Series/Volume/Title +
-# chapter bookmarks.
-BUNDLE_FORMAT = 2
+# instead of users having to know to delete them.
+#   2 = Series/Volume/Title + chapter bookmarks.
+#   3 = chapter folders inside a volume are prefixed with their position
+#       ("003_<stem>", see _volume_folder), and chapter files are named by id.
+BUNDLE_FORMAT = 3
 
 # File extensions KCC treats as pages. Mirrors kindlecomicconverter.shared
 # .IMAGE_TYPES (v10.2.0) instead of importing it, because kcc is an optional
@@ -276,6 +278,22 @@ def _record_stamp(path: str, mobi_name: str, stamp: Dict[str, object]) -> None:
             )
 
 
+def _volume_folder(position: int, count: int, chapter_path: str) -> str:
+    """Folder a chapter's pages go into inside a volume: ``"003_<stem>"``.
+
+    KCC reads a volume's pages in natural-sort order of these folder names,
+    and the bookmark page indices assume that order is OUR reading order. The
+    chapter file stem alone can't promise that once files are named by chapter
+    id: opaque slugs sort alphabetically ("alpha-main" before "zeta-intro"
+    whatever the site's order), and natural sort reads "700.10" as after
+    "700.9". A zero-padded position prefix makes the two orders identical by
+    construction. Pure.
+    """
+    width = max(3, len(str(count)))
+    stem = os.path.splitext(os.path.basename(chapter_path))[0]
+    return f"{position:0{width}d}_{stem}"
+
+
 def _chapter_members(chapter_path: str) -> List[str]:
     """Entry names (files only) of a chapter archive, in archive order."""
     with zipfile.ZipFile(chapter_path) as z:
@@ -457,13 +475,6 @@ class Bundle:
         os.makedirs(os.path.join(output_folder, "cbz"), exist_ok=True)
         os.makedirs(os.path.join(output_folder, "mobi"), exist_ok=True)
 
-        # The site's chapter id for each Chapter object ("700.5"). Needed for the
-        # ComicInfo labels because Chapter.number is NOT the chapter number --
-        # it is the stable file index (position in the full series list).
-        chapter_ids: Dict[int, str] = {
-            id(c): cid for cid, c in self.manga.chapters_dict.items()
-        }
-
         # Create the volume .cbz file
         volume = volume_index + 1
 
@@ -518,14 +529,12 @@ class Bundle:
             # the end of KCC's page list when it is the last chapter, and KCC
             # indexes that list unchecked (IndexError, failed conversion).
             if pages:
-                bookmarks.append(
-                    (pages_so_far, _chapter_label(chapter_ids.get(id(chapter))))
-                )
+                bookmarks.append((pages_so_far, _chapter_label(chapter.number)))
             pages_so_far += pages
         comic_info = _comic_info_xml(
             series=series,
             volume=volume,
-            title=_chapter_range([chapter_ids.get(id(c)) for c in members]),
+            title=_chapter_range([c.number for c in members]),
             writer=writer,
             bookmarks=bookmarks,
         )
@@ -538,8 +547,10 @@ class Bundle:
             try:
                 with atomic_write_path(volume_cbz_path) as tmp_cbz:
                     with zipfile.ZipFile(tmp_cbz, "w") as z:
-                        for path, names in zip(dependencies, entries):
-                            folder = os.path.splitext(os.path.basename(path))[0]
+                        for position, (path, names) in enumerate(
+                            zip(dependencies, entries), start=1
+                        ):
+                            folder = _volume_folder(position, len(members), path)
                             with zipfile.ZipFile(path) as src:
                                 for name in names:
                                     z.writestr(f"{folder}/{name}", src.read(name))

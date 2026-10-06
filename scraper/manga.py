@@ -3,6 +3,7 @@ Manga building blocks & factories
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -140,9 +141,13 @@ class Chapter:
     Manga chapter & its pages
     """
 
+    # the site's chapter id ("700.5"), which is also what names the file
     number: str
     file_path: Path
     upload_path: Path
+    # position in the site's full chapter list this run: reading order only,
+    # never part of the filename (see Manga.add_chapter)
+    order: Optional[int] = None
     _pages: Dict[int, Page] = field(default_factory=dict, repr=False)
 
     def __repr__(self) -> str:
@@ -239,9 +244,21 @@ class Manga:
 
     @property
     def chapters(self) -> List[Chapter]:
-        chapters = self._chapters.values()
-        sorted_chapters = sorted(chapters, key=lambda v: ChapterId(v.number))
-        return sorted_chapters
+        """Chapters in reading order.
+
+        That is the site's order (``Chapter.order``) when known -- the only
+        correct order for ids that don't sort as numbers, like opaque slugs --
+        and numeric chapter-id order for chapters added without one.
+        """
+
+        def key(c: Chapter) -> tuple:
+            # (0, n) sorts before (1, id), and the second elements are only
+            # ever compared against their own kind
+            if c.order is not None:
+                return (0, c.order)
+            return (1, ChapterId(c.number))
+
+        return sorted(self._chapters.values(), key=key)
 
     @chapters.setter
     # only used in unit tests
@@ -256,35 +273,109 @@ class Manga:
         chapter_index: Optional[int] = None,
         complete: Optional[bool] = True,
     ) -> None:
+        """Register a chapter.
+
+        The file is named after the chapter's SITE ID alone --
+        ``<name>_chapter_<id>[-incomplete].<ext>`` -- because the id is the one
+        thing about a chapter that doesn't change. Its position in the site's
+        list (``chapter_index``) used to be part of the name, so inserting or
+        removing one chapter re-downloaded every chapter after it under a new
+        name and left the old copies behind. The position is still kept, as
+        ``Chapter.order``, but only in memory, to put chapters in reading order.
+        """
         if self.chapters_dict.get(chapter_id):
             raise ChapterAlreadyPresent(f"Chapter {chapter_id} is already present")
 
-        if chapter_index is not None:
-            chapter_path_str = str(chapter_index) + "_" + chapter_id
-        else:
-            chapter_path_str = chapter_id
-        if not complete:
-            chapter_path_str += "-incomplete"
-        chapter_path = self._chapter_path(chapter_path_str)
-        chapter_upload_path = self._chapter_upload_path(chapter_path_str)
+        chapter_path_str = chapter_id if complete else f"{chapter_id}-incomplete"
         chapter = Chapter(
-            number=str(chapter_index) if chapter_index is not None else chapter_id,
-            file_path=chapter_path,
-            upload_path=chapter_upload_path,
+            number=chapter_id,
+            file_path=self._chapter_path(chapter_path_str),
+            upload_path=self._chapter_upload_path(chapter_path_str),
+            order=chapter_index,
         )
         self._chapters[chapter_id] = chapter
 
-    def chapter_exists(self, chapter_id: str, chapter_index: int) -> bool:
-        if chapter_index:
-            chapter_path_str = str(chapter_index) + "_" + chapter_id
-        else:
-            chapter_path_str = chapter_id
-        chapter_path = self._chapter_path(chapter_path_str)
+    def chapter_exists(self, chapter_id: str) -> bool:
+        """Is this chapter already saved, complete? (An ``-incomplete`` file
+        doesn't count: those are always retried.)"""
+        chapter_path = self._chapter_path(chapter_id)
         if chapter_path.exists():
-            logger.info(f"Chapter {chapter_path_str} already exists: {chapter_path}")
+            logger.info(f"Chapter {chapter_id} already exists: {chapter_path}")
             return True
-        else:
-            return False
+        return False
+
+    def migrate_position_named_files(self, known_ids: Iterable[str]) -> None:
+        """Rename chapter files from the old position-based scheme to the id one.
+
+        Old: ``<name>_chapter_<position>_<id>[-incomplete].<ext>``.
+        New: ``<name>_chapter_<id>[-incomplete].<ext>``.
+
+        Without this, every chapter downloaded before the change would be
+        fetched again. Per chapter id: the newest complete file is renamed into
+        place (an incomplete one only when there is no complete one), and any
+        other old copy -- such as the duplicates the position bug produced -- is
+        MOVED into ``.superseded/`` in the same folder. Nothing is deleted.
+
+        Only ids the site currently lists are touched, and a file whose whole
+        tail is itself a known id is taken to be new-style already, so a file
+        is never renamed on a guess. Rename keeps the mtime, so volumes built
+        from these chapters aren't spuriously considered stale.
+        """
+        known = set(known_ids)
+        folder = self._chapter_path("x").parent
+        if not folder.is_dir():
+            return
+        pattern = re.compile(
+            rf"^{re.escape(self.name)}_chapter_"
+            r"(?P<position>\d+)_(?P<id>.+?)(?P<incomplete>-incomplete)?"
+            r"\.(?P<ext>cbz|pdf)$"
+        )
+        found: Dict[tuple, List[tuple]] = {}
+        for path in folder.iterdir():
+            match = pattern.match(path.name) if path.is_file() else None
+            if not match:
+                continue
+            chapter_id = match["id"]
+            tail = f"{match['position']}_{chapter_id}"
+            if chapter_id not in known or tail in known:
+                continue
+            key = (chapter_id, match["ext"])
+            found.setdefault(key, []).append((path, bool(match["incomplete"])))
+
+        for (chapter_id, ext), files in found.items():
+            files.sort(key=lambda f: f[0].stat().st_mtime, reverse=True)
+            stem = f"{self.name}_chapter_{chapter_id}"
+            complete_target = folder / f"{stem}.{ext}"
+            incomplete_target = folder / f"{stem}-incomplete.{ext}"
+            keep: Optional[tuple] = None
+            if not complete_target.exists():
+                completes = [f for f in files if not f[1]]
+                if completes:
+                    keep = (completes[0][0], complete_target)
+                elif not incomplete_target.exists():
+                    keep = (files[0][0], incomplete_target)
+            for path, _ in files:
+                if keep and path == keep[0]:
+                    path.rename(keep[1])
+                    logger.info(f"Renamed {path.name} -> {keep[1].name}")
+                else:
+                    moved = _set_aside(path)
+                    logger.warning(
+                        f"Moved duplicate chapter file {path.name} to {moved}"
+                    )
+
+
+def _set_aside(path: Path) -> Path:
+    """Move ``path`` into ``.superseded/`` beside it, never overwriting."""
+    target_dir = path.parent / ".superseded"
+    target_dir.mkdir(exist_ok=True)
+    target = target_dir / path.name
+    counter = 1
+    while target.exists():
+        target = target_dir / f"{path.stem}.{counter}{path.suffix}"
+        counter += 1
+    path.rename(target)
+    return target
 
 
 class MangaBuilder:
@@ -302,8 +393,8 @@ class MangaBuilder:
         self.jobs: int = resolve_jobs(jobs)
         self.manga: Optional[Manga] = None
         # {chapter_id: 1-based position in the FULL series list}. Set in
-        # get_manga_chapters and used as each chapter's STABLE file index, so a
-        # chapter's saved name doesn't depend on what else was selected this run.
+        # get_manga_chapters; becomes each Chapter's reading ``order``. It is
+        # NOT part of any filename (see Manga.add_chapter).
         self._chapter_order: Dict[str, int] = {}
 
     def _get_chapter_data_wrapped(self, arg):
@@ -333,7 +424,7 @@ class MangaBuilder:
             return ChapterDownload(chapter_id, chapter_index, pages=None, complete=True)
 
         self.adapter.info(
-            f"Downloading chapter {chapter_index} from {self.parser.manga.chapter_url(chapter_id)}"
+            f"Downloading chapter {chapter_id} from {self.parser.manga.chapter_url(chapter_id)}"
         )
         try:
             urls = self.parser.manga.page_urls(chapter_id)
@@ -392,13 +483,13 @@ class MangaBuilder:
         assert self.manga is not None
         chapter_ids = list(chapter_ids)
         # Parent-side (has settings/disk access): which chapters are already
-        # saved? Each chapter's index is its STABLE position in the full series
-        # list (self._chapter_order), NOT its position in this run's selection --
-        # so "download 700.6 alone" and "download all" produce the SAME filename
-        # for 700.6, and the already-on-disk check matches across runs. Fall back
-        # to the selection position only if a chapter somehow isn't in the map.
+        # saved? Files are named by chapter id alone, so the check matches across
+        # runs whatever else was selected and however the site's list has
+        # shifted. The index passed along is the chapter's reading order -- its
+        # position in the full series list, falling back to the selection
+        # position only if a chapter somehow isn't in the map.
         worker_args = [
-            (index, chapter_id, self.manga.chapter_exists(chapter_id, index))
+            (index, chapter_id, self.manga.chapter_exists(chapter_id))
             for chapter_id, index in (
                 (cid, self._chapter_order.get(cid, pos))
                 for pos, cid in enumerate(chapter_ids, start=1)
@@ -486,14 +577,14 @@ class MangaBuilder:
         if not all_chapter_ids:
             raise Exception("Empty chapters list")
 
-        # Record each chapter's STABLE position in the full series list, used as
-        # its file index (see _get_chapters_data) so a chapter's saved name is
-        # independent of what else was selected this run -- which is what makes
-        # the already-on-disk de-dup work across different --chapters selections.
+        # Each chapter's position in the full series list: its reading order.
         self._chapter_order = {
             chapter_id: index
             for index, chapter_id in enumerate(all_chapter_ids, start=1)
         }
+        # Files from before chapters were named by id are renamed in place, so
+        # they're found as already downloaded instead of being fetched again.
+        self.manga.migrate_position_named_files(all_chapter_ids)
 
         # Selection is chapter-number based (see scraper.selection): chapter_ids are
         # selector tokens like ["9-12", "28.22"], matched against the chapter

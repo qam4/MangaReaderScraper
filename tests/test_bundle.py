@@ -13,6 +13,7 @@ optional `bundle` extra is installed (it isn't on CI).
 
 import json
 import os
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -29,6 +30,7 @@ from scraper.bundle import (
     _chapter_range,
     _comic_info_xml,
     _kcc_args,
+    _volume_folder,
 )
 from scraper.manga import Manga
 
@@ -301,9 +303,9 @@ def test_create_volume_archive_layout_and_comicinfo(tmp_path):
         names = z.namelist()
 
     assert "ComicInfo.xml" in names
-    # chapter folders carry the chapter file stem (<name>_chapter_<index>_<id>)
-    assert any(n.startswith("Naruto_chapter_1_1/") for n in names)
-    assert any(n.startswith("Naruto_chapter_2_2/") for n in names)
+    # chapter folders: "<position in volume>_<chapter file stem>"
+    assert any(n.startswith("001_Naruto_chapter_1/") for n in names)
+    assert any(n.startswith("002_Naruto_chapter_2/") for n in names)
     # page entries keep the writer's zero-padded <page>_<chapter>.jpg naming
     assert any(n.endswith("001_1.jpg") for n in names)
 
@@ -321,9 +323,9 @@ def test_create_volume_bookmarks_each_chapter_at_its_first_page(tmp_path):
     """Chapter bookmarks are what label the Kindle's table of contents.
 
     Without them KCC names TOC entries after the archive folders, i.e.
-    "Naruto_chapter_748_700". Ids deliberately differ from the stable file
-    indexes, as in a real series, so a label built from Chapter.number (the
-    index) would read "Chapter 748" and fail here.
+    "001_Naruto_chapter_700". Ids deliberately differ from the list positions,
+    as in a real series, so a label built from the position would read
+    "Chapter 748" and fail here.
     """
     manga, out, cfg, per_volume = _bundled(
         tmp_path, chapters=(("700", 748), ("700.5", 749))
@@ -339,6 +341,67 @@ def test_create_volume_bookmarks_each_chapter_at_its_first_page(tmp_path):
     assert pages == [("0", "Chapter 700"), ("2", "Chapter 700.5")]
     # Title carries the REAL chapter numbers, not the filename's positional ch1-2
     assert info.findtext("Title") == "Chapters 700-700.5"
+
+
+def _kcc_natural_key(name):
+    """KCC v10.2.0's sort key for folders and pages (shared.walkSort). Copied so
+    this runs on CI, where KCC isn't installed; the next test checks the copy
+    against the real one when it is."""
+    return [int(t) if t.isdigit() else t for t in re.split("([0-9]+)", name.lower())]
+
+
+def test_kcc_natural_key_copy_matches_kcc():
+    shared = pytest.importorskip("kindlecomicconverter.shared")
+    names = ["010_b", "2_a", "001_zeta", "700.10", "700.9", "Alpha", "alpha-main"]
+    dirs, files = shared.walkSort(list(names), list(names))
+    assert dirs == sorted(names, key=_kcc_natural_key)
+
+
+def test_volume_folders_sort_in_reading_order_under_kccs_sort(tmp_path):
+    """Bookmark page indices assume KCC reads chapters in OUR order.
+
+    KCC natural-sorts the folder names. Without the position prefix, opaque
+    ids would come out alphabetically ("alpha-main" before "zeta-intro") and
+    decimals like 700.10 / 700.9 inverted, so every bookmark after the first
+    misordered chapter would point at the wrong page.
+    """
+    manga, out, cfg, per_volume = _bundled(
+        tmp_path,
+        chapters=(("zeta-intro", 1), ("alpha-main", 2), ("beta-end", 3)),
+        chapters_per_volume=3,
+    )
+    with mock.patch("scraper.bundle.settings", return_value=cfg):
+        bundle = Bundle(manga, chapters_per_volume=per_volume, jobs=1)
+        with mock.patch.object(bundle, "_convert_to_mobi"):
+            bundle.create_volume(0, 1)
+
+    volume = out / "Naruto" / "cbz" / "Naruto - Naruto vol1 ch1-3.cbz"
+    with zipfile.ZipFile(volume) as z:
+        folders = []
+        for n in z.namelist():
+            top = n.split("/")[0]
+            if "/" in n and top not in folders:
+                folders.append(top)
+    in_kcc_order = sorted(folders, key=_kcc_natural_key)
+    assert [f.split("_chapter_")[1] for f in in_kcc_order] == [
+        "zeta-intro",
+        "alpha-main",
+        "beta-end",
+    ]
+    # and the bookmarks label them in that same order
+    labels = [p.get("Bookmark") for p in _comic_info(volume).iter("Page")]
+    assert labels == ["zeta-intro", "alpha-main", "beta-end"]
+
+
+@pytest.mark.parametrize(
+    "position,count,expected",
+    [
+        (1, 2, "001_Naruto_chapter_700"),
+        (12, 1500, "0012_Naruto_chapter_700"),  # widens past 999 chapters
+    ],
+)
+def test_volume_folder_name(position, count, expected):
+    assert _volume_folder(position, count, "/d/Naruto_chapter_700.cbz") == expected
 
 
 def test_create_volume_counts_only_image_files_as_pages(tmp_path):

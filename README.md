@@ -236,7 +236,16 @@ metadata. On the Kindle that gives you:
 `Writer` is the author extracted from the source (MangaFire, mangabuddy and
 mangago expose one), falling back to the ini `writer` key, then `Unknown`.
 Without the chapter bookmarks KCC labels the table of contents with internal
-folder names such as `Naruto_chapter_748_700`.
+folder names such as `001_Naruto_chapter_700`.
+
+Downloaded chapters are saved as `<manga>_chapter_<chapter number>.<ext>` in
+`<manga_directory>/<manga>/`, named by the site's chapter number alone, so a
+chapter the site adds or removes later never makes the others look new. Files
+from older versions, which also carried the chapter's position in the site's
+list (`<manga>_chapter_<position>_<chapter number>.<ext>`), are renamed in
+place on the next run instead of being downloaded again. Any duplicate copies
+those left behind are moved into a `.superseded/` folder beside them, never
+deleted.
 
 ### Importing volumes into Calibre
 

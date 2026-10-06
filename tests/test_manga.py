@@ -1,5 +1,7 @@
+import os
 import shutil
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -200,18 +202,21 @@ def test_mangabuilder_get_all_chapters(inval):
     manga = builder.get_manga_chapters(chapter_ids=inval)
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_1_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
+        order=1,
     )
     v2 = Chapter(
         number="2",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2_2.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_2_2.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_2.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_2.pdf"),
+        order=2,
     )
     v3 = Chapter(
         number="3",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_3_3.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_3_3.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_3.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_3.pdf"),
+        order=3,
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -231,8 +236,9 @@ def test_mangabuilder_get_single_chapters(parser):
     manga = builder.get_manga_chapters(chapter_ids=["1"])
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1_1.pdf"),
-        upload_path=Path("/dragon-ball/dragon-ball_chapter_1_1.pdf"),
+        file_path=Path("/tmp/dragon-ball/dragon-ball_chapter_1.pdf"),
+        upload_path=Path("/dragon-ball/dragon-ball_chapter_1.pdf"),
+        order=1,
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -251,8 +257,9 @@ def test_manga_builder_preferred_name(parser):
     )
     v1 = Chapter(
         number="1",
-        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_chapter_1_1.pdf"),
-        upload_path=Path("/smelly_pancakes/smelly_pancakes_chapter_1_1.pdf"),
+        file_path=Path("/tmp/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
+        upload_path=Path("/smelly_pancakes/smelly_pancakes_chapter_1.pdf"),
+        order=1,
     )
     img1 = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb")
     img2 = open("tests/test_files/jpgs/test-manga_1_2.jpg", "rb")
@@ -381,7 +388,7 @@ def test_builder_removes_stale_incomplete_file_when_chapter_completes(monkeypatc
 
     # pre-create the stale incomplete file the would-be complete path maps to
     builder.manga = Manga("dragon-ball", "pdf")
-    complete_path = builder.manga._chapter_path("1_1")
+    complete_path = builder.manga._chapter_path("1")
     incomplete_path = MangaBuilder._incomplete_path(complete_path)
     incomplete_path.parent.mkdir(parents=True, exist_ok=True)
     incomplete_path.write_bytes(b"partial")
@@ -395,10 +402,10 @@ def test_builder_removes_stale_incomplete_file_when_chapter_completes(monkeypatc
 
 
 def test_incomplete_path_inserts_suffix_before_extension():
-    p = Path("/tmp/dragon-ball/dragon-ball_chapter_1_1.pdf")
+    p = Path("/tmp/dragon-ball/dragon-ball_chapter_700.5.pdf")
     assert (
         MangaBuilder._incomplete_path(p).name
-        == "dragon-ball_chapter_1_1-incomplete.pdf"
+        == "dragon-ball_chapter_700.5-incomplete.pdf"
     )
 
 
@@ -446,11 +453,134 @@ def test_chapter_file_index_is_stable_across_selections():
     # de-dup rebuilds a different path and re-downloads it under a new name.
     solo = MangaBuilder(_GappyDecimalParser()).get_manga_chapters(chapter_ids=["12"])
     every = MangaBuilder(_GappyDecimalParser()).get_manga_chapters(chapter_ids=None)
-    assert "_chapter_4_12." in solo.chapters_dict["12"].file_path.name
+    assert solo.chapters_dict["12"].file_path.name == "dragon-ball_chapter_12.pdf"
     assert (
         solo.chapters_dict["12"].file_path.name
         == every.chapters_dict["12"].file_path.name
     )
+
+
+# ------------------- chapter identity is the id (item 3) -------------------
+#
+# Files used to be named "<name>_chapter_<position in the site's list>_<id>".
+# Positions shift whenever the site inserts or removes a chapter, so every
+# chapter after that point was downloaded AGAIN under a new name, with both
+# copies left on disk (reproduced: inserting 9.5 re-fetched 10, 11 and 12).
+
+
+class _ListSite:
+    """A site whose chapter list we control; records every chapter fetched."""
+
+    def __init__(self, chapters, fetched):
+        img = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb").read()
+
+        class _Parser:
+            manga_url = "series"
+
+            def all_chapter_ids(self_inner):
+                return list(chapters)
+
+            def chapter_url(self_inner, chapter):
+                return f"u/{chapter}"
+
+            def page_urls(self_inner, chapter):
+                fetched.append(chapter)
+                return [(1, f"u/{chapter}/1")]
+
+            def page_data(self_inner, page_url):
+                return (1, img, "success")
+
+            def author(self_inner):
+                return None
+
+        self.manga = _Parser()
+
+
+def _download(tmp_path, chapters, fetched, filetype="cbz"):
+    cfg = {"config": {"manga_directory": str(tmp_path), "upload_root": "/"}}
+    with mock.patch("scraper.manga.settings", return_value=cfg):
+        builder = MangaBuilder(_ListSite(chapters, fetched), filetype=filetype)
+        return builder.get_manga_chapters()
+
+
+def test_a_chapter_inserted_mid_series_downloads_only_that_chapter(tmp_path):
+    fetched: list = []
+    _download(tmp_path, ["9", "10", "11", "12"], fetched)
+    fetched.clear()
+
+    _download(tmp_path, ["9", "9.5", "10", "11", "12"], fetched)
+
+    assert fetched == ["9.5"]
+    assert sorted(p.name for p in (tmp_path / "series").glob("*.cbz")) == [
+        "series_chapter_10.cbz",
+        "series_chapter_11.cbz",
+        "series_chapter_12.cbz",
+        "series_chapter_9.5.cbz",
+        "series_chapter_9.cbz",
+    ]
+
+
+def test_old_style_chapter_files_are_renamed_not_downloaded_again(tmp_path):
+    # files from before this change, named by list position
+    folder = tmp_path / "series"
+    folder.mkdir()
+    (folder / "series_chapter_1_9.cbz").write_bytes(b"chapter 9")
+    (folder / "series_chapter_2_10.cbz").write_bytes(b"chapter 10")
+    fetched: list = []
+
+    _download(tmp_path, ["9", "10"], fetched)
+
+    assert fetched == []
+    assert (folder / "series_chapter_9.cbz").read_bytes() == b"chapter 9"
+    assert (folder / "series_chapter_10.cbz").read_bytes() == b"chapter 10"
+    assert not (folder / "series_chapter_1_9.cbz").exists()
+
+
+def test_duplicate_old_style_files_keep_the_newest_and_set_the_rest_aside(tmp_path):
+    # the duplicates the position bug left behind: same chapter, two positions
+    folder = tmp_path / "series"
+    folder.mkdir()
+    old = folder / "series_chapter_2_10.cbz"
+    new = folder / "series_chapter_3_10.cbz"
+    old.write_bytes(b"older copy")
+    new.write_bytes(b"newer copy")
+    os.utime(old, (1_000_000_000, 1_000_000_000))
+    os.utime(new, (2_000_000_000, 2_000_000_000))
+    fetched: list = []
+
+    _download(tmp_path, ["10"], fetched)
+
+    assert fetched == []
+    assert (folder / "series_chapter_10.cbz").read_bytes() == b"newer copy"
+    # moved, never deleted
+    assert (folder / ".superseded" / "series_chapter_2_10.cbz").read_bytes() == (
+        b"older copy"
+    )
+
+
+def test_old_style_file_is_set_aside_when_the_new_name_already_exists(tmp_path):
+    folder = tmp_path / "series"
+    folder.mkdir()
+    (folder / "series_chapter_10.cbz").write_bytes(b"current")
+    (folder / "series_chapter_2_10.cbz").write_bytes(b"leftover")
+    fetched: list = []
+
+    _download(tmp_path, ["10"], fetched)
+
+    assert fetched == []
+    assert (folder / "series_chapter_10.cbz").read_bytes() == b"current"
+    assert (folder / ".superseded" / "series_chapter_2_10.cbz").exists()
+
+
+def test_chapters_keep_the_site_order_even_when_ids_sort_differently(tmp_path):
+    # opaque slugs: the site's order is the only order there is
+    fetched: list = []
+    manga = _download(tmp_path, ["zeta-intro", "alpha-main", "beta-end"], fetched)
+    assert [c.number for c in manga.chapters] == [
+        "zeta-intro",
+        "alpha-main",
+        "beta-end",
+    ]
 
 
 # ----------------------------- download summary ----------------------------
