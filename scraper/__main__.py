@@ -5,8 +5,12 @@ from typing import Dict, List, Optional, Tuple, Type
 
 from scraper.bundle import Bundle
 from scraper.download import Download
-from scraper.exceptions import MangaDoesNotExist, NoSearchResultsFound
-from scraper.manga import Manga
+from scraper.exceptions import (
+    MangaDoesNotExist,
+    NoSearchResultsFound,
+    OfflineSeriesNotFound,
+)
+from scraper.manga import Manga, load_offline_manga
 from scraper.menu import SearchMenu
 from scraper.parsers.types import SiteParserClass
 from scraper.registry import available_sources, get_source
@@ -126,6 +130,31 @@ def bundle(manga: Manga, chapter_per_volume: int, jobs: Optional[int] = None):
     return bundle.bundle()
 
 
+def offline_bundle(args: dict) -> dict:
+    """``--offline``: rebuild volumes from chapters already on disk, no network.
+
+    The series is the local folder named by ``--override_name`` or
+    ``--manga`` -- the same name an online run saved it under. Anything that
+    needs the site is rejected rather than half-done.
+    """
+    if not args["bundle"]:
+        raise IOError("--offline only rebuilds volumes: use it with --bundle N")
+    if args["search"]:
+        raise IOError("--offline can't be combined with --search (it needs the site)")
+    if args["upload"]:
+        raise IOError(
+            "--offline can't be combined with --upload (it needs the network)"
+        )
+    name = args["override_name"] or " ".join(args["manga"] or [])
+    if not name:
+        raise IOError("--offline needs --manga <series folder name>")
+    args["manga"] = name
+    args["chapters"] = normalize_chapters(args["chapters"])
+    manga = load_offline_manga(name, "cbz", chapter_ids=args["chapters"])
+    bundle(manga, args["bundle"], jobs=args.get("jobs"))
+    return args
+
+
 def cli(arguments: List[str]) -> dict:
     logger.debug(f"arguments={arguments}")
     parser = get_parser()
@@ -135,6 +164,12 @@ def cli(arguments: List[str]) -> dict:
     # (ThreadPool), so they inherit the config -- no env propagation needed.
     log_level = args.get("log_level") or "INFO"
     configure_logging(log_level)
+
+    if args["offline"]:
+        # Decided before a parser is even looked up: offline must not depend on
+        # the site at all (nor on the configured source still being a valid one).
+        return offline_bundle(args)
+
     manga_parser = get_manga_parser(args["source"])
     title = None
     # Did the user originally search? If so, the slug came from a result they
@@ -236,6 +271,10 @@ def cli_entry() -> None:
             "list couldn't be parsed (the site may be blocking automated access)."
         )
         sys.exit(1)
+    except OfflineSeriesNotFound as err:
+        # --offline on a series with no local record: say how to make one
+        logging.error(str(err))
+        sys.exit(1)
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -295,6 +334,13 @@ def get_parser() -> argparse.ArgumentParser:
         action="version",
         version="v0.50",
         help="display the installed version number of the application",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="with --bundle: rebuild volumes from chapters already on disk, "
+        "without contacting the site. --manga (or --override_name) is the "
+        "series folder name an earlier download saved it under",
     )
     parser.add_argument(
         "--bundle",

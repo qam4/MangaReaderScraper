@@ -39,6 +39,11 @@ class CannotExtractChapter(Exception):
     pass
 
 
+class OfflineSeriesNotFound(Exception):
+    """``--offline`` was asked to bundle a series with no local record of it
+    (no ``.series.json`` beside its chapters)."""
+
+
 class NoSearchResultsFound(Exception):
     """Raised by the search parser layer when a query yields no results.
 

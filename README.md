@@ -209,6 +209,20 @@ Example — download a series as CBZ and bundle every 10 chapters into a MOBI:
 uv run manga-scraper --manga dragon-ball-super --bundle 10
 ```
 
+To rebuild volumes **without contacting the site** (it's down, blocking you,
+or you're offline), add `--offline`. It works from the chapters already on disk
+plus a small `.series.json` record each download leaves beside them, so it
+gives the same volumes an online run would. `--manga` (or `--override_name`)
+is then the series' folder name under `manga_directory`:
+
+```bash
+uv run manga-scraper --manga "Dragon Ball Super" --bundle 10 --offline
+```
+
+A series downloaded before that record existed needs one normal run first.
+`--offline` can't be combined with `--search` or `--upload`, since both need
+the site.
+
 Volumes land in `<manga_bundle_directory>/<manga>/cbz/` and `.../mobi/`.
 Re-running `--bundle` only redoes what changed, so you never need to delete
 volumes by hand:

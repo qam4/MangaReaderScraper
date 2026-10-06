@@ -2,6 +2,7 @@
 Manga building blocks & factories
 """
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -14,12 +15,14 @@ from scraper.exceptions import (
     # ChapterAlreadyExists,
     ChapterAlreadyPresent,
     ChapterDoesntExist,
+    OfflineSeriesNotFound,
     PageAlreadyPresent,
 )
 from scraper.new_types import PageData
 from scraper.parsers.types import SiteParser
 from scraper.selection import ChapterId, select_chapters, sort_chapter_ids
 from scraper.utils import (
+    atomic_write_path,
     get_adapter,
     get_console,
     resolve_jobs,
@@ -365,6 +368,65 @@ class Manga:
                     )
 
 
+# What a download records beside its chapters so bundling can later run
+# without the site: series name, source, url, author and the FULL chapter list
+# in the site's order. Written by MangaBuilder, read by load_offline_manga.
+SERIES_FILE = ".series.json"
+
+
+def load_offline_manga(
+    name: str, filetype: str = "cbz", chapter_ids: Optional[Iterable[str]] = None
+) -> Manga:
+    """Rebuild a series' ``Manga`` from local files only, for ``--offline``.
+
+    Uses the ``SERIES_FILE`` a previous download wrote and the chapter files on
+    disk. The result matches what an online run would build -- same chapters,
+    order, file paths and author -- so it produces the same volumes, and finds
+    them current when nothing changed. That includes a chapter whose file is
+    missing: it is registered as incomplete, exactly as an online run registers
+    a chapter that failed to download, so volume boundaries don't shift.
+
+    ``chapter_ids`` are ``--chapters`` selector tokens, applied to the recorded
+    list. Raises ``OfflineSeriesNotFound`` when there is no record.
+    """
+    name = sanitize_filename(name)
+    manga = Manga(name, filetype)
+    record_path = manga._chapter_path("x").parent / SERIES_FILE
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise OfflineSeriesNotFound(
+            f"No offline record for '{name}' ({record_path} is missing). Run the "
+            "same download once without --offline to create it; --manga must "
+            "be the series folder name under manga_directory."
+        )
+    except ValueError as err:
+        raise OfflineSeriesNotFound(f"Unreadable offline record {record_path}: {err}")
+
+    all_ids = [str(c) for c in record.get("chapters") or []]
+    if not all_ids:
+        raise OfflineSeriesNotFound(f"Offline record {record_path} lists no chapters")
+    manga.author = record.get("author")
+    manga.migrate_position_named_files(all_ids)
+
+    selected = all_ids if chapter_ids is None else select_chapters(chapter_ids, all_ids)
+    order = {cid: position for position, cid in enumerate(all_ids, start=1)}
+    missing = []
+    for chapter_id in selected:
+        complete = manga._chapter_path(chapter_id).exists()
+        if not complete:
+            missing.append(chapter_id)
+        manga.add_chapter(
+            chapter_id, chapter_index=order[chapter_id], complete=complete
+        )
+    if missing:
+        logger.warning(
+            f"[{name}] No complete file for chapters {', '.join(missing)}; "
+            "volumes containing them are skipped unless an -incomplete file exists"
+        )
+    return manga
+
+
 def _set_aside(path: Path) -> Path:
     """Move ``path`` into ``.superseded/`` beside it, never overwriting."""
     target_dir = path.parent / ".superseded"
@@ -534,6 +596,30 @@ class MangaBuilder:
                     progress.advance(task)
         return results
 
+    def _write_series_record(self, all_chapter_ids: List[str]) -> None:
+        """Save ``SERIES_FILE`` beside the chapters (see ``load_offline_manga``).
+
+        Best effort: failing to write it must not fail the download, so an
+        error is a warning. Written atomically, so a crash can't leave a torn
+        record that a later offline run would misread.
+        """
+        assert self.manga is not None
+        record = {
+            "format": 1,
+            "name": self.manga.name,
+            "source": getattr(self.parser, "source_name", None),
+            "manga_url": self.parser.manga.manga_url,
+            "author": self.manga.author,
+            "chapters": list(all_chapter_ids),
+        }
+        path = self.manga._chapter_path("x").parent / SERIES_FILE
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with atomic_write_path(path) as tmp:
+                tmp.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        except OSError as err:
+            self.adapter.warning(f"Could not record {path}: {err}")
+
     def _create_manga_dir(self, manga_name: str) -> None:
         """
         Create a manga directory if it does not exist.
@@ -585,6 +671,9 @@ class MangaBuilder:
         # Files from before chapters were named by id are renamed in place, so
         # they're found as already downloaded instead of being fetched again.
         self.manga.migrate_position_named_files(all_chapter_ids)
+        # Record what a later --offline bundle needs (the full list, not just
+        # this selection), before any download can fail.
+        self._write_series_record(all_chapter_ids)
 
         # Selection is chapter-number based (see scraper.selection): chapter_ids are
         # selector tokens like ["9-12", "28.22"], matched against the chapter

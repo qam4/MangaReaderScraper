@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 from pathlib import Path
@@ -5,14 +6,21 @@ from unittest import mock
 
 import pytest
 
-from scraper.exceptions import ChapterAlreadyPresent, PageAlreadyPresent
+from scraper.bundle import Bundle
+from scraper.exceptions import (
+    ChapterAlreadyPresent,
+    OfflineSeriesNotFound,
+    PageAlreadyPresent,
+)
 from scraper.manga import (
+    SERIES_FILE,
     Chapter,
     ChapterDownload,
     DownloadSummary,
     Manga,
     MangaBuilder,
     Page,
+    load_offline_manga,
     summarize_downloads,
 )
 from tests.helpers import MockedSiteParser
@@ -471,7 +479,7 @@ def test_chapter_file_index_is_stable_across_selections():
 class _ListSite:
     """A site whose chapter list we control; records every chapter fetched."""
 
-    def __init__(self, chapters, fetched):
+    def __init__(self, chapters, fetched, author=None):
         img = open("tests/test_files/jpgs/test-manga_1_1.jpg", "rb").read()
 
         class _Parser:
@@ -491,16 +499,26 @@ class _ListSite:
                 return (1, img, "success")
 
             def author(self_inner):
-                return None
+                return author
 
         self.manga = _Parser()
 
 
-def _download(tmp_path, chapters, fetched, filetype="cbz"):
-    cfg = {"config": {"manga_directory": str(tmp_path), "upload_root": "/"}}
-    with mock.patch("scraper.manga.settings", return_value=cfg):
-        builder = MangaBuilder(_ListSite(chapters, fetched), filetype=filetype)
-        return builder.get_manga_chapters()
+def _cfg(tmp_path):
+    return {
+        "config": {
+            "manga_directory": str(tmp_path),
+            "manga_bundle_directory": str(tmp_path / "out"),
+            "upload_root": "/",
+        }
+    }
+
+
+def _download(tmp_path, chapters, fetched, filetype="cbz", author=None, ids=None):
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        site = _ListSite(chapters, fetched, author=author)
+        builder = MangaBuilder(site, filetype=filetype)
+        return builder.get_manga_chapters(chapter_ids=ids)
 
 
 def test_a_chapter_inserted_mid_series_downloads_only_that_chapter(tmp_path):
@@ -581,6 +599,115 @@ def test_chapters_keep_the_site_order_even_when_ids_sort_differently(tmp_path):
         "alpha-main",
         "beta-end",
     ]
+
+
+# --------------------- offline bundling (item 4) ---------------------------
+#
+# Bundling is a purely local step, but every run used to fetch the chapter list
+# and the author first -- so volumes couldn't be rebuilt with the site down,
+# blocking, or out of reach. A download now records what bundling needs.
+
+
+def test_download_records_the_series_for_offline_use(tmp_path):
+    _download(tmp_path, ["1", "2", "10"], [], author="Masashi Kishimoto")
+
+    record = json.loads((tmp_path / "series" / SERIES_FILE).read_text("utf-8"))
+    assert record["name"] == "series"
+    assert record["manga_url"] == "series"
+    assert record["author"] == "Masashi Kishimoto"
+    # the FULL list, in the site's order -- not just this run's selection
+    assert record["chapters"] == ["1", "2", "10"]
+
+
+def test_offline_manga_matches_the_online_one(tmp_path):
+    online = _download(tmp_path, ["1", "2", "10"], [], author="Masashi Kishimoto")
+
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        offline = load_offline_manga("series", "cbz")
+
+    def shape(manga):
+        return [(c.number, c.order, c.file_path) for c in manga.chapters]
+
+    assert shape(offline) == shape(online)
+    assert offline.author == online.author == "Masashi Kishimoto"
+
+
+def test_offline_applies_the_chapter_selection(tmp_path):
+    _download(tmp_path, ["1", "2", "3"], [])
+
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        offline = load_offline_manga("series", "cbz", chapter_ids=["2-3"])
+
+    assert [c.number for c in offline.chapters] == ["2", "3"]
+    assert [c.order for c in offline.chapters] == [2, 3]  # full-list positions
+
+
+def test_offline_registers_a_chapter_with_no_file_as_incomplete(tmp_path):
+    # mirrors online, where a chapter that failed to download is still listed:
+    # same volume boundaries, and that volume is skipped rather than renumbered
+    _download(tmp_path, ["1", "2", "3"], [])
+    (tmp_path / "series" / "series_chapter_2.cbz").unlink()
+
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        offline = load_offline_manga("series", "cbz")
+
+    assert [c.number for c in offline.chapters] == ["1", "2", "3"]
+    assert offline.chapters_dict["2"].file_path.name == (
+        "series_chapter_2-incomplete.cbz"
+    )
+
+
+def test_offline_without_a_record_says_how_to_get_one(tmp_path):
+    (tmp_path / "series").mkdir()
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        with pytest.raises(OfflineSeriesNotFound, match="once without --offline"):
+            load_offline_manga("series", "cbz")
+
+
+def test_offline_rebuild_of_an_up_to_date_series_changes_nothing(tmp_path):
+    """The strongest check that offline == online: bundling a series offline
+    right after bundling it online must find every volume already current."""
+    online = _download(tmp_path, ["1", "2", "3"], [], author="Masashi Kishimoto")
+
+    def bundle(manga):
+        def fake_convert(cbz_path, mobi_path):
+            Path(mobi_path).write_bytes(b"mobi")
+
+        verdicts = []
+        real_is_stale = Bundle._volume_is_stale
+
+        def recording_is_stale(self, *args):
+            verdicts.append(real_is_stale(self, *args))
+            return verdicts[-1]
+
+        with (
+            mock.patch("scraper.bundle.settings", return_value=_cfg(tmp_path)),
+            mock.patch.object(Bundle, "_volume_is_stale", recording_is_stale),
+        ):
+            b = Bundle(manga, chapters_per_volume=2, jobs=1)
+            with mock.patch.object(
+                b, "_convert_to_mobi", side_effect=fake_convert
+            ) as convert:
+                b.create_volume(0, 1)
+                b.create_volume(1, 1)
+        return convert, verdicts
+
+    _, built = bundle(online)
+    assert built == [True, True]  # online: both volumes built
+    volumes = sorted((tmp_path / "out" / "series" / "cbz").iterdir())
+    before = [(p.name, p.stat().st_mtime_ns) for p in volumes]
+
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        offline = load_offline_manga("series", "cbz")
+    convert, verdicts = bundle(offline)
+
+    # Each volume was actually EVALUATED and found current. Without this, a
+    # broken offline Manga would also leave the files untouched (create_volume
+    # quietly skips a volume it can't build) and the checks below would pass.
+    assert verdicts == [False, False]
+    after = [(p.name, p.stat().st_mtime_ns) for p in volumes]
+    assert after == before  # no volume rebuilt
+    convert.assert_not_called()  # no MOBI rebuilt
 
 
 # ----------------------------- download summary ----------------------------
