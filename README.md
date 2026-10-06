@@ -267,6 +267,15 @@ place on the next run instead of being downloaded again. Any duplicate copies
 those left behind are moved into a `.superseded/` folder beside them, never
 deleted.
 
+The `<manga>` folder is named after the search result's title when you search,
+and after the slug when you use `--manga`. Each folder's `.series.json` records
+which source and url it came from, so downloading the same series the other way
+later reuses that folder instead of starting a second one and downloading
+everything again. `--override_name` always wins. For folders created before
+`.series.json` existed this can't be known for sure; if one only looks like
+the same series, the scraper warns and suggests the `--override_name` that
+would reuse it, rather than guessing.
+
 ### Importing volumes into Calibre
 
 Calibre does **not** read `ComicInfo.xml` when it imports a `.cbz`. Its built-in

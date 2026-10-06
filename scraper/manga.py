@@ -427,6 +427,11 @@ def load_offline_manga(
     return manga
 
 
+def _loose_name(name: str) -> str:
+    """ "Dragon Ball Super" and "dragon-ball-super" -> "dragonballsuper"."""
+    return "".join(c for c in name.lower() if c.isalnum())
+
+
 def _set_aside(path: Path) -> Path:
     """Move ``path`` into ``.superseded/`` beside it, never overwriting."""
     target_dir = path.parent / ".superseded"
@@ -620,6 +625,59 @@ class MangaBuilder:
         except OSError as err:
             self.adapter.warning(f"Could not record {path}: {err}")
 
+    def _existing_series_folder(self, name: str) -> str:
+        """The folder name to use for this series: an existing folder whose
+        ``SERIES_FILE`` records the same source and url, else ``name``.
+
+        Without this the folder depended on HOW you asked: a search names it
+        after the result's title ("Dragon Ball Super"), ``--manga`` after the
+        slug ("dragon-ball-super"). Same series, two folders, and the second
+        run downloaded everything again without a word.
+
+        Folders from before records existed can't be matched for sure. If one
+        merely LOOKS like this series (same letters and digits, ignoring case
+        and punctuation) and we're about to create a new folder, that is only
+        warned about, with the ``--override_name`` that would reuse it --
+        adopting a folder on a guess could merge two different series.
+        """
+        root = Path(settings()["config"]["manga_directory"])
+        if not root.is_dir():
+            return name
+        source = getattr(self.parser, "source_name", None)
+        url = self.parser.manga.manga_url
+        matches: List[str] = []
+        lookalikes: List[str] = []
+        for folder in root.iterdir():
+            if not folder.is_dir():
+                continue
+            record_path = folder / SERIES_FILE
+            if record_path.is_file():
+                try:
+                    record = json.loads(record_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if record.get("manga_url") == url and record.get("source") == source:
+                    matches.append(folder.name)
+            elif folder.name != name and _loose_name(folder.name) == _loose_name(name):
+                lookalikes.append(folder.name)
+
+        if matches:
+            chosen = name if name in matches else sorted(matches)[0]
+            if chosen != name:
+                self.adapter.info(
+                    f"Using existing folder '{chosen}' for this series (its "
+                    f"{SERIES_FILE} records the same source and url)"
+                )
+            return chosen
+        if lookalikes and not (root / name).exists():
+            self.adapter.warning(
+                f"Folder(s) {', '.join(repr(f) for f in sorted(lookalikes))} look like "
+                f"this series but have no {SERIES_FILE}, so they're not reused and "
+                f"chapters will be saved under '{name}'. To reuse one, run with "
+                f"--override_name {sorted(lookalikes)[0]!r}"
+            )
+        return name
+
     def _create_manga_dir(self, manga_name: str) -> None:
         """
         Create a manga directory if it does not exist.
@@ -637,6 +695,7 @@ class MangaBuilder:
         """
         Returns a Manga object containing the requested chapters
         """
+        explicit_name = bool(preferred_name)
         preferred_name = (
             preferred_name
             if preferred_name
@@ -645,6 +704,9 @@ class MangaBuilder:
             else self.parser.manga.manga_url
         )
         preferred_name = sanitize_filename(preferred_name)
+        if not explicit_name:
+            # An explicit --override_name is the user's choice and is kept.
+            preferred_name = self._existing_series_folder(preferred_name)
         self.adapter.debug(
             f"title={title}, manga_url={self.parser.manga.manga_url}, preferred_name={preferred_name}"
         )

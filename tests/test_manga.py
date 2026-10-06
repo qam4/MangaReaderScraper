@@ -514,11 +514,22 @@ def _cfg(tmp_path):
     }
 
 
-def _download(tmp_path, chapters, fetched, filetype="cbz", author=None, ids=None):
+def _download(
+    tmp_path,
+    chapters,
+    fetched,
+    filetype="cbz",
+    author=None,
+    ids=None,
+    title=None,
+    preferred_name=None,
+):
     with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
         site = _ListSite(chapters, fetched, author=author)
         builder = MangaBuilder(site, filetype=filetype)
-        return builder.get_manga_chapters(chapter_ids=ids)
+        return builder.get_manga_chapters(
+            chapter_ids=ids, title=title, preferred_name=preferred_name
+        )
 
 
 def test_a_chapter_inserted_mid_series_downloads_only_that_chapter(tmp_path):
@@ -708,6 +719,59 @@ def test_offline_rebuild_of_an_up_to_date_series_changes_nothing(tmp_path):
     after = [(p.name, p.stat().st_mtime_ns) for p in volumes]
     assert after == before  # no volume rebuilt
     convert.assert_not_called()  # no MOBI rebuilt
+
+
+# ------------------- series folder identity (item 6) -----------------------
+#
+# The series folder is named after the search-result title when you search, but
+# after the url slug when you pass --manga. So the same series downloaded both
+# ways ended up in two folders, and the second run silently fetched everything
+# again. Each folder's .series.json records the source + url it came from.
+
+
+def test_same_series_by_slug_reuses_the_folder_a_search_created(tmp_path):
+    fetched: list = []
+    # first run came from a search: folder named after the result's title
+    _download(tmp_path, ["1", "2"], fetched, title="Series Title")
+    fetched.clear()
+
+    # later run passes the slug instead (no title)
+    manga = _download(tmp_path, ["1", "2"], fetched)
+
+    assert fetched == []  # nothing downloaded again
+    assert manga.name == "Series Title"
+    assert not (tmp_path / "series").exists()  # no second folder
+
+
+def test_override_name_is_respected_even_when_a_folder_matches(tmp_path):
+    fetched: list = []
+    _download(tmp_path, ["1"], fetched, title="Series Title")
+    manga = _download(tmp_path, ["1"], fetched, preferred_name="My Name")
+    assert manga.name == "My Name"
+
+
+def test_a_folder_recorded_for_a_different_url_is_not_reused(tmp_path):
+    other = tmp_path / "Series Title"
+    other.mkdir()
+    (other / SERIES_FILE).write_text(
+        json.dumps({"source": None, "manga_url": "another-series", "chapters": []}),
+        encoding="utf-8",
+    )
+    manga = _download(tmp_path, ["1"], [])
+    assert manga.name == "series"
+
+
+def test_lookalike_folder_without_a_record_is_flagged_not_guessed(tmp_path, caplog):
+    # old downloads have no record, so a name match is only a hint: say so and
+    # point at --override_name, but don't silently adopt a folder on a guess.
+    # (A space, not just case: Windows paths ignore case, so "Series" vs
+    # "series" is already the same folder there and nothing forks.)
+    (tmp_path / "Se ries").mkdir()
+    with caplog.at_level("WARNING"):
+        manga = _download(tmp_path, ["1"], [])
+    assert manga.name == "series"
+    assert "'Se ries'" in caplog.text
+    assert "--override_name" in caplog.text
 
 
 # ----------------------------- download summary ----------------------------
