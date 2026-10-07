@@ -17,8 +17,6 @@ from scraper.registry import available_sources, get_source
 from scraper.uploaders.types import Uploader
 from scraper.utils import configure_logging, menu_input, settings
 
-CONFIG = settings()["config"]
-
 logger = logging.getLogger(__name__)
 
 # Configure logging once at import with the default level; cli() re-applies the
@@ -284,6 +282,10 @@ def cli_entry() -> None:
 
 
 def get_parser() -> argparse.ArgumentParser:
+    # The ini supplies the --filetype / --source defaults. Read here, when the
+    # command line is built, not at import: importing this module used to read
+    # (and, if missing, create) ~/.config/mangascraper.ini as a side effect.
+    config = settings()["config"]
     parser = argparse.ArgumentParser(
         description="downloads and converts manga to pdf or cbz format"
     )
@@ -310,7 +312,7 @@ def get_parser() -> argparse.ArgumentParser:
         "-f",
         type=str,
         choices={"pdf", "cbz"},
-        default=CONFIG["filetype"],
+        default=config["filetype"],
         help="format to store manga as",
     )
     parser.add_argument(
@@ -318,7 +320,7 @@ def get_parser() -> argparse.ArgumentParser:
         "-z",
         type=str,
         choices=available_sources(),
-        default=CONFIG["source"],
+        default=config["source"],
         help="website to scrape data from",
     )
     parser.add_argument(

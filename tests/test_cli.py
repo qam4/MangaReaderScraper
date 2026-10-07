@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from unittest import mock
 
 import pytest
@@ -309,6 +312,28 @@ def test_offline_without_a_record_exits_cleanly(caplog):
             cli_entry()
     assert exit_info.value.code == 1
     assert "run it once without --offline" in caplog.text
+
+
+# ----------------------- import side effects (G8) -------------------------
+
+
+def test_importing_the_cli_does_not_read_or_create_the_user_ini(tmp_path):
+    # In a fresh interpreter with an empty home: importing scraper.__main__
+    # used to run settings() at import, which reads ~/.config/mangascraper.ini
+    # and creates it when missing. A subprocess, because the module is already
+    # imported (and patched) in this one.
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    result = subprocess.run(
+        [sys.executable, "-c", "import scraper.__main__"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (home / ".config" / "mangascraper.ini").exists()
 
 
 # ------------------------ --output (backlog G7) ---------------------------

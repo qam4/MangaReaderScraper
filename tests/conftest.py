@@ -121,6 +121,7 @@ def mocked_uploader_settings():
 
 @pytest.fixture(scope="session", autouse=True)
 def mocked_manga_env_var_cli():
+    """The ini values the CLI's argparse defaults come from (get_parser)."""
     mock_settings = {
         "manga_directory": "/tmp",
         "source": "mangabuddy",
@@ -128,8 +129,27 @@ def mocked_manga_env_var_cli():
         "upload_root": "/",
     }
 
-    with mock.patch("scraper.__main__.CONFIG", mock_settings) as mocked_settings:
-        yield mocked_settings
+    with mock.patch(
+        "scraper.__main__.settings", return_value={"config": mock_settings}
+    ):
+        yield mock_settings
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path_factory, monkeypatch):
+    """Give every test its own empty home folder.
+
+    ``settings()`` reads ``<home>/.config/mangascraper.ini`` and creates it when
+    missing. Any call a test doesn't patch (bundle, resolve_jobs, uploaders)
+    used to read the developer's REAL ini, so results depended on that file,
+    and on a machine without one the run would have created it (backlog G8).
+    Path.home() follows USERPROFILE on Windows and HOME elsewhere. Kept out of
+    tmp_path, which is the test's manga_directory.
+    """
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home
 
 
 @pytest.fixture
