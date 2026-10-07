@@ -194,8 +194,12 @@ Each item has a done-when so "done" is unambiguous.
       chapter <li>s, and the reader page uses a DIFFERENT endpoint
       `/ajax/read/<id>/chapter/en?vrf=...`. So the parser's specific no-vrf
       endpoint is unconfirmed by this probe.
-    * **search — INCONCLUSIVE.** Search action hit a Cloudflare Turnstile wall;
-      no `ajax/manga/search` captured (recommendation: "no search endpoint seen").
+    * **search — INCONCLUSIVE.** No `ajax/manga/search` captured
+      (recommendation: "no search endpoint seen"). CORRECTED later: this was
+      NOT a Cloudflare wall. Both captured pages are the normal home page with
+      the search box and none of the interstitial phrases; the "challenge
+      wall" label was the probe's weak-marker false positive (the always-on
+      challenge-platform script). The search request simply never fired.
     * curl_cffi clears CF (200) where plain requests gets 403 — consistent with
       the parser; but api_backends only tested manifest/panel/reading-get (cap 3,
       vrf data endpoints not among them).
@@ -221,12 +225,23 @@ Each item has a done-when so "done" is unambiguous.
   send_keys+Enter) or a `--search` re-probe.
   - DONE-WHEN: `ajax/manga/search` shape confirmed (parser parses `a.unit` cards
     → `/manga/<slug>` + `Chap N`), or a live search via the parser returns hits.
+  - HOW (decided with the user): NOT another probe run, which would repeat the
+    June failure (it launches its own browser and types keystrokes; the
+    request never fired). Run the parser's own search at home:
+    `uv run manga-scraper --search naruto --source mangafire`. It uses the
+    shared BrowserFetcher session, which since 2026-06-12/13 waits for a manual
+    Turnstile click and can keep the clearance via MANGASCRAPER_BROWSER_PROFILE.
+    If it fails, rerun with `--log-level DEBUG` and bring the log back.
 
 - [ ] **C8 [QUICK, LOW-PRI] Verify MangaFire descramble on a scrambled chapter** —
   the C1 image capture had offset 0 on every page (no scramble), so `descramble()`
   was not exercised. If you happen onto a chapter with offset > 0, confirm it
   round-trips to a valid JPEG; else this is just unverified, not broken (the
   parser works on non-scrambled chapters today).
+  - CHECKED: the C1 chapter capture (`images/api_08_1488635.json`) lists 54
+    pages, every one `[url, 1, 0]`, so offset 0. The field is still sent, so
+    either scrambling is gone or only some chapters get it; a re-probe only
+    helps if it lands on one. Left as untested-not-broken (agreed with user).
 
 - [x] **C9 [QUICK] Probe: challenge detection is too trigger-happy (false positive)**
   - SURFACED by C1: the probe yelled "CHALLENGE WALL DETECTED" on all three
@@ -907,10 +922,14 @@ Two distinct root causes found:
     AttributeError, and `null` in the lookup with a wrong "looks like this
     series but has no .series.json" warning (null parsed to None, which the
     code read as "no record").
-  - NOT COVERED (read in code, not run): the field types inside a valid
-    object. `"chapters": 5` would raise TypeError in `load_offline_manga`, and
-    a non-string `author` would reach `_comic_info_xml`, whose `.strip()`
-    would fail. We write both correctly; only a hand-edited record hits this.
+  - FOLLOW-UP, DONE: the field types inside a valid object. `load_offline_manga`
+    now refuses, as "Unreadable offline record", a `chapters` that is not a
+    list of strings/numbers, a non-string `author`, and a chapter id listed
+    twice. On the old code these gave a TypeError (`"chapters": 5`), junk ids
+    (`"700"` read as 7, 0, 0; a dict or `true` stringified), a
+    ChapterAlreadyPresent traceback (repeated id), or an author that only
+    failed later in the ComicInfo build; all 6 cases failed there. Numeric
+    ids (a hand-edited list) are still accepted.
   - `_existing_series_folder` and `load_offline_manga` call `record.get(...)`
     on whatever `json.loads` returned, so a record that parses as a list or a
     string raises AttributeError (download fails; `--offline` shows a
@@ -930,8 +949,29 @@ Two distinct root causes found:
   - NEEDS from the user: the Kindle model, and what "too tall" looks like
     (cut off at top/bottom, stretched, or a page taller than the screen so it
     scrolls). A photo or screenshot of one page would settle which.
-  - OFFLINE CHECK possible: run the real kcc-c2e on the fixture jpgs and
-    compare the output image size with the profile's screen resolution.
+  - OFFLINE CHECK, DONE (real converters, EPUB output, KV profile): the old
+    fork run from `git -C kcc archive 627afbb` (v5.6.1-28, EPUB generator
+    5.6.1) with its old flags (`-u`), against v10.2.0 with ours, with and
+    without `--hq`.
+    * NO DISTORTION in any of them. A test page of 100x100 squares comes out
+      square (w/h 1.004 old fork, 1.001 v10 without --hq, 1.000 v10 default)
+      and the grid keeps its 0.700 proportions.
+    * THE DIFFERENCE IS CROPPING. v10's default crop (`-c 2`: margins + page
+      number) removes a bottom page number and white margins that the old fork
+      kept, so the art is drawn larger: on the square-grid page the art spans
+      1280 of the 1448 px page height in v10 vs 1168 in the old fork (+9.6%);
+      on a page built like a scan (fixture art on a white page with margins
+      and a page number) 93.0% vs 83.1% of the screen height. With `-c 1`
+      (margins only) 85.2%, `-c 0` (off) 76.1%.
+    * `--hq`: images are 1.5x (e.g. 1513x2172) inside a viewport at device size
+      (1008x1448); the art's size on screen is the same as without it.
+    * The committed fixture jpgs have art to the edges (no margins), which is
+      why they showed none of this.
+  - LEADING HYPOTHESIS (INFERRED, needs the device): "slightly too tall" = the
+    art now fills ~10% more of the screen height because the page number and
+    margins are cropped away. Settle it on the device: rebuild one volume with
+    `kcc_args = -u --hq -g 1.8 --metadatatitle 1 -c 1` and compare. If that
+    looks like the old books, the fix is a default change, the user's call.
 
 - [x] **G7 [BUG] `--output` / `-o` is accepted but does nothing**
   - HISTORY (git log -G): it worked in the first version (58500e8, 2017,
@@ -956,7 +996,18 @@ Two distinct root causes found:
     and say whether it also moves the bundle directory), or remove the flag
     and the README line.
 
-- [ ] **G8 [TEST, LOW-PRI] Importing `scraper.__main__` reads the real user ini**
+- [x] **G8 [TEST, LOW-PRI] Importing `scraper.__main__` reads the real user ini**
+  - DONE: `scraper/__main__.py` reads settings in `get_parser()` instead of at
+    import; the CLI fixture patches `scraper.__main__.settings`; a new autouse
+    `isolated_home` fixture gives every test an empty home (HOME and
+    USERPROFILE). A subprocess test imports `scraper.__main__` with an empty
+    home and checks no ini appears; it failed on the old code (the ini was
+    created).
+  - MEASURED: the open-file audit had shown one read, but `_read_settings` is
+    cached, so later reads never touched the disk. Wrapping `_read_settings` to
+    count every read of the real `~/.config/mangascraper.ini`: 62 reads from
+    collection plus 50 tests (test_bundle 13, test_cli 3, test_download 4,
+    test_manga 30) before, 0 after; 521 passed.
   - MEASURED with the G4 audit hook pointed at `~/.config`: one open of
     `~/.config/mangascraper.ini`, during test collection. Cause, read in code:
     `scraper/__main__.py` line 20 runs `CONFIG = settings()["config"]` at
