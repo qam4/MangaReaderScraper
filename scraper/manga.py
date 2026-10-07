@@ -423,10 +423,35 @@ def load_offline_manga(
             f"Unreadable offline record {record_path}: not a JSON object"
         )
 
-    all_ids = [str(c) for c in record.get("chapters") or []]
+    # Field types, checked up front: "chapters": "700" would otherwise be read
+    # as the ids 7, 0, 0, and a non-string author would only fail later, in
+    # the ComicInfo build. Numbers are accepted as ids (a hand-edited list).
+    chapters = record.get("chapters")
+    if chapters is None:
+        chapters = []
+    if not isinstance(chapters, list) or not all(
+        isinstance(c, (str, int, float)) and not isinstance(c, bool) for c in chapters
+    ):
+        raise OfflineSeriesNotFound(
+            f"Unreadable offline record {record_path}: 'chapters' must be a list "
+            "of chapter ids"
+        )
+    author = record.get("author")
+    if author is not None and not isinstance(author, str):
+        raise OfflineSeriesNotFound(
+            f"Unreadable offline record {record_path}: 'author' must be text"
+        )
+
+    all_ids = [str(c) for c in chapters]
+    repeated = sorted({c for c in all_ids if all_ids.count(c) > 1}, key=ChapterId)
+    if repeated:
+        raise OfflineSeriesNotFound(
+            f"Unreadable offline record {record_path}: 'chapters' lists "
+            f"{', '.join(repeated)} twice"
+        )
     if not all_ids:
         raise OfflineSeriesNotFound(f"Offline record {record_path} lists no chapters")
-    manga.author = record.get("author")
+    manga.author = author
     manga.migrate_position_named_files(all_ids)
 
     selected = all_ids if chapter_ids is None else select_chapters(chapter_ids, all_ids)

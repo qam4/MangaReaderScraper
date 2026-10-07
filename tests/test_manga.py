@@ -688,6 +688,52 @@ def test_offline_record_that_is_not_an_object_is_reported_as_unreadable(
             load_offline_manga("series", "cbz")
 
 
+@pytest.mark.parametrize(
+    "record,field",
+    [
+        ({"chapters": 5}, "chapters"),  # TypeError: not iterable
+        ({"chapters": "700"}, "chapters"),  # iterated as "7", "0", "0"
+        ({"chapters": [{"id": "1"}]}, "chapters"),  # becomes the id "{'id': '1'}"
+        ({"chapters": [True]}, "chapters"),  # becomes the id "True"
+        ({"chapters": ["1"], "author": 5}, "author"),  # crashes the ComicInfo build
+        ({"chapters": ["1", "2", "1"]}, "twice"),  # ChapterAlreadyPresent traceback
+    ],
+    ids=[
+        "chapters-int",
+        "chapters-str",
+        "chapter-object",
+        "chapter-bool",
+        "author-int",
+        "duplicate-id",
+    ],
+)
+def test_offline_record_with_a_malformed_field_is_reported_as_unreadable(
+    tmp_path, record, field
+):
+    # an object, but a field of the wrong type or a repeated chapter id: refused
+    # up front, naming the problem, instead of a TypeError, junk chapter ids, a
+    # ChapterAlreadyPresent traceback, or a crash when bundling
+    folder = tmp_path / "series"
+    folder.mkdir()
+    (folder / SERIES_FILE).write_text(json.dumps(record), encoding="utf-8")
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        with pytest.raises(OfflineSeriesNotFound, match=f"Unreadable.*{field}"):
+            load_offline_manga("series", "cbz")
+
+
+def test_offline_record_accepts_numeric_chapter_ids_and_a_null_author(tmp_path):
+    # a hand-edited list of numbers is still a list of chapter ids
+    folder = tmp_path / "series"
+    folder.mkdir()
+    (folder / SERIES_FILE).write_text(
+        json.dumps({"chapters": [700, "700.5"], "author": None}), encoding="utf-8"
+    )
+    with mock.patch("scraper.manga.settings", return_value=_cfg(tmp_path)):
+        manga = load_offline_manga("series", "cbz")
+    assert [c.number for c in manga.chapters] == ["700", "700.5"]
+    assert manga.author is None
+
+
 def test_offline_rebuild_of_an_up_to_date_series_changes_nothing(tmp_path):
     """The strongest check that offline == online: bundling a series offline
     right after bundling it online must find every volume already current."""
