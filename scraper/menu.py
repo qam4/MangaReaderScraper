@@ -2,7 +2,7 @@ from typing import List
 
 from tabulate import tabulate  # type: ignore
 
-from scraper.exceptions import InvalidOption
+from scraper.exceptions import InvalidOption, NoSearchResultsFound
 from scraper.new_types import SearchResults
 from scraper.parsers.types import SiteParser, SiteParserClass
 from scraper.utils import menu_input
@@ -22,6 +22,7 @@ class SearchMenu:
 
     def __init__(self, query: List[str], parser: SiteParserClass) -> None:
         self.parser: SiteParser = parser()
+        self.query: str = " ".join(query)
         self.search_results: SearchResults = self._search(query)
         self.options: SearchResults = self.search_results
         self.choices: str = self.table()
@@ -54,7 +55,13 @@ class SearchMenu:
     def handle_options(self):
         """
         Print the table, prompt for a row index, and return the chosen result.
+
+        No results means nothing to choose: raise instead of printing an empty
+        table and waiting at the prompt. Some parsers (MangaFire, whose search
+        returns {} on a timeout) don't raise NoSearchResultsFound themselves.
         """
+        if not self.options:
+            raise NoSearchResultsFound(f"No search results found for {self.query}")
         print(self.choices)
         msg = "Select the index of the manga of your choice"
         choice = menu_input(msg)

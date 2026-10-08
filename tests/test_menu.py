@@ -1,6 +1,6 @@
 import pytest
 
-from scraper.exceptions import InvalidOption
+from scraper.exceptions import InvalidOption, NoSearchResultsFound
 from scraper.menu import SearchMenu
 from tests.helpers import METADATA, TABLE, MockedSearch
 
@@ -27,6 +27,23 @@ def test_handle_options_returns_selected_result(selected, expected, monkeypatch)
     search_menu = SearchMenu("dragon-ball", MockedSearch)
     monkeypatch.setattr("builtins.input", lambda x: selected)
     assert search_menu.handle_options() == expected
+
+
+def test_no_results_ends_the_search_instead_of_prompting(monkeypatch):
+    # MangaFire's search returns {} when it times out or finds nothing (other
+    # sites raise NoSearchResultsFound themselves). The menu used to print an
+    # empty table and wait at the ">>" prompt for a choice that can't exist,
+    # which looked like a hang. It must raise, so cli_entry reports it and exits.
+    class EmptySearch:
+        def search(self, query):
+            return {}
+
+    def no_prompt(_):
+        raise AssertionError("must not prompt when there is nothing to choose")
+
+    monkeypatch.setattr("builtins.input", no_prompt)
+    with pytest.raises(NoSearchResultsFound, match="naruto"):
+        SearchMenu(["naruto"], EmptySearch).handle_options()
 
 
 def test_handle_options_invalid_choice_raises(monkeypatch):
