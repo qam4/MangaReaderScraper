@@ -428,6 +428,50 @@ def test_browser_runtime_submit_propagates_exceptions():
         runtime.shutdown()
 
 
+_SUBMIT_TIMEOUT_SCRIPT = """
+import asyncio
+from scraper.fetchers import _BrowserRuntime
+
+runtime = _BrowserRuntime()
+
+async def times_out():
+    await asyncio.wait_for(asyncio.sleep(10), timeout=0.05)
+
+try:
+    runtime.submit(times_out())
+    print("returned")
+except TimeoutError:
+    print("TimeoutError")
+finally:
+    runtime.shutdown()
+"""
+
+
+def test_browser_runtime_submit_raises_an_op_timeout_instead_of_hanging():
+    # A browser step that times out (asyncio.wait_for) raises TimeoutError. On
+    # Python 3.11+ that is the SAME class as concurrent.futures.TimeoutError,
+    # which submit's polling loop caught to mean "not finished yet" -- so the
+    # op's own timeout was swallowed and submit spun forever (seen live: the
+    # MangaFire search hung after its 45 s capture timeout). In a subprocess
+    # with a deadline: the old spin holds the GIL, so an in-process thread
+    # would starve the test runner instead of failing it.
+    import subprocess
+    import sys
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _SUBMIT_TIMEOUT_SCRIPT],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("submit hung on the op's TimeoutError")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TimeoutError"
+
+
 # ===================== persistent browser profile (opt-in) ================
 
 

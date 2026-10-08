@@ -622,15 +622,21 @@ class _BrowserRuntime:
         with self._lock:
             future = asyncio.run_coroutine_threadsafe(coro, self._loop)
             try:
-                # Poll with a short timeout rather than block forever, so a
+                # Poll with a short wait rather than block forever, so a
                 # Ctrl-C on the main thread can break a long/stuck browser op
                 # (e.g. an unsolved challenge): future.result() with no timeout
                 # is NOT interruptible by SIGINT on Windows.
+                #
+                # Poll with concurrent.futures.wait, which never raises, and only
+                # then collect the result. NOT future.result(timeout=0.5) inside
+                # `except concurrent.futures.TimeoutError`: on Python 3.11+ that
+                # class IS the builtin TimeoutError, the same one an op raises
+                # when its own asyncio.wait_for runs out, so the op's timeout
+                # was caught as "still running" and the loop spun forever.
                 while True:
-                    try:
-                        return future.result(timeout=0.5)
-                    except concurrent.futures.TimeoutError:
-                        continue
+                    done, _ = concurrent.futures.wait([future], timeout=0.5)
+                    if done:
+                        return future.result()
             except KeyboardInterrupt:
                 future.cancel()  # best effort; a running coro may not stop
                 raise
@@ -906,7 +912,10 @@ class BrowserFetcher:
             await self._enable_focus_emulation(tab)
             if trigger_js:
                 await tab.wait(3)
-                await tab.evaluate(trigger_js)
+                triggered = await tab.evaluate(trigger_js)
+                # e.g. MangaFire's search script returns false when it finds no
+                # search box; the CDP debug log truncates this value
+                logger.debug(f"capture_xhr trigger_js on {url} returned {triggered!r}")
 
             await asyncio.wait_for(found.wait(), timeout=self.timeout)
             captured_url = state["url"]
