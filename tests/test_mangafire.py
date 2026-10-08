@@ -1,9 +1,18 @@
 """
-Tests for the MangaFire parser.
+Tests for the MangaFire parser (the site as rebuilt in 2026).
 
-The chapter-list and search fixtures (tests/test_files/mangafire/*.json) are
-REAL responses captured from mangafire.to via the probe (scraper/probe.py), so
-these tests exercise the actual parsing logic against actual data.
+The fixtures in tests/test_files/mangafire/ are trimmed but otherwise
+unedited responses from MangaFire's JSON API, captured with the probe in
+October 2026 (scraper/probe.py --multi --search naruto):
+
+  search_titles.json    /api/titles?keyword=naruto&...&page=1&limit=30
+  title_details.json    /api/titles/92kk8
+  chapters_page_1.json  /api/titles/92kk8/chapters?...&page=1&limit=20
+  chapter_pages.json    /api/chapters/1326884
+
+The browser is never started: BrowserFetcher's capture calls are mocked, and
+what is tested is which page and request the parser asks for and how it reads
+the replies.
 """
 
 import io
@@ -11,108 +20,147 @@ import json
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from PIL import Image
 
+from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
 from scraper.fetchers import CaptureTriggerFailed
 from scraper.new_types import SearchResult
 from scraper.parsers.mangafire import (
+    _NEXT_PAGE_JS,
+    _SEARCH_BOX,
     Mangafire,
     MangafireMangaParser,
     MangafireSearch,
-    _authors_from_html,
-    _encode_page_url,
-    descramble,
+    _authors_from_title_payload,
+    _chapter_map_from_pages,
+    _chapter_number,
+    _has_next_page,
+    _is_search_results_request,
+    _page_urls_from_payload,
+    _parse_search_payload,
+    _series_path,
 )
 
-CHAPTER_JSON = Path("tests/test_files/mangafire/chapter_list.json").read_text(
-    encoding="utf-8"
+FIXTURES = Path("tests/test_files/mangafire")
+SEARCH = (FIXTURES / "search_titles.json").read_text(encoding="utf-8")
+TITLE = (FIXTURES / "title_details.json").read_text(encoding="utf-8")
+CHAPTERS_1 = (FIXTURES / "chapters_page_1.json").read_text(encoding="utf-8")
+PAGES = (FIXTURES / "chapter_pages.json").read_text(encoding="utf-8")
+
+# request urls exactly as the site made them (from the captures' ajax logs)
+RESULTS_URL = (
+    "https://mangafire.to/api/titles?keyword=naruto&content_rating%5B%5D=safe"
+    "&content_rating%5B%5D=suggestive&order%5Brelevance%5D=desc&page=1&limit=30"
+    "&vrf=8sK3xtqdFZdOu6WNqS1bZ0shnUDqyRXMnh4NlZ7aYCPUhmAbm1C1qPzeL_OIIf0obIggCZIH"
 )
-SEARCH_JSON = Path("tests/test_files/mangafire/search.json").read_text(encoding="utf-8")
-SERIES_HTML = Path("tests/test_files/mangafire/series_page.html").read_text(
-    encoding="utf-8"
+SUGGEST_URL = (
+    "https://mangafire.to/api/titles?keyword=naruto&content_rating%5B%5D=safe"
+    "&content_rating%5B%5D=suggestive&genres_ex%5B%5D=7&limit=5&vrf=8sK3xtqd"
 )
+HOT_URL = (
+    "https://mangafire.to/api/titles?content_rating%5B%5D=safe&order%5B"
+    "chapter_updated_at%5D=desc&hot=1&page=1&limit=30&vrf=8sK3xtqdFZdOu6WN"
+)
+DETAILS_URL = "https://mangafire.to/api/titles/92kk8?vrf=8sK3xtqdFdtJkF1mjQ"
+VOLUMES_URL = "https://mangafire.to/api/titles/92kk8/volumes?vrf=8sK3xtqdFdtJkF1mjWoS"
+CHAPTERS_URL = (
+    "https://mangafire.to/api/titles/92kk8/chapters?language=en&sort=number"
+    "&order=desc&page=1&limit=20&vrf=8sK3xtqdFdtJkF1mjWqnsSN-Z79bNdH_ug8holUtg9Be"
+)
+PAGES_URL = "https://mangafire.to/api/chapters/1326884?vrf=8vPRXa1JjvVTxq8m42_Kp0s"
 
 
-# ============================== chapter list =============================
-
-
-def test_all_chapter_ids_parses_real_response():
-    """all_chapter_ids should pull every data-number out of the real ajax JSON."""
-    with mock.patch(
-        "scraper.parsers.mangafire.BrowserFetcher.fetch_json_in_page",
-        return_value=CHAPTER_JSON,
-    ) as fetched:
-        parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
-        chapters = list(parser.all_chapter_ids())
-
-    # the endpoint that should have been hit (2nd positional arg = ajax url)
-    args = fetched.call_args[0]
-    assert args[1] == "https://mangafire.to/ajax/manga/lww3/chapter/en"
-
-    # 81 base chapters + 3 decimal point releases (9.22, 21.22, 28.22) = 84
-    assert len(chapters) == 84
-    # sorted ascending by float
-    assert chapters[0] == "1"
-    assert chapters[-1] == "81"
-    # decimal chapters preserved verbatim and ordered correctly
-    assert "28.22" in chapters
-    assert chapters.index("28.22") > chapters.index("28")
-    assert chapters.index("28.22") < chapters.index("29")
-
-
-def test_chapter_url_uses_chapter_number_verbatim():
-    parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
-    assert parser.chapter_url("78") == (
-        "https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-78"
+def _page_2(numbers_and_ids, has_next=False):
+    """A later chapter-list page, in the captured page-1 shape."""
+    return json.dumps(
+        {
+            "items": [
+                {"id": cid, "number": n, "name": "", "language": "en"}
+                for n, cid in numbers_and_ids
+            ],
+            "meta": {"page": 2, "lastPage": 2, "hasNext": has_next},
+        }
     )
-    # decimal chapters must round-trip
-    assert parser.chapter_url("28.22").endswith("chapter-28.22")
+
+
+def _parser_with_chapters(*pages):
+    parser = MangafireMangaParser("92kk8-naruto")
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr_pages",
+        return_value=list(pages),
+    ) as capture:
+        ids = list(parser.all_chapter_ids())
+    return parser, ids, capture
+
+
+# ============================== small helpers ============================
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(700, "700"), (700.0, "700"), (700.5, "700.5"), ("10.1", "10.1"), (None, None)],
+)
+def test_chapter_number_formats_api_numbers_as_chapter_ids(value, expected):
+    assert _chapter_number(value) == expected
+
+
+@pytest.mark.parametrize(
+    "manga_url",
+    [
+        "92kk8-naruto",
+        "/title/92kk8-naruto",
+        "https://mangafire.to/title/92kk8-naruto",
+        "https://mangafire.to/title/92kk8-naruto/chapter/1326884",
+    ],
+)
+def test_series_path_accepts_the_slug_or_a_pasted_url(manga_url):
+    assert _series_path(manga_url) == "92kk8-naruto"
+
+
+def test_series_url_and_wiring():
+    site = Mangafire("92kk8-naruto")
+    assert site.base_url == "https://mangafire.to"
+    assert isinstance(site.manga, MangafireMangaParser)
+    assert site.manga.series_url == "https://mangafire.to/title/92kk8-naruto"
 
 
 # ================================ search =================================
 
 
-def test_search_parses_real_response():
-    """search should turn the real ajax/manga/search html into the menu dict."""
-    with mock.patch.object(MangafireSearch, "_search_in_browser") as browser:
-        # _search_in_browser returns the inner result.html string
-        browser.return_value = json.loads(SEARCH_JSON)["result"]["html"]
-        results = MangafireSearch("ad astra").search()
-
-    # 5 unit cards in the fixture (the trailing "View all" link is excluded)
+def test_parse_search_payload_reads_the_real_response():
+    results = _parse_search_payload(json.loads(SEARCH), start=1)
     assert len(results) == 5
-
-    # first card, exact values from the fixture
     assert results["1"] == SearchResult(
-        title="Ad Astra Per Aspera",
-        manga_url="ad-astra-per-asperaa.mqmwp",
-        latest_chapter="7",
+        title="Naruto",
+        manga_url="92kk8-naruto",
+        latest_chapter="700",
         source="mangafire",
     )
 
-    # the manga we care about is present with its real slug + latest chapter
-    slugs = {v["manga_url"]: v for v in results.values()}
-    target = slugs["ad-astra-scipio-and-hanniball.lww3"]
-    assert target["title"] == "Ad Astra - Scipio and Hannibal"
-    assert target["latest_chapter"] == "81"
+
+def test_search_results_request_is_the_submitted_search_only():
+    assert _is_search_results_request(RESULTS_URL)
+    assert not _is_search_results_request(SUGGEST_URL)  # the as-you-type box
+    assert not _is_search_results_request(HOT_URL)  # the home page's own list
 
 
-def test_search_excludes_view_all_link():
-    """The 'View all Results' button links to /filter, not /manga - excluded."""
-    with mock.patch.object(MangafireSearch, "_search_in_browser") as browser:
-        browser.return_value = json.loads(SEARCH_JSON)["result"]["html"]
-        results = MangafireSearch("ad astra").search()
-    for entry in results.values():
-        assert "/filter" not in entry["manga_url"]
-        assert entry["manga_url"]  # non-empty slug
+def test_search_types_the_query_on_the_home_page_and_parses_the_reply():
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
+        return_value=(SEARCH, {}),
+    ) as capture:
+        results = MangafireSearch("naruto").search()
+    url, predicate = capture.call_args[0][:2]
+    assert url == "https://mangafire.to/home"
+    assert capture.call_args[1]["type_into"] == (_SEARCH_BOX, "naruto")
+    assert predicate(RESULTS_URL) and not predicate(SUGGEST_URL)
+    assert results["1"]["manga_url"] == "92kk8-naruto"
 
 
 def test_search_reports_a_missing_search_box_instead_of_raising(caplog):
-    # capture_xhr raises CaptureTriggerFailed when the typing script finds no
-    # search box. The search must say so plainly (with the page details the
-    # error carries) and return no results, which ends the run cleanly.
     failure = CaptureTriggerFailed(
-        "trigger script found nothing to act on at https://mangafire.to/home "
+        "no element matching 'input' to type into at https://mangafire.to/home "
         "(title 'Just a moment...'), which looks like a Cloudflare check"
     )
     with mock.patch(
@@ -125,133 +173,189 @@ def test_search_reports_a_missing_search_box_instead_of_raising(caplog):
     assert "Cloudflare" in caplog.text
 
 
-def test_search_trigger_js_embeds_query_safely():
-    """_type_query_js must json-encode the query (quoting/escaping) so a query
-    with quotes can't break out of the injected JS."""
-    js = MangafireSearch('a"b')._type_query_js()
-    assert json.dumps('a"b') in js
-    assert "input[name=keyword]" in js
+def test_search_reports_a_timeout_instead_of_raising(caplog):
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
+        side_effect=TimeoutError(),
+    ):
+        with caplog.at_level("ERROR"):
+            results = MangafireSearch("naruto").search()
+    assert results == {}
+    assert "timed out" in caplog.text
 
 
-def test_parse_results_handles_dict_and_str_shape():
-    """_search_in_browser must unwrap both {'result': {'html': ...}} and
-    {'result': '...'} response shapes - covered by parsing the raw fixture."""
-    data = json.loads(SEARCH_JSON)
-    assert isinstance(data["result"], dict)
-    assert "html" in data["result"]
-    # the parser method should yield results from the inner html
-    html = data["result"]["html"]
-    results = MangafireSearch("ad astra")._parse_results(html, start=1)
-    assert len(results) == 5
+# ============================== chapter list =============================
 
 
-# =============================== descramble ==============================
+@pytest.mark.parametrize(
+    "number,expected", [(700.5, "700.5"), (700.0, "700"), ("700.10", "700.10")]
+)
+def test_chapter_number_keeps_decimal_and_string_ids(number, expected):
+    assert _chapter_number(number) == expected
 
 
-def _solid_grid_image(w=1000, h=1500):
-    """A test image with a unique color per descramble piece, so we can verify
-    the pieces are moved to the expected positions."""
-    return Image.new("RGB", (w, h), (10, 20, 30))
+def test_chapter_map_from_the_real_first_page():
+    chapters = _chapter_map_from_pages([CHAPTERS_1])
+    assert len(chapters) == 20
+    assert chapters["700"] == "1326884"
+    assert chapters["699"] == "1326872"
+    assert "681" in chapters
 
 
-def test_descramble_offset_zero_is_identity_size():
-    img = _solid_grid_image()
-    buf = io.BytesIO()
-    img.save(buf, "JPEG")
-    # offset 0 should never be passed to descramble by page_data, but if it is
-    # the output must remain a valid same-size JPEG
-    out = descramble(buf.getvalue(), offset=0)
-    result = Image.open(io.BytesIO(out))
-    assert result.size == (1000, 1500)
+def test_chapter_map_keeps_the_first_upload_of_a_repeated_number():
+    chapters = _chapter_map_from_pages([_page_2([(5, 105), (5, 205), (4.5, 145)])])
+    assert chapters == {"5": "105", "4.5": "145"}
 
 
-def test_descramble_returns_valid_jpeg():
-    img = _solid_grid_image()
-    buf = io.BytesIO()
-    img.save(buf, "JPEG")
-    out = descramble(buf.getvalue(), offset=3)
-    result = Image.open(io.BytesIO(out))
-    result.verify()
-    assert result.format == "JPEG"
+def test_has_next_page_reads_the_meta():
+    assert _has_next_page(CHAPTERS_1) is True  # page 1 of 36
+    assert _has_next_page(_page_2([(1, 1)])) is False
+
+
+def test_all_chapter_ids_pages_through_the_series_page():
+    page_2 = _page_2([(2, 902), (1, 901)])
+    parser, ids, capture = _parser_with_chapters(CHAPTERS_1, page_2)
+
+    url, predicate, next_js, has_next = capture.call_args[0][:4]
+    assert url == "https://mangafire.to/title/92kk8-naruto"
+    assert predicate(CHAPTERS_URL)
+    assert not predicate(DETAILS_URL) and not predicate(VOLUMES_URL)
+    assert next_js == _NEXT_PAGE_JS
+    assert has_next(CHAPTERS_1) is True
+
+    assert ids[:2] == ["1", "2"]  # ascending, across pages
+    assert ids[-1] == "700"
+    assert len(ids) == 22
+
+
+def test_chapter_url_uses_the_api_chapter_id():
+    parser, _, _ = _parser_with_chapters(CHAPTERS_1)
+    assert parser.chapter_url("700") == (
+        "https://mangafire.to/title/92kk8-naruto/chapter/1326884"
+    )
+    with pytest.raises(ChapterDoesntExist):
+        parser.chapter_url("1")
+
+
+def test_all_chapter_ids_timeout_is_manga_does_not_exist():
+    parser = MangafireMangaParser("92kk8-naruto")
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr_pages",
+        side_effect=TimeoutError(),
+    ):
+        with pytest.raises(MangaDoesNotExist):
+            parser.all_chapter_ids()
+
+
+def test_all_chapter_ids_refuses_a_partial_list(caplog):
+    # the API said there were more pages but the next button wasn't there: a
+    # partial list would shift every later volume, so it is an error
+    parser = MangafireMangaParser("92kk8-naruto")
+    failure = CaptureTriggerFailed("next-page script found nothing to click")
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr_pages",
+        side_effect=failure,
+    ):
+        with pytest.raises(MangaDoesNotExist, match="next-page"):
+            parser.all_chapter_ids()
+
+
+def test_next_page_script_targets_the_chapter_pager_and_reports_absence():
+    assert "Next page" in _NEXT_PAGE_JS
+    assert "title-detail__chapters-pager" in _NEXT_PAGE_JS
+    assert "return false" in _NEXT_PAGE_JS
 
 
 # ============================== page urls ================================
 
 
-def test_encode_page_url_marks_scrambled():
-    assert _encode_page_url("http://x/p.jpg", 0) == "http://x/p.jpg"
-    assert _encode_page_url("http://x/p.jpg", 5) == "http://x/p.jpg#scrambled_5"
+def test_page_urls_from_the_real_payload():
+    urls = _page_urls_from_payload(json.loads(PAGES))
+    assert [n for n, _ in urls] == [1, 2, 3]
+    assert urls[0][1].startswith("https://k99.mfcdn3.xyz/mf/")
 
 
-def test_page_urls_carries_offset_in_fragment():
-    images = [
-        ["http://cdn/p1.jpg", 0, 0],
-        ["http://cdn/p2.jpg", 0, 4],
-    ]
-    # capture_xhr returns (raw_json_body, cookies); page_urls parses
-    # json["result"]["images"] itself.
-    body = json.dumps({"result": {"images": images}})
+def test_page_urls_opens_the_reader_and_catches_its_chapter_request():
+    parser, _, _ = _parser_with_chapters(CHAPTERS_1)
     with mock.patch(
         "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
-        return_value=(body, {"cf": "cookie"}),
+        return_value=(PAGES, {"cf": "cookie"}),
+    ) as capture:
+        urls = parser.page_urls("700")
+    url, predicate = capture.call_args[0][:2]
+    assert url == "https://mangafire.to/title/92kk8-naruto/chapter/1326884"
+    assert predicate(PAGES_URL)
+    assert not predicate("https://mangafire.to/api/chapters/1326872?vrf=x")
+    assert len(urls) == 3
+    assert parser.cookies == {"cf": "cookie"}  # reused for the image downloads
+
+
+def test_page_urls_timeout_is_chapter_does_not_exist():
+    parser, _, _ = _parser_with_chapters(CHAPTERS_1)
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
+        side_effect=TimeoutError(),
     ):
-        parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
-        urls = parser.page_urls("78")
-
-    assert urls[0] == (1, "http://cdn/p1.jpg")
-    assert urls[1] == (2, "http://cdn/p2.jpg#scrambled_4")
-    # cookies harvested for the CDN download step
-    assert parser.cookies == {"cf": "cookie"}
+        with pytest.raises(ChapterDoesntExist):
+            parser.page_urls("700")
 
 
-# ================================ wiring =================================
+def _jpeg():
+    buf = io.BytesIO()
+    Image.new("RGB", (20, 30), (200, 10, 10)).save(buf, "JPEG")
+    return buf.getvalue()
 
 
-def test_site_parser_wires_subparsers():
-    site = Mangafire("ad-astra-scipio-and-hanniball.lww3")
-    assert site.base_url == "https://mangafire.to"
-    assert isinstance(site.manga, MangafireMangaParser)
+@pytest.mark.parametrize(
+    "downloaded,status",
+    [("jpeg", "success"), (None, "missing"), (b"not an image", "corrupted")],
+)
+def test_page_data_downloads_and_checks_the_image(downloaded, status):
+    content = _jpeg() if downloaded == "jpeg" else downloaded
+    parser = MangafireMangaParser("92kk8-naruto")
+    with mock.patch(
+        "scraper.parsers.mangafire.download_image", return_value=content
+    ) as download:
+        number, data, result = parser.page_data((3, "https://k99.mfcdn3.xyz/p.jpg"))
+    assert (number, result) == (3, status)
+    assert download.call_args[1]["headers"]["Referer"] == "https://mangafire.to/"
+    if status == "success":
+        assert data == content
 
 
 # ================================ author =================================
 
 
-def test_authors_from_html_extracts_itemprop_author():
-    # the real series-page shape: a[itemprop=author] in the #info-rating block
-    assert _authors_from_html(SERIES_HTML) == "Mihachi Kagano"
+def test_authors_from_the_real_title_payload():
+    assert _authors_from_title_payload(json.loads(TITLE)) == "Kishimoto Masashi"
 
 
-def test_authors_from_html_joins_and_dedupes_multiple():
-    html = (
-        '<a itemprop="author" href="/a/1">Alice</a>'
-        '<a itemprop="author" href="/a/2">Bob</a>'
-        '<a itemprop="author" href="/a/1">Alice</a>'  # dupe
-    )
-    assert _authors_from_html(html) == "Alice, Bob"
+def test_authors_are_joined_and_deduped():
+    payload = {
+        "data": {"authors": [{"title": "Alice"}, {"title": "Bob"}, {"title": "Alice"}]}
+    }
+    assert _authors_from_title_payload(payload) == "Alice, Bob"
+    assert _authors_from_title_payload({"data": {"authors": []}}) is None
 
 
-def test_authors_from_html_none_when_absent():
-    assert _authors_from_html("<html><body>no author here</body></html>") is None
-
-
-def test_author_fetches_series_page_and_parses():
-    parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
+def test_author_catches_the_series_details_request():
+    parser = MangafireMangaParser("92kk8-naruto")
     with mock.patch(
-        "scraper.parsers.mangafire.BrowserFetcher.get",
-        return_value=mock.Mock(text=SERIES_HTML),
-    ) as get:
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
+        return_value=(TITLE, {}),
+    ) as capture:
         author = parser.author()
-    # fetched the /manga/<slug> series page
-    assert get.call_args[0][0] == (
-        "https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3"
-    )
-    assert author == "Mihachi Kagano"
+    url, predicate = capture.call_args[0][:2]
+    assert url == "https://mangafire.to/title/92kk8-naruto"
+    assert predicate(DETAILS_URL)
+    assert not predicate(CHAPTERS_URL) and not predicate(VOLUMES_URL)
+    assert author == "Kishimoto Masashi"
 
 
-def test_author_returns_none_on_fetch_failure():
-    parser = MangafireMangaParser("ad-astra-scipio-and-hanniball.lww3")
+def test_author_is_none_when_the_lookup_fails():
+    parser = MangafireMangaParser("92kk8-naruto")
     with mock.patch(
-        "scraper.parsers.mangafire.BrowserFetcher.get",
-        side_effect=Exception("cf blocked"),
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr",
+        side_effect=TimeoutError(),
     ):
         assert parser.author() is None

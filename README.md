@@ -23,7 +23,10 @@ manganato   manganelo
 ```
 
 Availability varies over time (see the note above). `mangafire` is the most
-actively maintained parser. Adding a new source is documented in
+actively maintained parser. It was rewritten in October 2026 after the site was
+rebuilt, and it works by driving Chrome: the site's API only answers requests
+signed by the site's own script, so the scraper opens the site's pages and
+reads the data they load. Adding a new source is documented in
 [docs/adding-a-source.md](docs/adding-a-source.md).
 
 ### Known source limitations
@@ -107,12 +110,26 @@ uv run manga-scraper --manga dragon-ball
 # Just chapter 2 of Final Fantasy XII
 uv run manga-scraper --manga final-fantasy-xii --chapters 2
 
-# Dragon Ball Super chapters 3-7 and 23, from a specific source, as CBZ
-uv run manga-scraper --manga dragon-ball-super --chapters 3-7 23 --source mangafire --filetype cbz
+# Naruto chapters 3-7 and 23, from a specific source, as CBZ
+uv run manga-scraper --manga 92kk8-naruto --chapters 3-7 23 --source mangafire --filetype cbz
 ```
+
+The slug is the part of the series' address that names it, and each source
+has its own. On MangaFire it is everything after `/title/`:
+`https://mangafire.to/title/92kk8-naruto` is `92kk8-naruto` (pasting the whole
+address works too).
 
 If `--manga <slug>` finds nothing, the tool automatically falls back to a
 `--search` for that term so you can pick the right entry.
+
+**MangaFire ids changed in October 2026.** Ids from before the rebuild, such as
+`ad-astra-scipio-and-hanniball.lww3`, no longer work; search again or copy the
+new id from the address bar. A series you downloaded through the search menu is
+saved under its title (e.g. `Naruto`), and that folder is reused as before. A
+series downloaded with an old id was saved in a folder named after that id,
+which won't be picked up by the new one: pass `--override_name <old folder
+name>` to keep adding to it. Chapters already in the folder are skipped,
+because chapter files are named by chapter number.
 
 ## Selecting chapters
 

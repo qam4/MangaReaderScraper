@@ -1,0 +1,41 @@
+{
+  "data": {
+    "id": 1326884,
+    "number": 700,
+    "name": "Uzumaki Naruto!!",
+    "language": "en",
+    "type": "unofficial",
+    "latest": 700,
+    "title": {
+      "id": 40271,
+      "hid": "92kk8",
+      "slug": "naruto",
+      "name": "Naruto",
+      "url": "/title/92kk8-naruto"
+    },
+    "pages": [
+      {
+        "url": "https://k99.mfcdn3.xyz/mf/12a3db61fa0f4f41a6ce794a81a7e1039035ad4255a7beb2541e2dfab23ccb812a5cd519486725eaff/h/p.jpg",
+        "width": 1013,
+        "height": 1600
+      },
+      {
+        "url": "https://k99.mfcdn3.xyz/mf/12a3db61fa0f4f41a6ce794a81a7e1039035ad4255a7beb1541e2dfab23ccb812a5cd519486725eaff/h/p.jpg",
+        "width": 1013,
+        "height": 1600
+      },
+      {
+        "url": "https://k99.mfcdn3.xyz/mf/12a3db61fa0f4f41a6ce794a81a7e1039035ad4255a7beb0541e2dfab23ccb812a5cd519486725eaff/h/p.jpg",
+        "width": 1013,
+        "height": 1600
+      }
+    ],
+    "prev": {
+      "id": 1326872,
+      "number": 699,
+      "language": "en",
+      "url": "/title/92kk8-naruto/chapter/1326872"
+    },
+    "next": null
+  }
+}

@@ -173,10 +173,10 @@ From `ajax_log.txt`, `api_index.txt` / `api_*.json`, `api_backends.txt`,
   an `ajax/.../search` call), or is it plain HTML? Check `api_*.json` for the
   response shape.
 - **chapter list**: a JSON endpoint (like mangak.io's `/titles/<id>/chapters`
-  or MangaFire's `/ajax/manga/<id>/chapter/en`) or chapter links in the HTML?
+  or MangaFire's `/api/titles/<hid>/chapters`) or chapter links in the HTML?
 - **page images**: a JSON endpoint, embedded in the page's Next.js
   `__NEXT_DATA__` (like mangak.io), `data-src` lazy images, or behind an ajax
-  call (like MangaFire's `ajax/read/chapter`)? If you can't find an image
+  call (like MangaFire's `/api/chapters/<id>`)? If you can't find an image
   endpoint in `ajax_log.txt`, the site likely server-renders them into the page
   — read them from the HTML/embedded JSON.
 
@@ -213,9 +213,17 @@ Create `scraper/parsers/<site>.py` with a `<Site>MangaParser`,
   - **gotcha:** the API's `chapter_number` is a sequence counter, not the
     displayed number — parse the real number from the chapter *name*
     (`"Chapter 700.5"` → `700.5`), or `--chapters` ranges will be wrong.
-- **JSON/ajax site behind a vrf token** → copy `mangafire.py`. It drives the
-  browser via `BrowserFetcher` (`capture_xhr` to intercept a vrf-gated call,
-  `fetch_json_in_page` for a known endpoint).
+- **JSON/ajax site behind a vrf token** → copy `mangafire.py`. The token is
+  computed by the site's own script from the full request address, so the
+  browser makes every call and the parser catches it with `BrowserFetcher`:
+  `capture_xhr(url, predicate)` for a call the page makes on load,
+  `capture_xhr(..., type_into=(selector, text))` for a search box (real
+  keystrokes and Enter), and `capture_xhr_pages(url, predicate, next_js,
+  has_next)` for a list paged with buttons (it presses the page's own "Next"
+  button until the API says there are no more pages). Because the token covers
+  the whole address, you can't change `page=` in a captured URL yourself.
+  Check first: if curl_cffi without the token gets a 403 while a token-free
+  endpoint on the same API answers, the token is required.
 - **plain-HTML site** → copy `mangakaka.py` (or its `manganelo` / `manganato`
   siblings — same engine family). They use `fetch_soup(url)` (curl_cffi by
   default) — or `fetch_soup(url, BrowserFetcher())` for a JS-rendered page.
@@ -394,7 +402,7 @@ list, or `types.py` Union to edit.
 
 Parse the captured `tests/test_files/<site>/` responses in
 `tests/test_<site>.py`. Mock the fetch seam (`scraper.parsers.<site>.fetch_soup`,
-or `BrowserFetcher.capture_xhr` / `fetch_json_in_page`) so tests never touch the
+or `BrowserFetcher.capture_xhr` / `capture_xhr_pages` / `fetch_json_in_page`) so tests never touch the
 network. Keep them in the default (unit) tier; tag anything that genuinely needs
 a live browser with the `integration` marker.
 
@@ -445,8 +453,8 @@ For each stage, compare the capture to the parser's current code:
 Lessons from the MangaFire re-probe that generalize:
 
 - The probe is **stage-agnostic**; it captures whatever the page you point it at
-  fires. A parser endpoint the page doesn't call (e.g. MangaFire's no-vrf
-  `/ajax/manga/<id>/chapter/en`, which the reader page never hits) simply won't
+  fires. A parser endpoint the page doesn't call (e.g. the pre-2026 MangaFire's
+  no-vrf `/ajax/manga/<id>/chapter/en`, which the reader page never hits) simply won't
   appear — that's a coverage gap in the probe run, **not** evidence the endpoint
   is dead. Confirm such endpoints directly (curl_cffi the URL) before concluding.
 - "It still downloads end-to-end with no manual captcha" is the strongest signal

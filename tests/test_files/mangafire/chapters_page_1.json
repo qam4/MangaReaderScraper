@@ -1,0 +1,174 @@
+{
+  "items": [
+    {
+      "id": 1326884,
+      "number": 700,
+      "name": "Uzumaki Naruto!!",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684509
+    },
+    {
+      "id": 1326872,
+      "number": 699,
+      "name": "Unison Sign",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684490
+    },
+    {
+      "id": 1326867,
+      "number": 698,
+      "name": "Naruto and Sasuke, Part 5",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684475
+    },
+    {
+      "id": 1326862,
+      "number": 697,
+      "name": "Naruto and Sasuke, Part 4",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684460
+    },
+    {
+      "id": 1326854,
+      "number": 696,
+      "name": "Naruto and Sasuke, Part 3",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684445
+    },
+    {
+      "id": 1326837,
+      "number": 695,
+      "name": "Naruto and Sasuke, Part 2",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684429
+    },
+    {
+      "id": 1326829,
+      "number": 694,
+      "name": "Naruto and Sasuke, Part 1",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684412
+    },
+    {
+      "id": 1326791,
+      "number": 693,
+      "name": "Here Once Again",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684293
+    },
+    {
+      "id": 1326785,
+      "number": 692,
+      "name": "Revolution",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684280
+    },
+    {
+      "id": 1326777,
+      "number": 691,
+      "name": "Congratulations",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684264
+    },
+    {
+      "id": 1326731,
+      "number": 690,
+      "name": "Ninja History",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684090
+    },
+    {
+      "id": 1326722,
+      "number": 689,
+      "name": "I Love You Guys",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684072
+    },
+    {
+      "id": 1326716,
+      "number": 688,
+      "name": "He of the Sharingan!!",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684056
+    },
+    {
+      "id": 1326709,
+      "number": 687,
+      "name": "You Better",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684039
+    },
+    {
+      "id": 1326705,
+      "number": 686,
+      "name": "Bequeath and Inherit",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684025
+    },
+    {
+      "id": 1326697,
+      "number": 685,
+      "name": "All That I've Got!",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676684008
+    },
+    {
+      "id": 1326681,
+      "number": 684,
+      "name": "We Ought to Kill Him",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676683988
+    },
+    {
+      "id": 1326664,
+      "number": 683,
+      "name": "I Dreamt the Same Dream",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676683945
+    },
+    {
+      "id": 1326658,
+      "number": 682,
+      "name": "Bet Ya Never Seen This",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676683929
+    },
+    {
+      "id": 1326653,
+      "number": 681,
+      "name": "Kaguya's Tears",
+      "language": "en",
+      "type": "unofficial",
+      "createdAt": 1676683913
+    }
+  ],
+  "meta": {
+    "total": 704,
+    "perPage": 20,
+    "page": 1,
+    "lastPage": 36,
+    "from": 1,
+    "to": 20,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}

@@ -1,116 +1,169 @@
 """
-Scraper & parser for https://mangafire.to
+Scraper & parser for https://mangafire.to, as the site was rebuilt in 2026.
 
-How MangaFire works (and why this parser is shaped the way it is):
+How the rebuilt MangaFire works (from the October 2026 probe captures, see
+tests/test_files/mangafire/):
 
-  * The site is behind Cloudflare, so plain requests fail. We drive a real
-    browser (nodriver) for any HTML fetch.
-  * A chapter's page images are NOT in the HTML. The reader fires a single
-    JSON call ``/ajax/read/chapter/<id>?vrf=<token>`` that returns every
-    page's image URL plus a per-page scramble ``offset``. The ``vrf`` token is
-    computed by the site's obfuscated JS, so we let the browser fire the call
-    and re-fetch that URL from inside the page (Cloudflare-cleared context).
-  * Some images are deliberately scrambled (offset > 0): the image is sliced
-    into a grid and the slices shifted. We reverse it (descramble) on download.
-    Algorithm ported from the keiyoushi Tachiyomi extension's ImageInterceptor.
-
-Image downloads use curl_cffi (Chrome TLS impersonation) with the browser's
-cookies + a Referer header, which the CDN requires.
+  * All data comes from a JSON API under ``/api/``:
+      search    ``/api/titles?keyword=<q>&...&page=1&limit=30``
+      details   ``/api/titles/<hid>``  (authors are here)
+      chapters  ``/api/titles/<hid>/chapters?language=en&...&page=N&limit=20``
+      pages     ``/api/chapters/<chapter id>``  (the page image urls)
+  * Every call carries a ``vrf`` token that the site's own script computes
+    from the full address, and the API answers 403 without it. So the browser
+    makes the calls: we open the site's pages, let its code request the data,
+    catch those requests and re-fetch them in-page
+    (``BrowserFetcher.capture_xhr`` / ``capture_xhr_pages``). We never build a
+    token ourselves.
+  * A series is addressed as ``<hid>-<slug>`` (``92kk8-naruto``), the path
+    after ``/title/``. The rest of the app identifies chapters by their number;
+    the API's chapter id is only needed for the reader url
+    ``/title/<hid>-<slug>/chapter/<id>``.
+  * The chapter list is paged 20 at a time with buttons, not links, so it is
+    walked by pressing the page's own "Next page" button.
+  * Page images download straight from the image servers (plain requests
+    worked in the probe). The page list carries only url/width/height: the old
+    site's image scrambling is gone.
 """
 
-import asyncio
 import io
 import json
 import logging
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
-from bs4 import BeautifulSoup
 from PIL import Image
 
 from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
-from scraper.fetchers import (
-    BrowserFetcher,
-    CaptureTriggerFailed,
-    _make_marker_predicate,
-    download_image,
-)
+from scraper.fetchers import BrowserFetcher, CaptureTriggerFailed, download_image
 from scraper.new_types import SearchResult, SearchResults
-from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
 from scraper.registry import register_source
 from scraper.selection import sort_chapter_ids
 
 logger = logging.getLogger(__name__)
 
-# --- descramble constants (from MangaFire's all.js, mirrored by the extension) ---
-PIECE_SIZE = 200
-MIN_SPLIT_COUNT = 5
+BASE_URL = "https://mangafire.to"
 
-# the page-list ajax calls we want to intercept
-_AJAX_MARKERS = ("ajax/read/chapter", "ajax/read/volume")
-# fragment we tack onto scrambled image urls so page_data knows to descramble
-_SCRAMBLE_TAG = "scrambled"
+# The header search box on the home page:
+#   <input class="input input--icon input--hint" placeholder="Search titles…">
+_SEARCH_BOX = 'input[placeholder^="Search"]'
 
-
-# ============================== descramble ===============================
-
-
-def _ceil_div(a: int, b: int) -> int:
-    return (a + (b - 1)) // b
-
-
-def descramble(data: bytes, offset: int) -> bytes:
-    """Reverse MangaFire's slice-shuffle. Returns JPEG bytes."""
-    src = Image.open(io.BytesIO(data)).convert("RGB")
-    w, h = src.size
-    out = Image.new("RGB", (w, h))
-
-    piece_w = min(PIECE_SIZE, _ceil_div(w, MIN_SPLIT_COUNT))
-    piece_h = min(PIECE_SIZE, _ceil_div(h, MIN_SPLIT_COUNT))
-    x_max = _ceil_div(w, piece_w) - 1
-    y_max = _ceil_div(h, piece_h) - 1
-
-    for y in range(y_max + 1):
-        for x in range(x_max + 1):
-            x_dst = piece_w * x
-            y_dst = piece_h * y
-            pw = min(piece_w, w - x_dst)
-            ph = min(piece_h, h - y_dst)
-
-            x_src = piece_w * (x if x == x_max else (x_max - x + offset) % x_max)
-            y_src = piece_h * (y if y == y_max else (y_max - y + offset) % y_max)
-
-            piece = src.crop((x_src, y_src, x_src + pw, y_src + ph))
-            out.paste(piece, (x_dst, y_dst))
-
-    buf = io.BytesIO()
-    out.save(buf, "JPEG", quality=90)
-    return buf.getvalue()
+# Press the chapter list's own "Next page" button (the list is paged with
+# buttons, not links). False when there is no such button to press, which
+# capture_xhr_pages turns into a clear error instead of a partial list.
+_NEXT_PAGE_JS = (
+    "(() => {"
+    "  const b = document.querySelector("
+    "    '.title-detail__chapters-pager button[aria-label=\"Next page\"]');"
+    "  if (!b || b.disabled) return false;"
+    "  b.click();"
+    "  return true;"
+    "})()"
+)
 
 
-# ========================= browser page-list capture =====================
+# ============================ pure helpers ===============================
 
 
-def _encode_page_url(url: str, offset: int) -> str:
-    """Carry the scramble offset in the url fragment, like the Tachiyomi ext."""
-    if offset and offset > 0:
-        return f"{url}#{_SCRAMBLE_TAG}_{offset}"
-    return url
+def _series_path(manga_url: str) -> str:
+    """``92kk8-naruto`` from the slug itself or a pasted series/reader url."""
+    text = manga_url.strip()
+    match = re.search(r"/title/([^/?#]+)", text)
+    return match.group(1) if match else text.strip("/")
 
 
-def _authors_from_html(html: str) -> Optional[str]:
-    """Extract author(s) from a MangaFire ``/manga/<slug>`` series page.
+def _path_is(path: str) -> Callable[[str], bool]:
+    """Predicate: a request url whose path is exactly ``path``, any query."""
+    return lambda url: urlparse(url).path == path
 
-    Authors are schema.org microdata anchors (``<a itemprop="author">Name</a>``,
-    possibly several, in the ``#info-rating`` block). Returns a comma-separated
-    string (de-duped, order preserved) or ``None`` if none are present. Pure --
-    unit-tested against a captured-shape fixture.
+
+def _is_search_results_request(url: str) -> bool:
+    """The submitted search (``keyword=`` with ``page=``). Not the box's
+    as-you-type suggestions (no ``page=``), nor the home page's own lists (no
+    ``keyword=``)."""
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    return parsed.path == "/api/titles" and "keyword" in query and "page" in query
+
+
+def _chapter_number(value) -> Optional[str]:
+    """The app's chapter id for an API ``number``: 700 -> "700",
+    700.0 -> "700", 700.5 -> "700.5"; strings are kept as they are."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else repr(value)
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_search_payload(payload: dict, start: int) -> SearchResults:
+    """Search results from ``/api/titles?keyword=...``."""
+    results: SearchResults = {}
+    key = start
+    for item in payload.get("items") or []:
+        path = _series_path(item["url"]) if item.get("url") else ""
+        if not path and item.get("hid") and item.get("slug"):
+            path = f"{item['hid']}-{item['slug']}"
+        if not path:
+            continue
+        results[str(key)] = SearchResult(
+            title=item.get("title") or path,
+            manga_url=path,
+            latest_chapter=_chapter_number(item.get("latestChapter")) or "",
+            source="mangafire",
+        )
+        key += 1
+    return results
+
+
+def _has_next_page(body: str) -> bool:
+    """Whether a chapter-list page says another page follows."""
+    try:
+        return bool((json.loads(body).get("meta") or {}).get("hasNext"))
+    except (ValueError, AttributeError):
+        return False
+
+
+def _chapter_map_from_pages(bodies: Iterable[str]) -> Dict[str, str]:
+    """{chapter number: API chapter id} across every chapter-list page.
+
+    A number listed more than once (several uploads of one chapter) keeps the
+    first id seen; the page lists newest first.
     """
-    soup = BeautifulSoup(html, "lxml")
+    chapters: Dict[str, str] = {}
+    for body in bodies:
+        for item in json.loads(body).get("items") or []:
+            number = _chapter_number(item.get("number"))
+            chapter_id = item.get("id")
+            if number is None or chapter_id is None:
+                continue
+            if number in chapters:
+                logger.debug(
+                    f"chapter {number} is listed more than once; keeping id "
+                    f"{chapters[number]}, skipping {chapter_id}"
+                )
+                continue
+            chapters[number] = str(chapter_id)
+    return chapters
+
+
+def _page_urls_from_payload(payload: dict) -> List[Tuple[int, str]]:
+    """[(page number, image url)] from ``/api/chapters/<id>``."""
+    pages = (payload.get("data") or {}).get("pages") or []
+    urls = [page["url"] for page in pages if page.get("url")]
+    return list(enumerate(urls, start=1))
+
+
+def _authors_from_title_payload(payload: dict) -> Optional[str]:
+    """Comma-joined, de-duplicated author names from ``/api/titles/<hid>``."""
     names: List[str] = []
-    for a in soup.select('a[itemprop="author"]'):
-        name = a.get_text(strip=True)
+    for author in (payload.get("data") or {}).get("authors") or []:
+        name = (author.get("title") or "").strip()
         if name and name not in names:
             names.append(name)
     return ", ".join(names) if names else None
@@ -121,60 +174,90 @@ def _authors_from_html(html: str) -> Optional[str]:
 
 class MangafireMangaParser(BaseMangaParser):
     """
-    Scrapes & parses a specific manga page on https://mangafire.to
+    A series on https://mangafire.to, addressed as ``<hid>-<slug>``
     """
 
-    def __init__(self, manga_url: str, base_url: str = "https://mangafire.to") -> None:
-        super().__init__(manga_url, base_url)
+    def __init__(self, manga_url: str, base_url: str = BASE_URL) -> None:
+        super().__init__(_series_path(manga_url), base_url)
         self.headers = {"Referer": f"{self.base_url}/"}
-        # cookies harvested from the browser during page_urls, reused in page_data
+        # cookies from the reader page's browser session, reused for the images
         self.cookies: Dict[str, str] = {}
+        self._chapters: Optional[Dict[str, str]] = None
+
+    @property
+    def hid(self) -> str:
+        return self.manga_url.split("-", 1)[0]
+
+    @property
+    def series_url(self) -> str:
+        return f"{self.base_url}/title/{self.manga_url}"
+
+    def _chapter_ids(self) -> Dict[str, str]:
+        """{chapter number: API chapter id}, loaded once: open the series page
+        and walk its chapter list with the "Next page" button."""
+        if self._chapters is None:
+            try:
+                bodies = BrowserFetcher().capture_xhr_pages(
+                    self.series_url,
+                    _path_is(f"/api/titles/{self.hid}/chapters"),
+                    _NEXT_PAGE_JS,
+                    _has_next_page,
+                )
+                chapters = _chapter_map_from_pages(bodies)
+            except TimeoutError:
+                raise MangaDoesNotExist(
+                    f"Timed out loading the chapter list of {self.manga_url} "
+                    f"({self.series_url})"
+                )
+            except CaptureTriggerFailed as err:
+                # a partial list would shift every later volume: refuse it
+                raise MangaDoesNotExist(
+                    f"Could not page through the chapter list of "
+                    f"{self.manga_url}: {err}"
+                )
+            except ValueError as err:
+                raise MangaDoesNotExist(
+                    f"Unreadable chapter list for {self.manga_url}: {err}"
+                )
+            if not chapters:
+                raise MangaDoesNotExist(f"No chapters found for {self.manga_url}")
+            self._chapters = chapters
+        return self._chapters
+
+    def all_chapter_ids(self) -> Iterable[str]:
+        return sort_chapter_ids(self._chapter_ids().keys())
 
     def chapter_url(self, chapter: str) -> str:
-        return f"{self.base_url}/read/{self.manga_url}/en/chapter-{chapter}"
+        chapter_id = self._chapter_ids().get(chapter)
+        if chapter_id is None:
+            raise ChapterDoesntExist(f"{self.manga_url} has no chapter {chapter}")
+        return f"{self.series_url}/chapter/{chapter_id}"
 
     def page_urls(self, chapter: str) -> List[Tuple[int, str]]:
-        """
-        Return [(page_number, url)] for every page in a chapter.
-
-        Scrambled pages carry a ``#scrambled_<offset>`` fragment so page_data
-        knows to descramble them.
-        """
-        chapter_url = self.chapter_url(chapter)
-        logger.info(f"Fetching page list for {chapter_url}")
+        """Open the chapter's reader page and catch its own page-list request."""
+        url = self.chapter_url(chapter)
+        chapter_id = self._chapter_ids()[chapter]
+        logger.info(f"Fetching page list for {url}")
         try:
             body, cookies = BrowserFetcher().capture_xhr(
-                chapter_url,
-                _make_marker_predicate(_AJAX_MARKERS),
-                with_cookies=True,
+                url, _path_is(f"/api/chapters/{chapter_id}"), with_cookies=True
             )
-            images = json.loads(body)["result"]["images"]
-        except asyncio.TimeoutError:
+            pages = _page_urls_from_payload(json.loads(body))
+        except TimeoutError:
             raise ChapterDoesntExist(
-                f"Timed out getting page list for {self.manga_url} chapter {chapter} "
-                "(Cloudflare challenge or chapter does not exist)"
+                f"Timed out getting the page list of {self.manga_url} chapter "
+                f"{chapter} ({url})"
+            )
+        except ValueError as err:
+            raise ChapterDoesntExist(
+                f"Unreadable page list for {self.manga_url} chapter {chapter}: {err}"
             )
         self.cookies = cookies
-
-        page_urls: List[Tuple[int, str]] = []
-        for page_num, entry in enumerate(images, start=1):
-            url = entry[0]
-            offset = int(entry[2]) if len(entry) > 2 and entry[2] else 0
-            page_urls.append((page_num, _encode_page_url(url, offset)))
-        return page_urls
+        return pages
 
     def page_data(self, page_url: Tuple[int, str]) -> Tuple[int, bytes, str]:
-        """
-        Download a page image (curl_cffi + Chrome impersonation) and descramble
-        it if the url fragment marks it scrambled. Overrides the base requests
-        implementation because the CDN rejects non-browser TLS fingerprints.
-        """
-        page_num, raw_url = page_url
-        url, _, frag = raw_url.partition("#")
-        offset = 0
-        if frag.startswith(f"{_SCRAMBLE_TAG}_"):
-            offset = int(frag.rsplit("_", 1)[-1])
-
+        """Download a page image and check it is one."""
+        page_num, url = page_url
         content = download_image(
             url,
             headers=self.headers,
@@ -187,14 +270,8 @@ class MangafireMangaParser(BaseMangaParser):
                 self.create_page(f"Page {page_num} missing\n{url}"),
                 "missing",
             )
-
         try:
-            if offset > 0:
-                content = descramble(content, offset)
-            else:
-                # validate it is a real image
-                img = Image.open(io.BytesIO(content))
-                img.verify()
+            Image.open(io.BytesIO(content)).verify()
         except Exception as err:
             logger.error(f"page {page_num} at {url} corrupted: {err}")
             return (
@@ -202,195 +279,59 @@ class MangafireMangaParser(BaseMangaParser):
                 self.create_page(f"Page {page_num} corrupted.\n{err}\n{url}"),
                 "corrupted",
             )
-
         return (int(page_num), content, "success")
 
-    def all_chapter_ids(self) -> Iterable[str]:
-        """
-        Get the list of all chapter numbers for a manga.
-
-        Uses MangaFire's authoritative chapter-list endpoint
-        ``/ajax/manga/<id>/chapter/en`` (no vrf token needed), where ``<id>``
-        is the part of the slug after the last ``.`` -- e.g.
-        ``ad-astra-scipio-and-hanniball.lww3`` -> ``lww3``. The endpoint
-        returns JSON ``{"result": "<li> markup>"}`` whose anchors carry
-        ``data-number`` attributes. This mirrors the keiyoushi Tachiyomi
-        extension (chapterListRequest).
-        """
-        manga_id = self.manga_url.rsplit(".", 1)[-1]
-        manga_page = f"{self.base_url}/manga/{self.manga_url}"
-        ajax_url = f"{self.base_url}/ajax/manga/{manga_id}/chapter/en"
-        logger.info(f"Chapter list url={ajax_url}")
-
-        try:
-            body = BrowserFetcher().fetch_json_in_page(manga_page, ajax_url)
-        except asyncio.TimeoutError:
-            raise MangaDoesNotExist(
-                f"Timed out fetching chapter list for {self.manga_url}"
-            )
-
-        try:
-            result_html = json.loads(body)["result"]
-        except (ValueError, KeyError) as err:
-            raise MangaDoesNotExist(
-                f"Unexpected chapter-list response for {self.manga_url}: {err}"
-            )
-
-        fragment = BeautifulSoup(result_html, "lxml")
-        chapter_ids: set[str] = set()
-        for tag in fragment.find_all(attrs={"data-number": True}):
-            chapter_ids.add(attr(tag, "data-number"))
-        # fallback: pull chapter numbers out of hrefs
-        if not chapter_ids:
-            for a in fragment.find_all("a", href=re.compile(r"chapter-[\d.]+")):
-                m = re.search(r"chapter-([\d.]+)", attr(a, "href"))
-                if m:
-                    chapter_ids.add(m.group(1))
-
-        if not chapter_ids:
-            raise MangaDoesNotExist(
-                f"No chapters found for {self.manga_url} (bad slug or page blocked)"
-            )
-        return sort_chapter_ids(chapter_ids)
-
     def author(self) -> Optional[str]:
-        """Author(s) from the ``/manga/<slug>`` series page
-        (``a[itemprop="author"]``). Best effort: the page is Cloudflare-walled so
-        we drive a browser; any failure returns None (the builder treats author
-        as optional). NOTE: this is a second browser navigation on top of
-        all_chapter_ids' -- a future optimization could capture the series HTML
-        during that existing session.
-        """
-        series_url = f"{self.base_url}/manga/{self.manga_url}"
+        """Author(s) from the series details the series page requests. Best
+        effort: any failure returns None (the builder treats author as
+        optional). This loads the series page once more than all_chapter_ids,
+        as the old parser did."""
         try:
-            html = BrowserFetcher().get(series_url).text
-        except Exception as err:  # pragma: no cover - browser/network failures
-            logger.debug(f"author lookup failed for {series_url}: {err}")
+            body, _ = BrowserFetcher().capture_xhr(
+                self.series_url, _path_is(f"/api/titles/{self.hid}")
+            )
+            return _authors_from_title_payload(json.loads(body))
+        except Exception as err:
+            logger.debug(f"author lookup failed for {self.series_url}: {err}")
             return None
-        return _authors_from_html(html)
 
 
 class MangafireSearch(BaseSearchParser):
     """
-    Parses search queries from mangafire.to.
-
-    MangaFire's keyword search is gated behind a ``vrf`` token computed by the
-    site's obfuscated JS, so we can't hit a plain search URL. Instead we mirror
-    the keiyoushi Tachiyomi extension: load the site in a browser, type the
-    query into the live search box, and intercept the ``ajax/manga/search``
-    response the page fires itself. That response is an HTML fragment of result
-    cards which we parse for ``/manga/<slug>`` links.
+    Search on mangafire.to: type the query into the home page's search box and
+    press Enter, then catch the results request the page makes (its vrf token
+    is computed by the site's script).
     """
 
-    def __init__(self, query: str, base_url: str = "https://mangafire.to") -> None:
+    def __init__(self, query: str, base_url: str = BASE_URL) -> None:
         super().__init__(query, base_url)
-
-    def _parse_results(self, html_fragment: str, start: int) -> SearchResults:
-        """
-        Parse the search result cards. Real shape (from ajax/manga/search):
-
-            <div class="original card-sm body">
-              <a class="unit" href="/manga/<slug>">
-                <div class="poster">...</div>
-                <div class="info">
-                  <h6>Title</h6>
-                  <div><span>Status</span><span>Chap 81</span><span>Vol 13</span></div>
-                </div>
-              </a>
-              ...
-            </div>
-            <div><a class="btn ..." href="/filter?...">View all Results</a></div>
-
-        We only want the ``a.unit`` cards (the trailing "View all" link is not
-        a .unit, so it is naturally excluded).
-        """
-        soup = BeautifulSoup(html_fragment, "lxml")
-        metadata: SearchResults = {}
-        key = start
-        seen = set()
-        for unit in soup.select("a.unit"):
-            m = re.search(r"/manga/([^/?#]+)", attr(unit, "href"))
-            if not m:
-                continue
-            slug = m.group(1)
-            if slug in seen:
-                continue
-            seen.add(slug)
-
-            title_tag = unit.find("h6")
-            title = title_tag.get_text(strip=True) if title_tag else slug
-
-            # latest chapter: the span that looks like "Chap 81"
-            latest_chapter = ""
-            for span in unit.select(".info span"):
-                txt = span.get_text(strip=True)
-                cm = re.search(r"Chap(?:ter)?\s*([\d.]+)", txt, re.I)
-                if cm:
-                    latest_chapter = cm.group(1)
-                    break
-
-            metadata[str(key)] = SearchResult(
-                title=title,
-                manga_url=slug,
-                latest_chapter=latest_chapter,
-                source="mangafire",
-            )
-            key += 1
-        return metadata
-
-    def _type_query_js(self) -> str:
-        """JS that types the query into the live search box, triggering the
-        vrf'd ajax/manga/search call. Pure -- unit-testable."""
-        return (
-            "(() => {"
-            "  const i = document.querySelector("
-            "    '.search-inner input[name=keyword], input[name=keyword]');"
-            "  if (!i) return false;"
-            f"  i.value = {json.dumps(self.query)};"
-            "  i.dispatchEvent(new Event('input', {bubbles:true}));"
-            "  i.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));"
-            "  return true;"
-            "})()"
-        )
-
-    def _search_in_browser(self) -> str:
-        """Load the site, type the query, intercept the vrf'd
-        ``ajax/manga/search`` call and return the inner result html.
-
-        The response is JSON shaped ``{"result": {"html": "..."}}`` or
-        ``{"result": "..."}``; unwrap either.
-        """
-        body, _ = BrowserFetcher().capture_xhr(
-            f"{self.base_url}/home",
-            _make_marker_predicate(("ajax/manga/search",)),
-            trigger_js=self._type_query_js(),
-        )
-        try:
-            result = json.loads(body)["result"]
-            if isinstance(result, dict):
-                return result.get("html", "")
-            return result
-        except (ValueError, KeyError):
-            return body
 
     def search(self, start: int = 1) -> SearchResults:
         logger.info(f"Searching mangafire for: {self.query}")
         try:
-            html_fragment = self._search_in_browser()
+            body, _ = BrowserFetcher().capture_xhr(
+                f"{self.base_url}/home",
+                _is_search_results_request,
+                type_into=(_SEARCH_BOX, self.query),
+            )
+            payload = json.loads(body)
         except CaptureTriggerFailed as err:
-            # The typing script found no search box, so no search can happen.
             # The error says which page the browser was on; a Cloudflare check
             # there means the scraper's browser was held up, not that the site
             # changed.
             logger.error(f"MangaFire search: couldn't find the search box ({err}).")
             return {}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
-                "MangaFire search timed out (could not capture the vrf'd "
-                "ajax/manga/search call). Use a direct manga slug with --manga."
+                "MangaFire search timed out: the site sent no search request "
+                "after the query was typed. Use a direct series id with --manga "
+                "(e.g. 92kk8-naruto)."
             )
             return {}
-        return self._parse_results(html_fragment, start)
+        except ValueError as err:
+            logger.error(f"MangaFire search: unreadable reply ({err}).")
+            return {}
+        return _parse_search_payload(payload, start)
 
 
 @register_source("mangafire")
@@ -402,7 +343,7 @@ class Mangafire(BaseSiteParser):
     def __init__(self, manga_url: Optional[str] = None) -> None:
         super().__init__(
             manga_url=manga_url,
-            base_url="https://mangafire.to",
+            base_url=BASE_URL,
             manga_parser=MangafireMangaParser,
             search_parser=MangafireSearch,
         )

@@ -1,0 +1,24 @@
+{
+  "data": {
+    "id": 40271,
+    "hid": "92kk8",
+    "slug": "naruto",
+    "title": "Naruto",
+    "type": "manga",
+    "status": "finished",
+    "latestChapter": 700,
+    "url": "/title/92kk8-naruto",
+    "authors": [
+      {
+        "id": 150932,
+        "title": "Kishimoto Masashi"
+      }
+    ],
+    "artists": [
+      {
+        "id": 276365,
+        "title": "Kishimoto Masashi"
+      }
+    ]
+  }
+}

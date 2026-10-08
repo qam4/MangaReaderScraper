@@ -217,7 +217,7 @@ Each item has a done-when so "done" is unambiguous.
     * Search: a slug download (`--manga <slug>`) doesn't exercise search, so
       "it works" may not cover the search path — C7 stays as a (low-pri) confirm.
 
-- [ ] **C7 [PROBE, LOW-PRI] Confirm MangaFire search path** — the C1 search run
+- [x] **C7 [PROBE, LOW-PRI] Confirm MangaFire search path** — the C1 search run
   tripped the probe's (false-positive) challenge detector and captured no
   `ajax/manga/search`. A slug download doesn't exercise search, so it's the one
   stage not yet confirmed working. Validate via the parser's own `capture_xhr`
@@ -260,8 +260,13 @@ Each item has a done-when so "done" is unambiguous.
     Cloudflare check. The MangaFire search reports it as "couldn't find the
     search box (...)". NEXT: pull and rerun; that message decides between the
     two causes above.
+  - CLOSED (2026-10-08), superseded by C12: it was the second cause. A fresh
+    `--multi` probe (`probe_out/oct/mangafire/`) showed the whole site was
+    rebuilt: no `input[name=keyword]`, no `ajax/manga/search`; search is now
+    `/api/titles?keyword=...`. The parser was rewritten; confirming the new
+    search live is part of C12's DONE-WHEN.
 
-- [ ] **C8 [QUICK, LOW-PRI] Verify MangaFire descramble on a scrambled chapter** —
+- [x] **C8 [QUICK, LOW-PRI] Verify MangaFire descramble on a scrambled chapter** —
   the C1 image capture had offset 0 on every page (no scramble), so `descramble()`
   was not exercised. If you happen onto a chapter with offset > 0, confirm it
   round-trips to a valid JPEG; else this is just unverified, not broken (the
@@ -270,6 +275,65 @@ Each item has a done-when so "done" is unambiguous.
     pages, every one `[url, 1, 0]`, so offset 0. The field is still sent, so
     either scrambling is gone or only some chapters get it; a re-probe only
     helps if it lands on one. Left as untested-not-broken (agreed with user).
+  - CLOSED (2026-10-08), moot: the rebuilt site's page list
+    (`/api/chapters/<id>`, October capture) gives each page only `url`,
+    `width` and `height`, with no offset field. The descramble code was removed
+    in the C12 rewrite. If a downloaded page ever comes out sliced, reopen.
+
+- [ ] **C12 [PROBE] MangaFire rewrite for the rebuilt site (code done, NOT verified live)**
+  - FOUND in the October `--multi --search naruto` probe
+    (`probe_out/oct/mangafire/`, gitignored): the site was rebuilt and every
+    stage of the old parser was broken. Series pages are
+    `/title/<hid>-<slug>` (`92kk8-naruto`), reader pages
+    `/title/<hid>-<slug>/chapter/<id>`, and the data comes from a JSON API:
+    `/api/titles?keyword=...&page=1&limit=30` (search),
+    `/api/titles/<hid>` (details, with `authors`),
+    `/api/titles/<hid>/chapters?...&page=N&limit=20` (chapter list, 20 a page,
+    `meta.hasNext`), `/api/chapters/<id>` (page images). Typing alone fires a
+    `limit=5` suggestions call with no `page=`; the home page's own list has no
+    `keyword=`.
+  - vrf CHECK (user ran a one-line curl_cffi check at home): search, chapter
+    list and page list requested without a token each got 403 with a JSON
+    body. The probe's `api_backends.txt` has curl_cffi getting 200 from
+    `/api/me`, which never carries a token, so the 403s are the token being
+    missing, not curl_cffi being blocked. In the
+    captured `ajax_log.txt` the token's length grows with the address and
+    addresses sharing a prefix share a token prefix, so it is computed over the
+    whole address: a captured URL can't be replayed with another `page=`.
+  - DESIGN (approved by the user, "sure"): the browser makes every call and
+    the parser catches it. Search types the query into the home page box with
+    real keystrokes and Enter and catches the `keyword=` + `page=` request
+    (`capture_xhr(type_into=...)`). The chapter list opens the series page and
+    presses the pager's own "Next page" button from JS until `meta.hasNext` is
+    false (`capture_xhr_pages`); if the API says another page exists but there
+    is no button, it raises MangaDoesNotExist instead of returning a partial
+    list. Chapters are still identified by number; the API id is only used for
+    the reader url, and a repeated number keeps the first (newest) id.
+    Rejected: computing the token ourselves (fragile, and it means getting
+    around the site's protection), building `page=N` requests, and a plain
+    curl_cffi client like mangabuddy.
+  - DONE: `scraper/parsers/mangafire.py` rewritten; `scraper/fetchers.py`
+    gained `type_into` and `capture_xhr_pages`. Fixtures are trimmed copies of
+    the October captures (`tests/test_files/mangafire/{search_titles,
+    title_details,chapters_page_1,chapter_pages}.json`); the three old-site
+    fixtures go. The parser tests failed on the old code (ImportError), and the
+    5 new fetcher tests failed before the fetcher change (TypeError /
+    AttributeError). Full suite 557 passed; ruff, format and mypy clean.
+  - IDS CHANGED: old ids like `ad-astra-scipio-and-hanniball.lww3` no longer
+    work. A folder named after an old id isn't reused automatically;
+    `--override_name <folder>` keeps adding to it, and chapters already there
+    are skipped because chapter files are named by number. README says so.
+  - NOT VERIFIED LIVE. Open questions only a live run answers: paging past
+    page 1 (the probe only ever loaded page 1); whether the synthetic button
+    click opens an ad tab, as the user's real click did; and why the API
+    reports 704 chapters when the newest is 700 (page 1 has 20 distinct
+    numbers, 681-700, so it isn't repeats there).
+  - DONE-WHEN: at home, `uv run manga-scraper --search naruto --source
+    mangafire` lists hits, and `uv run manga-scraper --manga 92kk8-naruto
+    --chapters 700 --source mangafire --filetype cbz` saves a complete chapter
+    whose pages open. The second also proves the paging: the whole chapter
+    list (36 pages for Naruto) is read before any chapter is picked, and the
+    walk only ends when the API says there is no next page.
 
 - [x] **C9 [QUICK] Probe: challenge detection is too trigger-happy (false positive)**
   - SURFACED by C1: the probe yelled "CHALLENGE WALL DETECTED" on all three
@@ -1044,6 +1108,16 @@ Two distinct root causes found:
     with no ini writes one into the real home. The `mocked_manga_env_var_cli`
     fixture patches `CONFIG` only after that import.
 
+- [ ] **G9 [QUICK, LOW-PRI] `.gitignore` hides new test fixtures**
+  - FOUND while preparing the C12 commit: the four new MangaFire fixtures did
+    not show in `git status`. `git check-ignore -v` names `.gitignore` line 4,
+    `*.json`; line 2 is `*.jpg`. The five tracked JSON fixtures and the two
+    jpgs in `tests/test_files/jpgs/` were force-added. INFERRED, not run: a
+    fixture added without `-f` passes locally and fails CI at collection, since
+    the test modules read their fixtures at import.
+  - FIX (a config edit, needs the user's OK): add `!tests/test_files/**` after
+    the custom block, then check `git status` lists an untracked fixture.
+
 ---
 
 ## Suggested order
@@ -1195,9 +1269,9 @@ lock-serialized session. Plan + status:
 ## Live-verified sources (user, on their laptop)
 - **mangabuddy** (default source) — search + chapter listing + page-image
   download all work end-to-end. CONFIRMED.
-- **mangafire** — works end-to-end with no manual captcha (see C1 REALITY
-  CHECK). CONFIRMED. (Only the search path C7 + descramble C8 remain as
-  low-pri unexercised edge cases, not breakage.)
+- **mangafire** — NOT CONFIRMED since the October 2026 rebuild. The old
+  parser worked end-to-end in June (C1 REALITY CHECK); the site then changed
+  completely and the parser was rewritten (C12), which has not run live yet.
 - **kakalot family** (manganelo/manganato/mangakaka) — search + chapter listing
   work; page-image download is documented-unsupported (interactive Turnstile +
   browser-only CDN, see C2-kakalot-images).

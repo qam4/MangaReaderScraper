@@ -566,6 +566,234 @@ def test_capture_xhr_stops_and_names_an_ordinary_page_when_the_trigger_fails():
     assert tab.closed
 
 
+# ======== capture_xhr typing, and capture_xhr_pages (the 2026 MangaFire) =====
+#
+# The rebuilt MangaFire signs every API call with a vrf token its own script
+# computes, so the browser must make the calls: the search is typed into the
+# box and submitted with a real Enter (as the probe does), and the chapter list
+# is paged by pressing the site's own "Next page" button.
+
+_NEXT_JS = "clickNext()"
+
+
+class _ScriptedTab:
+    """A fake nodriver tab that 'fires' requests on cue -- on navigation, when
+    text is typed, on the Enter after typing, and per next-page click -- and
+    answers in-page fetches from ``bodies``. No browser."""
+
+    def __init__(
+        self,
+        bodies,
+        on_load=(),
+        on_type=(),
+        on_enter=(),
+        next_pages=(),
+        has_box=True,
+    ):
+        self.bodies = bodies
+        self.on_load = list(on_load)
+        self.on_type = list(on_type)
+        self.on_enter = list(on_enter)
+        self.next_pages = list(next_pages)
+        self.has_box = has_box
+        self.handlers = []
+        self.typed = None
+        self.awaiting_enter = False
+        self.next_clicks = 0
+        self.closed = False
+
+    def add_handler(self, event, handler):
+        self.handlers.append(handler)
+
+    async def _fire(self, urls):
+        from types import SimpleNamespace
+
+        for url in urls:
+            event = SimpleNamespace(
+                request=SimpleNamespace(url=url), response=SimpleNamespace(url=url)
+            )
+            for handler in self.handlers:
+                await handler(event)
+
+    async def send(self, command):
+        if self.awaiting_enter:  # the first CDP command after typing: Enter
+            self.awaiting_enter = False
+            await self._fire(self.on_enter)
+        return None
+
+    async def get(self, url):
+        await self._fire(self.on_load)
+        return self
+
+    async def wait(self, seconds=0):
+        return None
+
+    async def select(self, selector, timeout=10):
+        import asyncio
+
+        if not self.has_box:
+            raise asyncio.TimeoutError()
+        tab = self
+
+        class Box:
+            async def clear_input(self):
+                return None
+
+            async def send_keys(self, text):
+                tab.typed = text
+                tab.awaiting_enter = True
+                await tab._fire(tab.on_type)
+
+        return Box()
+
+    async def evaluate(self, expression, await_promise=False):
+        if "location.href" in expression:
+            return json.dumps(
+                {"href": "https://mangafire.to/", "title": "MangaFire", "html": "<p>"}
+            )
+        if expression == _NEXT_JS:
+            if not self.next_pages:
+                return False
+            self.next_clicks += 1
+            await self._fire([self.next_pages.pop(0)])
+            return True
+        for url, body in self.bodies.items():
+            if json.dumps(url) in expression:  # _in_page_fetch_js(url)
+                return body
+        return None
+
+    async def close(self):
+        self.closed = True
+
+
+def _run_with_tab(tab, coro_factory):
+    import asyncio
+
+    import scraper.fetchers as fetchers
+
+    class FakeBrowser:
+        async def get(self, url, new_tab=False):
+            return tab
+
+    async def fake_ensure_browser():
+        return FakeBrowser()
+
+    with mock.patch.object(fetchers._RUNTIME, "ensure_browser", fake_ensure_browser):
+        return asyncio.run(coro_factory(BrowserFetcher(wait=0, timeout=2)))
+
+
+SUGGEST = "https://mangafire.to/api/titles?keyword=naruto&limit=5&vrf=a"
+RESULTS = "https://mangafire.to/api/titles?keyword=naruto&page=1&limit=30&vrf=b"
+
+
+def test_capture_xhr_types_the_query_and_returns_the_submitted_search():
+    # typing fires the suggestions request; Enter fires the results request,
+    # which is the one the predicate asks for
+    tab = _ScriptedTab(
+        {SUGGEST: "suggestions", RESULTS: "results"},
+        on_type=[SUGGEST],
+        on_enter=[RESULTS],
+    )
+    body, _ = _run_with_tab(
+        tab,
+        lambda fetcher: fetcher._capture_xhr(
+            "https://mangafire.to/home",
+            lambda url: "keyword=" in url and "page=" in url,
+            None,
+            False,
+            type_into=("input[placeholder^=Search]", "naruto"),
+        ),
+    )
+    assert body == "results"
+    assert tab.typed == "naruto"
+    assert tab.closed
+
+
+def test_capture_xhr_type_into_names_the_page_when_the_box_is_missing():
+    tab = _ScriptedTab({}, has_box=False)
+    with pytest.raises(CaptureTriggerFailed, match=r"input\[placeholder"):
+        _run_with_tab(
+            tab,
+            lambda fetcher: fetcher._capture_xhr(
+                "https://mangafire.to/home",
+                lambda url: False,
+                None,
+                False,
+                type_into=("input[placeholder^=Search]", "naruto"),
+            ),
+        )
+    assert tab.closed
+
+
+def _chapter_page(n, has_next):
+    return json.dumps({"items": [{"id": n}], "meta": {"page": n, "hasNext": has_next}})
+
+
+def _page_url(n):
+    return f"https://mangafire.to/api/titles/92kk8/chapters?page={n}&limit=20&vrf={n}"
+
+
+def _has_next(body):
+    return json.loads(body)["meta"]["hasNext"]
+
+
+def test_capture_xhr_pages_clicks_next_until_the_api_says_last_page():
+    bodies = {_page_url(n): _chapter_page(n, n < 3) for n in (1, 2, 3)}
+    tab = _ScriptedTab(
+        bodies, on_load=[_page_url(1)], next_pages=[_page_url(2), _page_url(3)]
+    )
+    pages = _run_with_tab(
+        tab,
+        lambda fetcher: fetcher._capture_xhr_pages(
+            "https://mangafire.to/title/92kk8-naruto",
+            lambda url: "/chapters?" in url,
+            _NEXT_JS,
+            _has_next,
+            100,
+        ),
+    )
+    assert [json.loads(p)["meta"]["page"] for p in pages] == [1, 2, 3]
+    assert tab.next_clicks == 2
+    assert tab.closed
+
+
+def test_capture_xhr_pages_names_the_page_when_next_cannot_be_clicked():
+    # the API says there is a page 2, but the next-page script finds no button
+    bodies = {_page_url(1): _chapter_page(1, True)}
+    tab = _ScriptedTab(bodies, on_load=[_page_url(1)], next_pages=[])
+    with pytest.raises(CaptureTriggerFailed, match="next-page"):
+        _run_with_tab(
+            tab,
+            lambda fetcher: fetcher._capture_xhr_pages(
+                "https://mangafire.to/title/92kk8-naruto",
+                lambda url: "/chapters?" in url,
+                _NEXT_JS,
+                _has_next,
+                100,
+            ),
+        )
+    assert tab.closed
+
+
+def test_capture_xhr_pages_stops_at_max_pages():
+    bodies = {_page_url(n): _chapter_page(n, True) for n in (1, 2, 3)}
+    tab = _ScriptedTab(
+        bodies, on_load=[_page_url(1)], next_pages=[_page_url(2), _page_url(3)]
+    )
+    pages = _run_with_tab(
+        tab,
+        lambda fetcher: fetcher._capture_xhr_pages(
+            "https://mangafire.to/title/92kk8-naruto",
+            lambda url: "/chapters?" in url,
+            _NEXT_JS,
+            _has_next,
+            2,
+        ),
+    )
+    assert len(pages) == 2
+    assert tab.next_clicks == 1
+
+
 # ===================== persistent browser profile (opt-in) ================
 
 

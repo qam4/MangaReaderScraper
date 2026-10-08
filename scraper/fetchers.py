@@ -37,8 +37,10 @@ from typing import (
     TYPE_CHECKING,
     Callable,
     Dict,
+    List,
     Optional,
     Protocol,
+    Tuple,
     runtime_checkable,
 )
 
@@ -756,9 +758,25 @@ class BrowserFetcher:
         predicate: Callable[[str], bool],
         trigger_js: Optional[str] = None,
         with_cookies: bool = False,
+        type_into: Optional[Tuple[str, str]] = None,
     ):
         return _RUNTIME.submit(
-            self._capture_xhr(url, predicate, trigger_js, with_cookies)
+            self._capture_xhr(url, predicate, trigger_js, with_cookies, type_into)
+        )
+
+    def capture_xhr_pages(
+        self,
+        url: str,
+        predicate: Callable[[str], bool],
+        next_js: str,
+        has_next: Callable[[str], bool],
+        max_pages: int = 200,
+    ) -> List[str]:
+        """Bodies of a paged list the page loads one page at a time: the first
+        request matching ``predicate``, then one more per run of ``next_js``
+        while ``has_next(last_body)`` and fewer than ``max_pages``."""
+        return _RUNTIME.submit(
+            self._capture_xhr_pages(url, predicate, next_js, has_next, max_pages)
         )
 
     def get_after_scroll(
@@ -919,7 +937,53 @@ class BrowserFetcher:
         predicate: Callable[[str], bool],
         trigger_js: Optional[str],
         with_cookies: bool,
+        type_into: Optional[Tuple[str, str]] = None,
     ):
+        bodies, cookies = await self._capture_sequence(
+            url,
+            predicate,
+            trigger_js=trigger_js,
+            type_into=type_into,
+            with_cookies=with_cookies,
+        )
+        return bodies[0], cookies
+
+    async def _capture_xhr_pages(
+        self,
+        url: str,
+        predicate: Callable[[str], bool],
+        next_js: str,
+        has_next: Callable[[str], bool],
+        max_pages: int,
+    ) -> List[str]:
+        bodies, _ = await self._capture_sequence(
+            url, predicate, next_js=next_js, has_next=has_next, max_pages=max_pages
+        )
+        return bodies
+
+    async def _capture_sequence(
+        self,
+        url: str,
+        predicate: Callable[[str], bool],
+        trigger_js: Optional[str] = None,
+        type_into: Optional[Tuple[str, str]] = None,
+        next_js: Optional[str] = None,
+        has_next: Optional[Callable[[str], bool]] = None,
+        max_pages: int = 1,
+        with_cookies: bool = False,
+    ) -> Tuple[List[str], Dict[str, str]]:
+        """The engine behind capture_xhr and capture_xhr_pages.
+
+        Open ``url`` in a fresh tab and record, in order, every distinct request
+        url matching ``predicate``. Optionally first run ``trigger_js``, or type
+        ``type_into = (selector, text)`` and press Enter. Then take the body of
+        the first match (re-fetched in-page, so the site's own vrf-signed url is
+        reused as-is). While ``has_next(body)`` says there is more and fewer
+        than ``max_pages`` bodies were taken, run ``next_js`` (e.g. a click on
+        the site's "Next page" button) and take the next new match. A trigger,
+        box or next button that isn't there raises CaptureTriggerFailed naming
+        the page; a request that never comes raises TimeoutError.
+        """
         import asyncio
 
         from nodriver import cdp
@@ -930,18 +994,20 @@ class BrowserFetcher:
         # would leak onto a long-lived tab and bleed into later calls.
         tab = await browser.get("about:blank", new_tab=True)
         try:
-            state: Dict[str, Optional[str]] = {"url": None}
-            found = asyncio.Event()
+            seen: List[str] = []
+            arrived = asyncio.Event()
+
+            def note(found_url: str) -> None:
+                # request and response events both report a url: keep each once
+                if predicate(found_url) and found_url not in seen:
+                    seen.append(found_url)
+                    arrived.set()
 
             async def on_request(evt: cdp.network.RequestWillBeSent):
-                if state["url"] is None and predicate(evt.request.url):
-                    state["url"] = evt.request.url
-                    found.set()
+                note(evt.request.url)
 
             async def on_response(evt: cdp.network.ResponseReceived):
-                if state["url"] is None and predicate(evt.response.url):
-                    state["url"] = evt.response.url
-                    found.set()
+                note(evt.response.url)
 
             tab.add_handler(cdp.network.RequestWillBeSent, on_request)
             tab.add_handler(cdp.network.ResponseReceived, on_response)
@@ -963,17 +1029,37 @@ class BrowserFetcher:
                         "trigger script found nothing to act on at "
                         + _describe_page_state(await self._page_state(tab))
                     )
+            if type_into:
+                await tab.wait(3)
+                await self._type_and_submit(tab, cdp, *type_into)
 
-            await asyncio.wait_for(found.wait(), timeout=self.timeout)
-            captured_url = state["url"]
-            # found.wait() only completes once a handler set state["url"], so it
-            # is non-None here -- assert it for the type checker.
-            assert captured_url is not None
+            async def take(index: int) -> str:
+                """Body of the ``index``-th matching request, once it fires."""
+                while len(seen) <= index:
+                    arrived.clear()
+                    if len(seen) > index:
+                        break
+                    await asyncio.wait_for(arrived.wait(), timeout=self.timeout)
+                return await asyncio.wait_for(
+                    tab.evaluate(_in_page_fetch_js(seen[index]), await_promise=True),
+                    timeout=30,
+                )
 
-            body = await asyncio.wait_for(
-                tab.evaluate(_in_page_fetch_js(captured_url), await_promise=True),
-                timeout=30,
-            )
+            bodies = [await take(0)]
+            while (
+                next_js
+                and has_next is not None
+                and len(bodies) < max_pages
+                and has_next(bodies[-1])
+            ):
+                advanced = await tab.evaluate(next_js)
+                if advanced is False:
+                    raise CaptureTriggerFailed(
+                        f"next-page script found nothing to click after page "
+                        f"{len(bodies)} at "
+                        + _describe_page_state(await self._page_state(tab))
+                    )
+                bodies.append(await take(len(bodies)))
 
             cookies: Dict[str, str] = {}
             if with_cookies:
@@ -985,12 +1071,43 @@ class BrowserFetcher:
                 except Exception as err:  # pragma: no cover - best effort
                     logger.warning(f"could not read cookies via CDP: {err}")
 
-            return body, cookies
+            return bodies, cookies
         finally:
             try:
                 await tab.close()
             except Exception as err:
                 logger.debug(f"tab.close() failed (continuing): {err}")
+
+    async def _type_and_submit(self, tab, cdp, selector: str, text: str) -> None:
+        """Type ``text`` into the element matching ``selector`` with real key
+        events, then press a real Enter, as the probe does. Setting ``.value``
+        from JS does not trigger the search on sites that listen for key events
+        (the rebuilt MangaFire among them)."""
+        try:
+            box = await tab.select(selector, timeout=10)
+        except Exception:
+            box = None
+        if not box:
+            raise CaptureTriggerFailed(
+                f"no element matching {selector!r} to type into at "
+                + _describe_page_state(await self._page_state(tab))
+            )
+        try:
+            await box.clear_input()
+        except Exception:
+            pass
+        await box.send_keys(text)
+        await tab.wait(1)  # let a debounced as-you-type search settle first
+        for kind in ("keyDown", "keyUp"):
+            await tab.send(
+                cdp.input_.dispatch_key_event(
+                    type_=kind,
+                    key="Enter",
+                    code="Enter",
+                    windows_virtual_key_code=13,
+                    native_virtual_key_code=13,
+                )
+            )
 
     async def _get_after_scroll(
         self,

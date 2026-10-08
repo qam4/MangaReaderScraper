@@ -1,0 +1,104 @@
+{
+  "items": [
+    {
+      "id": 40271,
+      "hid": "92kk8",
+      "slug": "naruto",
+      "title": "Naruto",
+      "type": "manga",
+      "status": "finished",
+      "poster": {
+        "small": "https://static.mfcdn.nl/932d/i/b/b2/b295b9556ab5088b504e33bcc0f1d339@100.jpg",
+        "medium": "https://static.mfcdn.nl/932d/i/b/b2/b295b9556ab5088b504e33bcc0f1d339@280.jpg",
+        "large": "https://static.mfcdn.nl/932d/i/b/b2/b295b9556ab5088b504e33bcc0f1d339.jpg"
+      },
+      "latestChapter": 700,
+      "year": 1999,
+      "rank": 17,
+      "chapterUpdatedAt": "3yrs ago",
+      "url": "/title/92kk8-naruto"
+    },
+    {
+      "id": 50,
+      "hid": "l33",
+      "slug": "narutoo",
+      "title": "Naruto",
+      "type": "manga",
+      "status": "",
+      "poster": {
+        "small": "https://static.mfcdn.nl/6a68/i/5/51/51360d75d5ffa0cc3234dc79d9c36d26@100.jpg",
+        "medium": "https://static.mfcdn.nl/6a68/i/5/51/51360d75d5ffa0cc3234dc79d9c36d26@280.jpg",
+        "large": "https://static.mfcdn.nl/6a68/i/5/51/51360d75d5ffa0cc3234dc79d9c36d26.jpg"
+      },
+      "latestChapter": 700,
+      "year": 1999,
+      "rank": 182,
+      "chapterUpdatedAt": "1yr ago",
+      "url": "/title/l33-narutoo"
+    },
+    {
+      "id": 12504,
+      "hid": "nyxn",
+      "slug": "naruto-naruto-alternative-doujinshi",
+      "title": "Naruto - Naruto Alternative (Doujinshi)",
+      "type": "other",
+      "status": "releasing",
+      "poster": {
+        "small": "https://static.mfcdn.nl/3c8a/i/e/ef/ef85599cb9f28eda8717c4033d246e2b@100.jpg",
+        "medium": "https://static.mfcdn.nl/3c8a/i/e/ef/ef85599cb9f28eda8717c4033d246e2b@280.jpg",
+        "large": "https://static.mfcdn.nl/3c8a/i/e/ef/ef85599cb9f28eda8717c4033d246e2b.jpg"
+      },
+      "latestChapter": 3,
+      "year": null,
+      "rank": 0,
+      "chapterUpdatedAt": "2yrs ago",
+      "url": "/title/nyxn-naruto-naruto-alternative-doujinshi"
+    },
+    {
+      "id": 43175,
+      "hid": "mvq0x",
+      "slug": "dragon-ball-shippudenn",
+      "title": "Dragon Ball Shippuden",
+      "type": "other",
+      "status": "releasing",
+      "poster": {
+        "small": "https://static.mfcdn.nl/40bd/i/1/11/1192498a3189d513e2b63137886422c9@100.jpg",
+        "medium": "https://static.mfcdn.nl/40bd/i/1/11/1192498a3189d513e2b63137886422c9@280.jpg",
+        "large": "https://static.mfcdn.nl/40bd/i/1/11/1192498a3189d513e2b63137886422c9.jpg"
+      },
+      "latestChapter": 14,
+      "year": null,
+      "rank": 0,
+      "chapterUpdatedAt": "2yrs ago",
+      "url": "/title/mvq0x-dragon-ball-shippudenn"
+    },
+    {
+      "id": 26573,
+      "hid": "kwy39",
+      "slug": "naruto-gaiden-nanadaime-hokage-to-akairo-no-hanatsuzuki",
+      "title": "Naruto Gaiden - Nanadaime Hokage to Akairo no Hanatsuzuki",
+      "type": "manga",
+      "status": "finished",
+      "poster": {
+        "small": "https://static.mfcdn.nl/5f37/i/b/b5/b56711d0134a2b0007ebca9c85774a91@100.jpg",
+        "medium": "https://static.mfcdn.nl/5f37/i/b/b5/b56711d0134a2b0007ebca9c85774a91@280.jpg",
+        "large": "https://static.mfcdn.nl/5f37/i/b/b5/b56711d0134a2b0007ebca9c85774a91.jpg"
+      },
+      "latestChapter": 700.1,
+      "year": 2015,
+      "rank": 8371,
+      "chapterUpdatedAt": "3mos ago",
+      "url": "/title/kwy39-naruto-gaiden-nanadaime-hokage-to-akairo-no-hanatsuzuki"
+    }
+  ],
+  "meta": {
+    "total": 134,
+    "perPage": 30,
+    "page": 1,
+    "lastPage": 5,
+    "from": 1,
+    "to": 30,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}

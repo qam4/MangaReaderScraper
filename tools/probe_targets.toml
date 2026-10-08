@@ -15,7 +15,7 @@
 #     /r/l_search/?name=<q>, ?s=<q>, api/titles/search?q=<q>). For those, put
 #     that real URL in `search` and OMIT search_query -- the probe just loads it.
 #   * A few sites have no plain search URL and drive a JS search box instead
-#     (mangafire intercepts ajax/manga/search). For those, point `search` at the
+#     (mangafire catches its /api/titles?keyword= request). For those, point `search` at the
 #     page with the box and set search_query -- the probe types it in.
 #
 # Rules:
@@ -39,10 +39,10 @@ images = "https://mangafast.net/dragon-ball-super-chapter-1"
 search = "https://mangafast.net/?s=naruto"
 
 [[site]]
-name = "mangafire"  # search is a JS box + ajax/manga/search XHR -> interactive
-chapters = "https://mangafire.to/manga/ad-astra-scipio-and-hanniball.lww3"
-images = "https://mangafire.to/read/ad-astra-scipio-and-hanniball.lww3/en/chapter-1"
-search = "https://mangafire.to"
+name = "mangafire"  # rebuilt 2026: JS search box + /api/ XHRs (vrf-signed) -> interactive
+chapters = "https://mangafire.to/title/92kk8-naruto"
+images = "https://mangafire.to/title/92kk8-naruto/chapter/1326884"
+search = "https://mangafire.to/home"
 search_query = "naruto"
 
 [[site]]
