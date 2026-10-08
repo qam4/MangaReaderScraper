@@ -13,6 +13,7 @@ from unittest import mock
 
 from PIL import Image
 
+from scraper.fetchers import CaptureTriggerFailed
 from scraper.new_types import SearchResult
 from scraper.parsers.mangafire import (
     Mangafire,
@@ -104,6 +105,24 @@ def test_search_excludes_view_all_link():
     for entry in results.values():
         assert "/filter" not in entry["manga_url"]
         assert entry["manga_url"]  # non-empty slug
+
+
+def test_search_reports_a_missing_search_box_instead_of_raising(caplog):
+    # capture_xhr raises CaptureTriggerFailed when the typing script finds no
+    # search box. The search must say so plainly (with the page details the
+    # error carries) and return no results, which ends the run cleanly.
+    failure = CaptureTriggerFailed(
+        "trigger script found nothing to act on at https://mangafire.to/home "
+        "(title 'Just a moment...'), which looks like a Cloudflare check"
+    )
+    with mock.patch(
+        "scraper.parsers.mangafire.BrowserFetcher.capture_xhr", side_effect=failure
+    ):
+        with caplog.at_level("ERROR"):
+            results = MangafireSearch("naruto").search()
+    assert results == {}
+    assert "search box" in caplog.text
+    assert "Cloudflare" in caplog.text
 
 
 def test_search_trigger_js_embeds_query_safely():

@@ -248,6 +248,18 @@ Each item has a done-when so "done" is unambiguous.
     With `--log-level DEBUG`, the new line "capture_xhr trigger_js on ...
     returned ..." says whether the search box was missing (False) or found but
     typing didn't trigger the site's search (True).
+  - SECOND LIVE RUN (user, 2026-10-08): it returned False, so the scraper's
+    Chrome found no `input[name=keyword]` 3 s after loading /home. Meanwhile
+    the user's own Chrome loads mangafire.to with a search box, and the June
+    capture had `<input name="keyword">` inside `.search-inner`. So either the
+    scraper's Chrome was on a different page at that moment (a Cloudflare
+    check, or not drawn yet), or the box's markup changed. Not yet known which.
+  - capture_xhr now stops as soon as the trigger script returns False
+    (CaptureTriggerFailed) instead of waiting out its timeout, and the error
+    names the page the browser was on: url, title, and whether it looks like a
+    Cloudflare check. The MangaFire search reports it as "couldn't find the
+    search box (...)". NEXT: pull and rerun; that message decides between the
+    two causes above.
 
 - [ ] **C8 [QUICK, LOW-PRI] Verify MangaFire descramble on a scrambled chapter** —
   the C1 image capture had offset 0 on every page (no scramble), so `descramble()`

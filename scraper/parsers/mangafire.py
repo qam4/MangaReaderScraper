@@ -29,7 +29,12 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from scraper.exceptions import ChapterDoesntExist, MangaDoesNotExist
-from scraper.fetchers import BrowserFetcher, _make_marker_predicate, download_image
+from scraper.fetchers import (
+    BrowserFetcher,
+    CaptureTriggerFailed,
+    _make_marker_predicate,
+    download_image,
+)
 from scraper.new_types import SearchResult, SearchResults
 from scraper.parsers._html import attr
 from scraper.parsers.base import BaseMangaParser, BaseSearchParser, BaseSiteParser
@@ -372,6 +377,13 @@ class MangafireSearch(BaseSearchParser):
         logger.info(f"Searching mangafire for: {self.query}")
         try:
             html_fragment = self._search_in_browser()
+        except CaptureTriggerFailed as err:
+            # The typing script found no search box, so no search can happen.
+            # The error says which page the browser was on; a Cloudflare check
+            # there means the scraper's browser was held up, not that the site
+            # changed.
+            logger.error(f"MangaFire search: couldn't find the search box ({err}).")
+            return {}
         except asyncio.TimeoutError:
             logger.error(
                 "MangaFire search timed out (could not capture the vrf'd "

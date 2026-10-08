@@ -529,6 +529,12 @@ _CHALLENGE_MARKERS = (
 )
 
 
+class CaptureTriggerFailed(RuntimeError):
+    """``capture_xhr``'s trigger script returned False: it found nothing to act
+    on (e.g. no search box to type into), so the request it was meant to cause
+    can never fire. The message says what page the browser was on."""
+
+
 def _looks_like_challenge(html: str) -> bool:
     """True if ``html`` looks like a Cloudflare/JS verification interstitial
     rather than rendered page content (empty html counts as not-yet-loaded).
@@ -545,6 +551,26 @@ def _looks_like_challenge(html: str) -> bool:
         return True
     lowered = html.lower()
     return any(marker in lowered for marker in _CHALLENGE_MARKERS)
+
+
+# Where the browser actually is, for a failure message: url, title and the
+# page html (capped), as one JSON string so nodriver returns it as-is.
+_PAGE_STATE_JS = (
+    "JSON.stringify({href: location.href, title: document.title,"
+    " html: document.documentElement.outerHTML.slice(0, 200000)})"
+)
+
+
+def _describe_page_state(state: Dict[str, str]) -> str:
+    """``<url> (title '<title>')``, plus a note when the html is a Cloudflare
+    check. An empty state (the page couldn't be read) is reported as unknown,
+    not as a challenge, although _looks_like_challenge treats empty html as one.
+    Pure -- unit-testable."""
+    text = f"{state.get('href') or '<unknown page>'} (title {state.get('title', '')!r})"
+    html = state.get("html") or ""
+    if html.strip() and _looks_like_challenge(html):
+        text += ", which looks like a Cloudflare check"
+    return text
 
 
 class _BrowserRuntime:
@@ -788,6 +814,19 @@ class BrowserFetcher:
         except Exception as err:
             logger.debug(f"bring_to_front failed (continuing): {err}")
 
+    async def _page_state(self, tab) -> Dict[str, str]:
+        """The tab's url, title and html (see _PAGE_STATE_JS); {} if unreadable.
+        Best effort: it only feeds an error message."""
+        import asyncio
+
+        try:
+            raw = await asyncio.wait_for(tab.evaluate(_PAGE_STATE_JS), timeout=10)
+            state = _json.loads(raw) if isinstance(raw, str) else {}
+        except Exception as err:
+            logger.debug(f"could not read the page state: {err}")
+            return {}
+        return state if isinstance(state, dict) else {}
+
     async def _get(self, url: str) -> str:  # pragma: no cover - real browser
         browser = await _RUNTIME.ensure_browser()
         page = await browser.get(url)
@@ -916,6 +955,14 @@ class BrowserFetcher:
                 # e.g. MangaFire's search script returns false when it finds no
                 # search box; the CDP debug log truncates this value
                 logger.debug(f"capture_xhr trigger_js on {url} returned {triggered!r}")
+                if triggered is False:
+                    # The trigger couldn't act, so the request it was meant to
+                    # cause can't fire: stop now instead of waiting out the
+                    # timeout, and say which page the browser was really on.
+                    raise CaptureTriggerFailed(
+                        "trigger script found nothing to act on at "
+                        + _describe_page_state(await self._page_state(tab))
+                    )
 
             await asyncio.wait_for(found.wait(), timeout=self.timeout)
             captured_url = state["url"]

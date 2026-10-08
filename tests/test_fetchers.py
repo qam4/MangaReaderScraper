@@ -16,6 +16,7 @@ from scraper.fetchers import (
     BROWSER_PROFILE_ENV,
     MAX_CONCURRENT_DOWNLOADS_ENV,
     BrowserFetcher,
+    CaptureTriggerFailed,
     CloudscraperFetcher,
     CurlCffiFetcher,
     Fetcher,
@@ -470,6 +471,99 @@ def test_browser_runtime_submit_raises_an_op_timeout_instead_of_hanging():
         pytest.fail("submit hung on the op's TimeoutError")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "TimeoutError"
+
+
+# ============== capture_xhr: a trigger script that finds nothing ============
+#
+# Seen live (backlog C7): MangaFire's search script returned False (no search
+# box found), and capture_xhr still waited its full timeout for a request that
+# could no longer fire, then reported a generic timeout. It must stop at once
+# and say which page it was on, including whether that page is a Cloudflare
+# check (the one thing a user's own browser can't show about the scraper's).
+
+
+class _FakeTab:
+    """Just enough of a nodriver Tab for _capture_xhr, with no browser."""
+
+    def __init__(self, page_state):
+        self.page_state = page_state
+        self.closed = False
+
+    def add_handler(self, event, handler):
+        pass
+
+    async def send(self, command):
+        return None
+
+    async def get(self, url):
+        return self
+
+    async def wait(self, seconds):
+        return None
+
+    async def evaluate(self, expression, await_promise=False):
+        if "location.href" in expression:
+            return json.dumps(self.page_state)
+        return False  # the trigger script: nothing found to type into
+
+    async def close(self):
+        self.closed = True
+
+
+def _capture_with_a_failed_trigger(page_state):
+    import asyncio
+
+    import scraper.fetchers as fetchers
+
+    tab = _FakeTab(page_state)
+
+    class FakeBrowser:
+        async def get(self, url, new_tab=False):
+            return tab
+
+    async def fake_ensure_browser():
+        return FakeBrowser()
+
+    fetcher = BrowserFetcher(wait=0, timeout=2)
+    with mock.patch.object(fetchers._RUNTIME, "ensure_browser", fake_ensure_browser):
+        with pytest.raises(CaptureTriggerFailed) as info:
+            asyncio.run(
+                fetcher._capture_xhr(
+                    "https://mangafire.to/home",
+                    lambda url: False,
+                    "typeTheQuery()",
+                    False,
+                )
+            )
+    return str(info.value), tab
+
+
+def test_capture_xhr_stops_and_names_a_cloudflare_page_when_the_trigger_fails():
+    message, tab = _capture_with_a_failed_trigger(
+        {
+            "href": "https://mangafire.to/home",
+            "title": "Just a moment...",
+            "html": "<html><body><h1>Verify you are human</h1></body></html>",
+        }
+    )
+    assert "https://mangafire.to/home" in message
+    assert "Just a moment..." in message
+    assert "Cloudflare" in message
+    assert tab.closed
+
+
+def test_capture_xhr_stops_and_names_an_ordinary_page_when_the_trigger_fails():
+    message, tab = _capture_with_a_failed_trigger(
+        {
+            "href": "https://mangafire.to/",
+            "title": "MangaFire - Read Manga Online Free",
+            "html": "<html><body><div class='search'></div></body></html>",
+        }
+    )
+    assert "https://mangafire.to/" in message
+    assert "MangaFire - Read Manga Online Free" in message
+    assert "Cloudflare" not in message
+    assert tab.closed
 
 
 # ===================== persistent browser profile (opt-in) ================
