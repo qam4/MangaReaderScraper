@@ -232,6 +232,22 @@ Each item has a done-when so "done" is unambiguous.
     shared BrowserFetcher session, which since 2026-06-12/13 waits for a manual
     Turnstile click and can keep the clearance via MANGASCRAPER_BROWSER_PROFILE.
     If it fails, rerun with `--log-level DEBUG` and bring the log back.
+  - FIRST LIVE RUN (user, at home, 2026-10-07): it loaded mangafire.to/home and
+    ran the typing script (`Runtime.evaluate` returned a boolean; its value is
+    cut off in the CDP debug log), but no `ajax/manga/search` request followed,
+    so the 45 s capture timed out. Still open: WHY the request never fired.
+  - That timeout then hung the CLI forever (looked "stuck after starting
+    Chrome"). Cause: `_BrowserRuntime.submit` polled with
+    `future.result(timeout=0.5)` and `except concurrent.futures.TimeoutError:
+    continue`; on Python 3.11+ that class IS the builtin TimeoutError, which the
+    op's own `asyncio.wait_for` raises, so EVERY browser-op timeout was taken
+    for "still running" and spun forever. Fixed, with a test that hung on the
+    old code. Separately, an empty search result printed an empty table and
+    waited at the `>>` prompt; the menu now raises NoSearchResultsFound.
+  - NEXT: pull and rerun. It should now end with "MangaFire search timed out".
+    With `--log-level DEBUG`, the new line "capture_xhr trigger_js on ...
+    returned ..." says whether the search box was missing (False) or found but
+    typing didn't trigger the site's search (True).
 
 - [ ] **C8 [QUICK, LOW-PRI] Verify MangaFire descramble on a scrambled chapter** —
   the C1 image capture had offset 0 on every page (no scramble), so `descramble()`
