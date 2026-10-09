@@ -1028,7 +1028,7 @@ Two distinct root causes found:
     traceback instead of OfflineSeriesNotFound). Not observed; we only ever
     write objects. Fix: treat a non-dict like an unreadable record, with a test.
 
-- [ ] **G6 [DEVICE] MOBI pages look slightly too tall on the Kindle**
+- [x] **G6 [DEVICE] MOBI pages look slightly too tall on the Kindle**
   - REPORTED by the user: pages slightly too tall vertically, seen on the
     device, during the KCC v10.2.0 output review. Not reproduced or measured.
   - CHECKED in that session: the device-profile theory did not hold, and the
@@ -1064,6 +1064,16 @@ Two distinct root causes found:
     margins are cropped away. Settle it on the device: rebuild one volume with
     `kcc_args = -u --hq -g 1.8 --metadatatitle 1 -c 1` and compare. If that
     looks like the old books, the fix is a default change, the user's call.
+  - CLOSED (2026-10-08), not reproduced. The user checked the latest volumes
+    on the Kindle (built 2026-09-20 with the latest code) and no page is cut
+    off at the top or bottom. That day's code (`95c523f`) used KCC v10.2.0
+    with `-u --hq -g 1.8` and KCC's default crop `-c 2` (read in that
+    commit's `scraper/bundle.py` and KCC's `comic2ebook.py`); the user's ini
+    has no `kcc_args`. That is the same rendering as today, because the
+    default has since gained only `--metadatatitle 1`, which changes the
+    title. No default change. Which books the original report came from is
+    not known. Reopen with one page that doesn't fit: the volume's cbz and
+    mobi, the page number, and a photo.
 
 - [x] **G7 [BUG] `--output` / `-o` is accepted but does nothing**
   - HISTORY (git log -G): it worked in the first version (58500e8, 2017,
